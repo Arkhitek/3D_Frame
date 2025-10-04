@@ -1,0 +1,234 @@
+const drawDisplacementDiagram = (nodes, members, D_global, memberLoads, manualScale = null) => {
+    const canvas = elements.displacementCanvas;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // キャンバスをクリア
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 2D/3D判定（自由度数から判定）
+    const dofPerNode = D_global.length / nodes.length;
+    const is3D = dofPerNode === 6;
+
+    // 3つの投影面を定義
+    const projectionModes = ['xy', 'xz', 'yz'];
+
+    // 各投影面の構面座標を取得
+    const frameData = [];
+    projectionModes.forEach(mode => {
+        const coords = getAllFrameCoordinates(nodes, mode);
+        if (coords.length > 0) {
+            coords.forEach(coord => {
+                frameData.push({ mode, coord });
+            });
+        }
+    });
+
+    if (frameData.length === 0) return;
+
+    // グリッドレイアウトの計算
+    const padding = 10;
+    const headerHeight = 30;
+    const cols = Math.ceil(Math.sqrt(frameData.length));
+    const rows = Math.ceil(frameData.length / cols);
+    const cellWidth = Math.floor((canvas.width - padding * (cols + 1)) / cols);
+    const cellHeight = Math.floor((canvas.height - padding * (rows + 1) - headerHeight) / rows);
+
+    // 全体の変位スケールを計算
+    let dispScale = 0;
+    if (D_global.length > 0) {
+        if (manualScale !== null) {
+            dispScale = manualScale;
+        } else {
+            let max_disp = 0;
+            if (is3D) {
+                for (let i = 0; i < nodes.length; i++) {
+                    const dx = Math.abs(D_global[i*6][0]);
+                    const dy = Math.abs(D_global[i*6+1][0]);
+                    const dz = Math.abs(D_global[i*6+2][0]);
+                    max_disp = Math.max(max_disp, dx, dy, dz);
+                }
+            } else {
+                for (let i = 0; i < nodes.length; i++) {
+                    const dx = Math.abs(D_global[i*3][0]);
+                    const dy = Math.abs(D_global[i*3+1][0]);
+                    max_disp = Math.max(max_disp, dx, dy);
+                }
+            }
+
+            const TARGET_DISP_PIXELS = 20;
+            const avgCellSize = Math.min(cellWidth, cellHeight);
+            if (max_disp > 1e-12 && avgCellSize > 0) {
+                dispScale = TARGET_DISP_PIXELS / max_disp;
+                dispScale = Math.max(0.1, Math.min(dispScale, 10000));
+            }
+
+            lastDisplacementScale = dispScale;
+            if (elements.dispScaleInput) {
+                elements.dispScaleInput.value = dispScale.toFixed(2);
+            }
+        }
+    }
+
+    // タイトルを描画
+    ctx.fillStyle = '#333';
+    ctx.font = 'bold 14px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(`変位図 (倍率: ${dispScale.toFixed(2)})`, canvas.width / 2, 20);
+
+    // 各フレームを描画
+    frameData.forEach((frame, index) => {
+        const row = Math.floor(index / cols);
+        const col = index % cols;
+        const x = padding + col * (cellWidth + padding);
+        const y = headerHeight + padding + row * (cellHeight + padding);
+
+        // セルの境界を描画
+        ctx.strokeStyle = '#ddd';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, cellWidth, cellHeight);
+
+        // セルのラベルを描画
+        const axisName = frame.mode === 'xy' ? 'Z' : (frame.mode === 'xz' ? 'Y' : 'X');
+        ctx.fillStyle = '#666';
+        ctx.font = '10px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${frame.mode.toUpperCase()} (${axisName}=${frame.coord.toFixed(2)}m)`, x + 5, y + 12);
+
+        // セル内に描画するための座標変換を設定
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x, y, cellWidth, cellHeight);
+        ctx.clip();
+
+        // この構面の節点と部材を取得
+        const tolerance = 0.01;
+        const visibleNodes = new Set();
+        nodes.forEach((node, idx) => {
+            let coordToCheck = 0;
+            if (frame.mode === 'xy') {
+                coordToCheck = node.z;
+            } else if (frame.mode === 'xz') {
+                coordToCheck = node.y;
+            } else if (frame.mode === 'yz') {
+                coordToCheck = node.x;
+            }
+            if (Math.abs(coordToCheck - frame.coord) < tolerance) {
+                visibleNodes.add(idx);
+            }
+        });
+
+        // この構面の部材のみをフィルタリング
+        const visibleMembers = members.filter(m =>
+            visibleNodes.has(m.i) && visibleNodes.has(m.j)
+        );
+
+        if (visibleMembers.length === 0) {
+            ctx.restore();
+            return;
+        }
+
+        // モデルの範囲を計算
+        let minX = Infinity, maxX = -Infinity;
+        let minY = Infinity, maxY = -Infinity;
+
+        visibleMembers.forEach(m => {
+            const ni = nodes[m.i];
+            const nj = nodes[m.j];
+            const pi = project3DTo2D(ni, frame.mode);
+            const pj = project3DTo2D(nj, frame.mode);
+            minX = Math.min(minX, pi.x, pj.x);
+            maxX = Math.max(maxX, pi.x, pj.x);
+            minY = Math.min(minY, pi.y, pj.y);
+            maxY = Math.max(maxY, pi.y, pj.y);
+        });
+
+        const modelWidth = maxX - minX;
+        const modelHeight = maxY - minY;
+        const margin = 20;
+        const drawWidth = cellWidth - 2 * margin;
+        const drawHeight = cellHeight - 2 * margin - 15; // ラベル分を確保
+
+        let scale = 1;
+        if (modelWidth > 0 && modelHeight > 0) {
+            scale = Math.min(drawWidth / modelWidth, drawHeight / modelHeight) * 0.9;
+        }
+
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+        const offsetX = x + cellWidth / 2;
+        const offsetY = y + cellHeight / 2 + 7.5;
+
+        // セル内座標変換関数
+        const transform = (px, py) => {
+            return {
+                x: offsetX + (px - centerX) * scale,
+                y: offsetY - (py - centerY) * scale
+            };
+        };
+
+        // 元の構造を描画（グレー）
+        ctx.strokeStyle = '#ccc';
+        ctx.lineWidth = 1;
+        visibleMembers.forEach(m => {
+            const ni = nodes[m.i];
+            const nj = nodes[m.j];
+            const pi = project3DTo2D(ni, frame.mode);
+            const pj = project3DTo2D(nj, frame.mode);
+            const p1 = transform(pi.x, pi.y);
+            const p2 = transform(pj.x, pj.y);
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+        });
+
+        // 変形後の構造を描画（赤）
+        ctx.strokeStyle = 'red';
+        ctx.lineWidth = 1.5;
+        visibleMembers.forEach(m => {
+            const ni = nodes[m.i];
+            const nj = nodes[m.j];
+
+            if (is3D) {
+                const d_i = {
+                    dx: D_global[m.i * 6][0],
+                    dy: D_global[m.i * 6 + 1][0],
+                    dz: D_global[m.i * 6 + 2][0]
+                };
+                const d_j = {
+                    dx: D_global[m.j * 6][0],
+                    dy: D_global[m.j * 6 + 1][0],
+                    dz: D_global[m.j * 6 + 2][0]
+                };
+
+                ctx.beginPath();
+                for (let k = 0; k <= 10; k++) {
+                    const xi = k / 10;
+                    const dx = d_i.dx + (d_j.dx - d_i.dx) * xi;
+                    const dy = d_i.dy + (d_j.dy - d_i.dy) * xi;
+                    const dz = d_i.dz + (d_j.dz - d_i.dz) * xi;
+
+                    const original_x = ni.x + (nj.x - ni.x) * xi;
+                    const original_y = (ni.y || 0) + ((nj.y || 0) - (ni.y || 0)) * xi;
+                    const original_z = (ni.z || 0) + ((nj.z || 0) - (ni.z || 0)) * xi;
+
+                    const deformed_x = original_x + dx * dispScale;
+                    const deformed_y = original_y + dy * dispScale;
+                    const deformed_z = original_z + dz * dispScale;
+
+                    const deformedNode = { x: deformed_x, y: deformed_y, z: deformed_z };
+                    const projected = project3DTo2D(deformedNode, frame.mode);
+                    const p = transform(projected.x, projected.y);
+
+                    if (k === 0) ctx.moveTo(p.x, p.y);
+                    else ctx.lineTo(p.x, p.y);
+                }
+                ctx.stroke();
+            }
+        });
+
+        ctx.restore();
+    });
+};
