@@ -977,11 +977,11 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
             const perpX = -dy / length;
             const perpY = dx / length;
 
-            // 部材の等分布荷重を取得（存在する場合）
-            const w = m.w || 0; // kN/m
-            
+            // 部材の等分布荷重を取得（memberForcesに含まれる）
+            const w = forces.w || 0; // kN/m
+
             // デバッグ: 等分布荷重の値を確認
-            console.log(`📊 応力図描画: 部材 ${m.i+1}-${m.j+1}, w=${w}, m.w=${m.w}, stressType=${stressType}`);
+            console.log(`📊 応力図描画: 部材 ${m.i+1}-${m.j+1}, w=${w}, forces.w=${forces.w}, stressType=${stressType}`);
 
             // 部材を分割して応力値を計算
             const numDivisions = 20; // 部材を20分割

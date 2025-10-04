@@ -73,9 +73,9 @@ const utils = {
      * @param {number} decimals - 小数点以下桁数
      * @returns {string} フォーマットされた文字列
      */
-    formatNumber: (num, decimals = 2) => {
+        formatNumber: (num, decimals = 2) => {
         if (typeof num !== 'number' || isNaN(num)) return '0';
-        return Number(num.toFixed(decimals)).toLocaleString();
+            return Number(num.toFixed(decimals)).toLocaleString();
     },
 
     /**
@@ -216,7 +216,7 @@ const calculateSelfWeight = {
      * @param {number} length - 部材長さ (m)
      * @returns {number} 自重による分布荷重 (kN/m)
      */
-    getMemberSelfWeight: (density, area, length) => {
+        getMemberSelfWeight: (density, area, length) => {
         if (!density || !area || !length || density <= 0 || area <= 0 || length <= 0) {
             return 0;
         }
@@ -224,7 +224,7 @@ const calculateSelfWeight = {
         // 単位変換を考慮した計算
         // 密度: kg/m³, 断面積: cm² -> m², 重力加速度: 9.807 m/s²
         // 結果: kN/m
-        const areaInM2 = area * 1e-4; // cm² → m²
+            const areaInM2 = area * 1e-4; // cm² → m²
         const weightPerMeter = density * areaInM2 * 9.807 / 1000; // N/m → kN/m
         
         return weightPerMeter;
@@ -253,9 +253,12 @@ const calculateSelfWeight = {
             // 部材長さを計算
             const node1 = nodes[member.i];
             const node2 = nodes[member.j];
+            const dz1 = node1.z !== undefined ? node1.z : 0;
+            const dz2 = node2.z !== undefined ? node2.z : 0;
             const dx = node2.x - node1.x;
             const dy = node2.y - node1.y;
-            const length = Math.sqrt(dx * dx + dy * dy);
+            const dz = dz2 - dz1;
+            const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
             
             // 部材行から密度を取得
             const memberRow = membersTableBody.rows[index];
@@ -266,14 +269,19 @@ const calculateSelfWeight = {
             
             const densityInput = densityCell.querySelector('input');
             const density = densityInput ? parseFloat(densityInput.value) : 0;
-            
-            // 断面積を取得 (cm²)
-            const areaInput = memberRow.cells[6].querySelector('input');
-            const area = areaInput ? parseFloat(areaInput.value) : 0;
+
+            const memberData = members[index];
+            const areaFromMember = memberData && typeof memberData.A === 'number' ? memberData.A : 0;
+            let areaInM2 = areaFromMember;
+
+            if (areaInM2 <= 0) {
+                const areaInput = memberRow.cells[6]?.querySelector('input');
+                const areaRaw = areaInput ? parseFloat(areaInput.value) : 0;
+                areaInM2 = areaRaw * 1e-4; // cm² → m²
+            }
             
             // 部材全体の自重を計算 (kN)
-            if (density > 0 && area > 0 && length > 0) {
-                const areaInM2 = area * 1e-4; // cm² → m²
+            if (density > 0 && areaInM2 > 0 && length > 0) {
                 const totalWeight = density * areaInM2 * length * 9.807 / 1000; // kN
                 const weightPerMeter = totalWeight / length; // kN/m (表示用)
                 
@@ -282,143 +290,44 @@ const calculateSelfWeight = {
                 if (window.selfWeightCalcLogCount === 0) {
                     console.log(`部材${index + 1}自重計算詳細:`);
                     console.log(`  密度: ${density} kg/m³`);
-                    console.log(`  断面積: ${area} cm² (${areaInM2.toFixed(6)} m²)`);
+                    console.log(`  断面積: ${(areaInM2 * 1e4).toFixed(4)} cm² (${areaInM2.toFixed(6)} m²)`);
                     console.log(`  部材長: ${length.toFixed(3)} m`);
                     console.log(`  総重量: ${totalWeight.toFixed(4)} kN`);
                     console.log(`  単位重量: ${weightPerMeter.toFixed(4)} kN/m`);
                     window.selfWeightCalcLogCount = 1;
                 }
                 
-                // 部材の角度を計算（ラジアン）
-                const angle = Math.atan2(dy, dx);
-                const angleDegrees = Math.abs(angle * 180 / Math.PI);
-                
-                // 角度の許容範囲（度）
-                const HORIZONTAL_TOLERANCE = 5; // ±5度
-                const VERTICAL_TOLERANCE = 5; // ±5度
-                
-                // 部材の種類を判定
-                let memberType;
-                if (angleDegrees <= HORIZONTAL_TOLERANCE || angleDegrees >= (180 - HORIZONTAL_TOLERANCE)) {
-                    memberType = 'horizontal';
-                } else if (Math.abs(angleDegrees - 90) <= VERTICAL_TOLERANCE) {
-                    memberType = 'vertical';
-                } else {
-                    memberType = 'inclined';
-                }
-                
+                // 自重は常にグローバル座標系の-Z方向（鉛直下向き）に作用
+                // 全ての部材に対して等分布荷重として処理
+                const selfWeightValue = weightPerMeter; // 正の値=下向き（システム規約）
+
+                memberSelfWeights.push({
+                    memberIndex: index,
+                    member: index + 1,
+                    w: selfWeightValue,
+                    totalWeight: totalWeight,
+                    isFromSelfWeight: true,
+                    loadType: 'distributed',
+                    length: length,
+                    direction: { x: 0, y: 0, z: -1 }
+                });
+
                 // デバッグログ（最初の5回のみ）
                 if (!window.memberTypeLogCount) window.memberTypeLogCount = 0;
                 if (window.memberTypeLogCount < 5) {
-                    console.log(`部材${index + 1}: 角度=${angleDegrees.toFixed(1)}°, タイプ=${memberType}, 総重量=${totalWeight.toFixed(2)}kN, 長さ=${length.toFixed(2)}m`);
+                    console.log(`部材${index + 1}: 自重=${selfWeightValue.toFixed(4)}kN/m (鉛直下向き), 総重量=${totalWeight.toFixed(2)}kN, 長さ=${length.toFixed(2)}m`);
                     window.memberTypeLogCount++;
-                }
-                
-                if (memberType === 'horizontal') {
-                    // 水平部材：等分布荷重として作用
-                    const selfWeightValue = weightPerMeter; // システムの符号規約に合わせて正の値で下向き
-                    memberSelfWeights.push({
-                        memberIndex: index,
-                        member: index + 1,
-                        w: selfWeightValue,
-                        totalWeight: totalWeight,
-                        isFromSelfWeight: true,
-                        loadType: 'distributed'
-                    });
-                    
-                    // 詳細デバッグログ（最初の1回のみ）
-                    if (window.memberTypeLogCount === 0) {
-                        console.log(`水平部材${index + 1}: w=${selfWeightValue.toFixed(4)}kN/m (正の値=下向き[システム規約])`);
-                    }
-                    
-                    // 水平部材は等分布荷重として処理するため、節点荷重には追加しない
-                    // （等分布荷重は構造解析の固定端力として自動処理される）
-                    
-                } else if (memberType === 'vertical') {
-                    // 垂直部材：節点集中荷重として作用
-                    const lowerNodeIndex = node1.y > node2.y ? member.i : member.j;
-                    
-                    memberSelfWeights.push({
-                        memberIndex: index,
-                        member: index + 1,
-                        w: 0, // 等分布荷重は0
-                        totalWeight: totalWeight,
-                        isFromSelfWeight: true,
-                        loadType: 'concentrated',
-                        appliedNodeIndex: lowerNodeIndex  // 作用節点のインデックスを追加
-                    });
-                    
-                    // 全重量を下側の節点に集中
-                    if (!nodeWeightMap.has(lowerNodeIndex)) {
-                        nodeWeightMap.set(lowerNodeIndex, { nodeIndex: lowerNodeIndex, px: 0, py: 0, mz: 0 });
-                    }
-                    nodeWeightMap.get(lowerNodeIndex).py -= totalWeight;
-                    
-                    // デバッグログ
-                    if (window.memberTypeLogCount <= 5) {
-                        console.log(`  → 垂直部材: 節点${lowerNodeIndex + 1}にpy=${-totalWeight.toFixed(3)}kN追加`);
-                    }
-                    
-                } else {
-                    // 斜め部材：垂直成分を等分布荷重、水平成分を節点荷重として処理
-                    const cosAngle = Math.abs(Math.cos(angle));
-                    const sinAngle = Math.abs(Math.sin(angle));
-                    
-                    // 垂直成分（等分布荷重相当）
-                    const verticalComponent = weightPerMeter * cosAngle; // システム規約で正の値=下向き
-                    // 水平成分（節点荷重として分散）
-                    const horizontalWeight = totalWeight * sinAngle;
-                    
-                    memberSelfWeights.push({
-                        memberIndex: index,
-                        member: index + 1,
-                        w: verticalComponent, // 垂直成分（既に負の値）
-                        totalWeight: totalWeight,
-                        isFromSelfWeight: true,
-                        loadType: 'mixed',
-                        horizontalComponent: horizontalWeight,
-                        appliedNodeIndexes: [member.i, member.j]  // 水平成分が作用する節点
-                    });
-                    
-                    // 垂直成分は等分布荷重として処理されるため、節点荷重には追加しない
-                    // 水平成分のみを節点荷重として追加
-                    const horizontalHalfWeight = horizontalWeight / 2;
-                    const horizontalDirection = dx > 0 ? 1 : -1;
-                    
-                    // 節点iに水平成分
-                    if (!nodeWeightMap.has(member.i)) {
-                        nodeWeightMap.set(member.i, { nodeIndex: member.i, px: 0, py: 0, mz: 0 });
-                    }
-                    nodeWeightMap.get(member.i).px += horizontalDirection * horizontalHalfWeight;
-                    
-                    // 節点jに水平成分
-                    if (!nodeWeightMap.has(member.j)) {
-                        nodeWeightMap.set(member.j, { nodeIndex: member.j, px: 0, py: 0, mz: 0 });
-                    }
-                    nodeWeightMap.get(member.j).px += horizontalDirection * horizontalHalfWeight;
-                    
-                    // デバッグログ
-                    if (window.memberTypeLogCount <= 5) {
-                        console.log(`  → 斜め部材: 節点${member.i + 1}にpx=${(horizontalDirection * horizontalHalfWeight).toFixed(3)}kN, 節点${member.j + 1}にpx=${(horizontalDirection * horizontalHalfWeight).toFixed(3)}kN追加`);
-                    }
                 }
             }
         });
-        
-        // 節点荷重配列に変換
-        nodeWeightMap.forEach(nodeLoad => {
-            nodeSelfWeights.push(nodeLoad);
-        });
-        
+
         // デバッグ用ログ
         console.log('📊 自重計算結果:');
         console.log('  部材自重数:', memberSelfWeights.length);
-        console.log('  節点自重数:', nodeSelfWeights.length);
-        nodeSelfWeights.forEach((load, index) => {
-            console.log(`  節点${load.nodeIndex + 1}: px=${load.px.toFixed(3)}, py=${load.py.toFixed(3)}, mz=${load.mz.toFixed(3)}`);
-        });
-        
-        return { memberSelfWeights, nodeSelfWeights };
+        console.log('  全て鉛直下向きの等分布荷重として処理');
+
+        // 節点自重荷重は使用しない（全て等分布荷重として処理）
+        return { memberSelfWeights, nodeSelfWeights: [] };
     }
 };
 
@@ -474,19 +383,33 @@ function highlightSelectedElements() {
     
     try {
         const { nodes, members } = window.parseInputs();
+        const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+        const projectedNodes = nodes.map(node => project3DTo2D(node, projectionMode));
+        const visibleNodeIndices = getVisibleNodeIndices(nodes);
+
+        const getProjectedNode = (index) => {
+            if (index === null || index === undefined) return null;
+            return projectedNodes[index] || null;
+        };
+
+        const isNodeVisible = (index) => {
+            if (index === null || index === undefined) return false;
+            return visibleNodeIndices.has(index);
+        };
         
         // 単一選択処理：節点が優先、節点がない場合のみ部材を表示
         const hasValidNode = window.selectedNodeIndex !== null && window.selectedNodeIndex >= 0;
         const hasValidMember = window.selectedMemberIndex !== null && window.selectedMemberIndex >= 0;
         
-        if (hasValidNode) {
+        if (hasValidNode && isNodeVisible(window.selectedNodeIndex)) {
             // 節点が選択されている場合は節点のみを強調（青色で強調）
             console.log('単一節点選択処理開始:', window.selectedNodeIndex);
             const nodeIndex = window.selectedNodeIndex; // 0ベースの配列インデックス
             const node = nodes[nodeIndex];
+            const projectedNode = getProjectedNode(nodeIndex);
             console.log('単一節点選択チェック:', { selectedNodeIndex: window.selectedNodeIndex, nodeIndex, node, nodeExists: !!node });
-            if (node) {
-                const transformResult = window.lastDrawingContext.transform(node.x, node.y);
+            if (node && projectedNode) {
+                const transformResult = window.lastDrawingContext.transform(projectedNode.x, projectedNode.y);
                 console.log('変換結果:', { nodeCoords: {x: node.x, y: node.y}, transformResult });
                 const drawX = transformResult.x;
                 const drawY = transformResult.y;
@@ -510,9 +433,11 @@ function highlightSelectedElements() {
             if (member) {
                 const node1 = nodes[member.i];
                 const node2 = nodes[member.j];
-                if (node1 && node2) {
-                    const pos1 = window.lastDrawingContext.transform(node1.x, node1.y);
-                    const pos2 = window.lastDrawingContext.transform(node2.x, node2.y);
+                const projected1 = getProjectedNode(member.i);
+                const projected2 = getProjectedNode(member.j);
+                if (node1 && node2 && projected1 && projected2 && isNodeVisible(member.i) && isNodeVisible(member.j)) {
+                    const pos1 = window.lastDrawingContext.transform(projected1.x, projected1.y);
+                    const pos2 = window.lastDrawingContext.transform(projected2.x, projected2.y);
                     ctx.save();
                     ctx.strokeStyle = '#0066ff';
                     ctx.lineWidth = 5;
@@ -535,9 +460,11 @@ function highlightSelectedElements() {
         // 複数選択された節点を強調（赤色で強調）
         if (window.selectedNodes && window.selectedNodes.size > 0) {
             for (const nodeId of window.selectedNodes) {
+                if (!isNodeVisible(nodeId)) continue;
                 const node = nodes[nodeId];
-                if (node) {
-                    const transformResult = window.lastDrawingContext.transform(node.x, node.y);
+                const projectedNode = getProjectedNode(nodeId);
+                if (node && projectedNode) {
+                    const transformResult = window.lastDrawingContext.transform(projectedNode.x, projectedNode.y);
                     const drawX = transformResult.x;
                     const drawY = transformResult.y;
                     ctx.save();
@@ -558,9 +485,11 @@ function highlightSelectedElements() {
                 if (member) {
                     const node1 = nodes[member.i];
                     const node2 = nodes[member.j];
-                    if (node1 && node2) {
-                        const pos1 = window.lastDrawingContext.transform(node1.x, node1.y);
-                        const pos2 = window.lastDrawingContext.transform(node2.x, node2.y);
+                    const projected1 = getProjectedNode(member.i);
+                    const projected2 = getProjectedNode(member.j);
+                    if (node1 && node2 && projected1 && projected2 && isNodeVisible(member.i) && isNodeVisible(member.j)) {
+                        const pos1 = window.lastDrawingContext.transform(projected1.x, projected1.y);
+                        const pos2 = window.lastDrawingContext.transform(projected2.x, projected2.y);
                         ctx.save();
                         ctx.strokeStyle = '#ff4444';
                         ctx.lineWidth = 4;
@@ -1066,15 +995,22 @@ function detectMemberAtPosition(clientX, clientY) {
     // 投影モードと奥行き座標を取得
     const projectionMode = document.getElementById('projection-mode')?.value || 'xy';
     const hiddenAxisCoordSelect = document.getElementById('hidden-axis-coord');
-    const hiddenAxisCoord = hiddenAxisCoordSelect ? parseFloat(hiddenAxisCoordSelect.value) : 0;
+    const rawHiddenAxisCoord = hiddenAxisCoordSelect ? parseFloat(hiddenAxisCoordSelect.value) : 0;
+    const hiddenAxisCoord = Number.isFinite(rawHiddenAxisCoord) ? rawHiddenAxisCoord : null;
+    const hiddenAxisCoordLog = hiddenAxisCoord !== null ? hiddenAxisCoord : 'n/a';
+    const hiddenAxisCoordText = hiddenAxisCoord !== null ? hiddenAxisCoord.toFixed(3) : 'n/a';
 
     // 画面上の近接判定はピクセル単位で行い、閾値を一定に保つ
     const tolerancePixels = 12;
     const depthTolerance = 0.01; // 奥行き方向の許容誤差 (m)
 
+    const depthAxisMap = { xy: 'z', xz: 'y', yz: 'x' };
+    const depthAxis = depthAxisMap[projectionMode] || null;
+    const depthAxisLabel = depthAxis ? depthAxis.toUpperCase() : null;
+
     console.log('📏 近接判定しきい値:', `${tolerancePixels}px`, '(スケール:', currentScale.toFixed(2), ')');
     console.log('🔧 transformFn存在:', !!transformFn, 'currentDrawingContext:', !!currentDrawingContext);
-    console.log('📐 投影モード:', projectionMode, '奥行き座標:', hiddenAxisCoord);
+    console.log('📐 投影モード:', projectionMode, '奥行き軸:', depthAxisLabel || 'N/A', '奥行き座標:', hiddenAxisCoordLog);
 
     let closestMember = null;
     let closestDistancePixels = Infinity;
@@ -1092,40 +1028,35 @@ function detectMemberAtPosition(clientX, clientY) {
         const y2 = node2.y || 0;
         const z2 = node2.z || 0;
 
-        // 投影面に応じた2D座標を取得（フィルタリングなし、全部材を投影）
-        let coord1_x, coord1_y, coord2_x, coord2_y;
+        // 奥行き座標によるフィルタリング（投影面に応じて判定）
+        let node1Depth = null;
+        let node2Depth = null;
+        if (depthAxis && hiddenAxisCoord !== null) {
+            node1Depth = depthAxis === 'x' ? x1 : depthAxis === 'y' ? y1 : z1;
+            node2Depth = depthAxis === 'x' ? x2 : depthAxis === 'y' ? y2 : z2;
+            const node1Matches = Math.abs(node1Depth - hiddenAxisCoord) <= depthTolerance;
+            const node2Matches = Math.abs(node2Depth - hiddenAxisCoord) <= depthTolerance;
 
-        switch(projectionMode) {
-            case 'xy':
-                // XY平面投影: X,Y座標を使用
-                coord1_x = x1;
-                coord1_y = y1;
-                coord2_x = x2;
-                coord2_y = y2;
-                break;
-            case 'xz':
-                // XZ平面投影: X,Z座標を使用
-                coord1_x = x1;
-                coord1_y = z1;
-                coord2_x = x2;
-                coord2_y = z2;
-                break;
-            case 'yz':
-                // YZ平面投影: Y,Z座標を使用
-                coord1_x = y1;
-                coord1_y = z1;
-                coord2_x = y2;
-                coord2_y = z2;
-                break;
-            case 'iso':
-            default:
-                // 等角投影: X,Y座標を使用
-                coord1_x = x1;
-                coord1_y = y1;
-                coord2_x = x2;
-                coord2_y = y2;
-                break;
+            if (!node1Matches || !node2Matches) {
+                memberDistances.push({
+                    部材: member.number,
+                    距離_mm: '-(depth)',
+                    画面距離_px: '-(depth)',
+                    閾値内: '✗ 奥行',
+                    座標: `(${x1.toFixed(1)},${y1.toFixed(1)},${z1.toFixed(1)})-(${x2.toFixed(1)},${y2.toFixed(1)},${z2.toFixed(1)})`,
+                    奥行座標: `${depthAxisLabel}:${node1Depth.toFixed(3)},${node2Depth.toFixed(3)} → ${hiddenAxisCoordText}`
+                });
+                return;
+            }
         }
+
+        // 描画と同じ投影処理を適用
+        const projected1 = project3DTo2D({ x: x1, y: y1, z: z1 }, projectionMode);
+        const projected2 = project3DTo2D({ x: x2, y: y2, z: z2 }, projectionMode);
+        const coord1_x = projected1.x;
+        const coord1_y = projected1.y;
+        const coord2_x = projected2.x;
+        const coord2_y = projected2.y;
 
         // ワールド座標と画面座標の両方で距離を計算
         const worldDistance = distanceFromPointToLine(
@@ -1158,7 +1089,9 @@ function detectMemberAtPosition(clientX, clientY) {
             距離_mm: worldDistance.toFixed(2),
             画面距離_px: Number.isFinite(screenDistance) ? screenDistance.toFixed(2) : 'N/A',
             閾値内: screenDistance <= tolerancePixels ? '✓' : '✗',
-            座標: `(${x1.toFixed(1)},${y1.toFixed(1)},${z1.toFixed(1)})-(${x2.toFixed(1)},${y2.toFixed(1)},${z2.toFixed(1)})`
+            座標: `(${x1.toFixed(1)},${y1.toFixed(1)},${z1.toFixed(1)})-(${x2.toFixed(1)},${y2.toFixed(1)},${z2.toFixed(1)})`,
+            投影座標: `(${coord1_x.toFixed(1)},${coord1_y.toFixed(1)})-(${coord2_x.toFixed(1)},${coord2_y.toFixed(1)})`,
+            奥行座標: depthAxis && hiddenAxisCoord !== null ? `${depthAxisLabel}:${node1Depth.toFixed(3)},${node2Depth.toFixed(3)} → ${hiddenAxisCoordText}` : '-'
         });
         
         if (Number.isFinite(screenDistance) && screenDistance <= tolerancePixels && screenDistance < closestDistancePixels) {
@@ -3444,6 +3377,57 @@ document.addEventListener('DOMContentLoaded', () => {
             const num = typeof value === 'number' ? value : parseFloat(value);
             return Number.isFinite(num) ? num : defaultValue;
         };
+        const asFiniteNumber = (value) => {
+            if (value === undefined || value === null || value === '') return null;
+            const num = typeof value === 'number' ? value : parseFloat(value);
+            return Number.isFinite(num) ? num : null;
+        };
+        const getNumberValue = (value, defaultValue = 0) => {
+            const num = asFiniteNumber(value);
+            return num !== null ? num : defaultValue;
+        };
+        const getPositiveNumberValue = (value, defaultValue) => {
+            const num = asFiniteNumber(value);
+            if (num !== null && num > 0) return num;
+            return defaultValue;
+        };
+        const pickMemberValue = (member, keys, defaultValue) => {
+            for (const key of keys) {
+                const num = getPositiveNumberValue(member?.[key], null);
+                if (num !== null) {
+                    return num;
+                }
+            }
+            return defaultValue;
+        };
+        const normalizeSupport = (value) => {
+            if (!value) return 'free';
+            switch (value) {
+                case 'f':
+                    return 'free';
+                case 'p':
+                    return 'pinned';
+                case 'x':
+                    return 'fixed';
+                case 'r':
+                    return 'roller';
+                default:
+                    return value;
+            }
+        };
+        const MEMBER_PROPERTY_DEFAULTS = Object.freeze({
+            Iz: 1840,
+            Iy: 613,
+            J: 235,
+            A: 2340,
+            Zz: 1230,
+            Zy: 410
+        });
+        const getValue = (value, defaultValue = 0) => getNumberValue(value, defaultValue);
+        const buildSupportSelect = (supportValue) => {
+            const support = normalizeSupport(supportValue);
+            return `<select><option value="free"${support === 'free' ? ' selected' : ''}>自由</option><option value="pinned"${support === 'pinned' ? ' selected' : ''}>ピン</option><option value="fixed"${support === 'fixed' ? ' selected' : ''}>固定</option><option value="roller"${support === 'roller' ? ' selected' : ''}>ローラー</option></select>`;
+        };
 
         try {
             elements.nodesTable.innerHTML = '';
@@ -3452,17 +3436,58 @@ document.addEventListener('DOMContentLoaded', () => {
             elements.memberLoadsTable.innerHTML = '';
             
             // 節点復元
-            state.nodes.forEach(n => addRow(elements.nodesTable, [`#`, `<input type="number" value="${n.x}">`, `<input type="number" value="${n.y}">`, `<select><option value="free"${n.support==='free'?' selected':''}>自由</option><option value="pinned"${n.support==='pinned'?' selected':''}>ピン</option><option value="fixed"${n.support==='fixed'?' selected':''}>固定</option><option value="roller"${n.support==='roller'?' selected':''}>ローラー</option></select>`, `<input type="number" value="${n.dx_forced || 0}" step="0.1">`, `<input type="number" value="${n.dy_forced || 0}" step="0.1">`, `<input type="number" value="${n.r_forced || 0}" step="0.001">`], false));
+            state.nodes.forEach(n => addRow(elements.nodesTable, [
+                `#`,
+                `<input type="number" value="${getNumberValue(n.x, 0)}">`,
+                `<input type="number" value="${getNumberValue(n.y, 0)}">`,
+                `<input type="number" value="${getNumberValue(n.z, 0)}">`,
+                buildSupportSelect(n.support),
+                `<input type="number" value="${getNumberValue(n.dx_forced, 0)}" step="0.1">`,
+                `<input type="number" value="${getNumberValue(n.dy_forced, 0)}" step="0.1">`,
+                `<input type="number" value="${getNumberValue(n.dz_forced, 0)}" step="0.1">`,
+                `<input type="number" value="${getNumberValue(n.rx_forced, 0)}" step="0.001">`,
+                `<input type="number" value="${getNumberValue(n.ry_forced, 0)}" step="0.001">`,
+                `<input type="number" value="${getNumberValue(n.rz_forced, 0)}" step="0.001">`
+            ], false));
             
             // 部材復元
             state.members.forEach(m => {
                 try {
-                    const I_m4 = toNumberOrDefault(m.I) * 1e-8;
-                    const A_m2 = toNumberOrDefault(m.A) * 1e-4;
-                    const Z_m3 = toNumberOrDefault(m.Z) * 1e-6;
+                    const iz_cm4 = pickMemberValue(m, ['Iz', 'iz', 'I'], MEMBER_PROPERTY_DEFAULTS.Iz);
+                    const iy_cm4 = pickMemberValue(m, ['Iy', 'iy'], MEMBER_PROPERTY_DEFAULTS.Iy);
+                    const j_cm4 = pickMemberValue(m, ['J', 'j'], MEMBER_PROPERTY_DEFAULTS.J);
+                    const a_cm2 = pickMemberValue(m, ['A', 'a'], MEMBER_PROPERTY_DEFAULTS.A);
+                    const zz_cm3 = pickMemberValue(m, ['Zz', 'Z', 'zz'], MEMBER_PROPERTY_DEFAULTS.Zz);
+                    const zy_cm3 = pickMemberValue(m, ['Zy', 'zy'], MEMBER_PROPERTY_DEFAULTS.Zy);
+
+                    const memberI = getNumberValue(m.i, 1);
+                    const memberJ = getNumberValue(m.j, 2);
+                    const memberIConn = m.i_conn || m.ic || 'rigid';
+                    const memberJConn = m.j_conn || m.jc || 'rigid';
+                    const Iz_m4 = getPositiveNumberValue(iz_cm4, MEMBER_PROPERTY_DEFAULTS.Iz) * 1e-8;
+                    const Iy_m4 = getPositiveNumberValue(iy_cm4, MEMBER_PROPERTY_DEFAULTS.Iy) * 1e-8;
+                    const J_m4 = getPositiveNumberValue(j_cm4, MEMBER_PROPERTY_DEFAULTS.J) * 1e-8;
+                    const A_m2 = getPositiveNumberValue(a_cm2, MEMBER_PROPERTY_DEFAULTS.A) * 1e-4;
+                    const Zz_m3 = getPositiveNumberValue(zz_cm3, MEMBER_PROPERTY_DEFAULTS.Zz) * 1e-6;
+                    const Zy_m3 = getPositiveNumberValue(zy_cm3, MEMBER_PROPERTY_DEFAULTS.Zy) * 1e-6;
                     
                     // memberRowHTML の戻り値を安全に取得
-                    const memberHTML = memberRowHTML(m.i, m.j, m.E, "235", I_m4, A_m2, Z_m3, m.i_conn, m.j_conn);
+                    const memberHTML = memberRowHTML(
+                        memberI,
+                        memberJ,
+                        m.E || '205000',
+                        '235',
+                        Iz_m4,
+                        Iy_m4,
+                        J_m4,
+                        A_m2,
+                        Zz_m3,
+                        Zy_m3,
+                        memberIConn,
+                        memberJConn,
+                        safeDecode(m.sectionLabel || ''),
+                        (m.sectionAxis && m.sectionAxis.label) ? safeDecode(m.sectionAxis.label) : safeDecode(m.sectionAxisLabel || '')
+                    );
                     if (!memberHTML || !Array.isArray(memberHTML)) {
                         console.warn('memberRowHTML returned invalid data:', memberHTML);
                         return;
@@ -3535,10 +3560,22 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             
             // 節点荷重復元
-            state.nodeLoads.forEach(l => addRow(elements.nodeLoadsTable, [`<input type="number" value="${l.node}">`, `<input type="number" value="${l.px}">`, `<input type="number" value="${l.py}">`, `<input type="number" value="${l.mz}">`], false));
+            state.nodeLoads.forEach(l => addRow(elements.nodeLoadsTable, [
+                `<input type="number" value="${getNumberValue(l.node ?? l.n, 1)}">`,
+                `<input type="number" value="${getNumberValue(l.px, 0)}">`,
+                `<input type="number" value="${getNumberValue(l.py, 0)}">`,
+                `<input type="number" value="${getNumberValue(l.pz, 0)}">`,
+                `<input type="number" value="${getNumberValue(l.mx, 0)}">`,
+                `<input type="number" value="${getNumberValue(l.my, 0)}">`,
+                `<input type="number" value="${getNumberValue(l.mz, 0)}">`
+            ], false));
             
             // 部材荷重復元
-            state.memberLoads.forEach(l => addRow(elements.memberLoadsTable, [`<input type="number" value="${l.member}">`, `<input type="number" value="${l.w}">`], false));
+            state.memberLoads.forEach(l => addRow(elements.memberLoadsTable, [
+                `<input type="number" value="${getNumberValue(l.member ?? l.m, 1)}">`,
+                `<input type="number" value="${getNumberValue(l.wy ?? l.w, 0)}">`,
+                `<input type="number" value="${getNumberValue(l.wz, 0)}">`
+            ], false));
             
             renumberTables();
             if (typeof drawOnCanvas === 'function') {
@@ -3962,46 +3999,181 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
             
-            // 解析用に自重の等分布荷重を部材荷重に合成
+            // 解析用に自重荷重を部材・節点荷重へ統合（常にグローバル-Z方向）
             const combinedMemberLoads = [...memberLoads];
-            if (memberSelfWeights && memberSelfWeights.length > 0) {
-                memberSelfWeights.forEach(selfWeightLoad => {
-                    if (selfWeightLoad.loadType === 'distributed') {
-                        // 水平部材の自重を等分布荷重として追加
-                        const distributedLoad = {
-                            memberIndex: selfWeightLoad.memberIndex,
-                            w: selfWeightLoad.w
-                        };
-                        combinedMemberLoads.push(distributedLoad);
-                    } else if (selfWeightLoad.loadType === 'mixed' && selfWeightLoad.w !== 0) {
-                        const distributedLoad = {
-                            memberIndex: selfWeightLoad.memberIndex,
-                            w: selfWeightLoad.w
-                        };
-                        combinedMemberLoads.push(distributedLoad);
-                    }
-                });
-            }
-            
-            // 解析用に自重荷重を節点荷重に合成
             const combinedNodeLoads = [...nodeLoads];
-            if (nodeSelfWeights && nodeSelfWeights.length > 0) {
-                nodeSelfWeights.forEach(selfWeightLoad => {
-                    const existingLoad = combinedNodeLoads.find(load => load.nodeIndex === selfWeightLoad.nodeIndex);
-                    if (existingLoad) {
-                        // 既存荷重に自重を加算
-                        existingLoad.px += selfWeightLoad.px;
-                        existingLoad.py += selfWeightLoad.py;
-                        existingLoad.mz += selfWeightLoad.mz;
-                    } else {
-                        // 新しい節点荷重として追加
-                        combinedNodeLoads.push({
-                            nodeIndex: selfWeightLoad.nodeIndex,
-                            px: selfWeightLoad.px,
-                            py: selfWeightLoad.py,
-                            mz: selfWeightLoad.mz
+
+            if (memberSelfWeights && memberSelfWeights.length > 0) {
+                console.log('🔧 自重荷重を解析に追加（全てグローバル座標系の−Z方向）:');
+
+                const EPS = 1e-9;
+                const downwardUnit = is2DFrame ? { x: 0, y: -1, z: 0 } : { x: 0, y: 0, z: -1 };
+
+                const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+                const cross = (a, b) => ({
+                    x: a.y * b.z - a.z * b.y,
+                    y: a.z * b.x - a.x * b.z,
+                    z: a.x * b.y - a.y * b.x
+                });
+                const magnitude = (v) => Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+                const normalize = (v) => {
+                    const len = magnitude(v);
+                    if (len <= EPS) return { x: 0, y: 0, z: 0 };
+                    return { x: v.x / len, y: v.y / len, z: v.z / len };
+                };
+                const scale = (v, s) => ({ x: v.x * s, y: v.y * s, z: v.z * s });
+
+                const selfWeightNodeMap = new Map();
+                const ensureNodeLoad = (nodeIndex) => {
+                    if (!selfWeightNodeMap.has(nodeIndex)) {
+                        selfWeightNodeMap.set(nodeIndex, {
+                            nodeIndex,
+                            px: 0,
+                            py: 0,
+                            pz: 0,
+                            mx: 0,
+                            my: 0,
+                            mz: 0,
+                            isFromSelfWeight: true
                         });
                     }
+                    return selfWeightNodeMap.get(nodeIndex);
+                };
+
+                memberSelfWeights.forEach(selfWeightLoad => {
+                    const member = members[selfWeightLoad.memberIndex];
+                    if (!member) return;
+
+                    const nodeI = nodes[member.i];
+                    const nodeJ = nodes[member.j];
+                    if (!nodeI || !nodeJ) return;
+
+                    const dx = (nodeJ.x ?? 0) - (nodeI.x ?? 0);
+                    const dy = (nodeJ.y ?? 0) - (nodeI.y ?? 0);
+                    const dz = is2DFrame ? 0 : ((nodeJ.z ?? 0) - (nodeI.z ?? 0));
+                    const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    if (!(length > EPS)) return;
+
+                    const localX = normalize({ x: dx, y: dy, z: dz });
+                    let localY;
+                    let localZ;
+
+                    if (is2DFrame) {
+                        const globalZAxis = { x: 0, y: 0, z: 1 };
+                        localY = normalize(cross(globalZAxis, localX));
+                        localZ = globalZAxis;
+                        if (magnitude(localY) <= EPS) {
+                            localY = { x: 0, y: 1, z: 0 };
+                        }
+                    } else {
+                        if (Math.abs(localX.z) < 0.9) {
+                            const temp = Math.sqrt(localX.x * localX.x + localX.y * localX.y);
+                            localZ = normalize({
+                                x: -localX.z * localX.x / temp,
+                                y: -localX.z * localX.y / temp,
+                                z: temp
+                            });
+                            localY = normalize(cross(localZ, localX));
+                        } else {
+                            localY = { x: 0, y: 1, z: 0 };
+                            localZ = normalize(cross(localX, localY));
+                            localY = normalize(cross(localZ, localX));
+                        }
+                    }
+
+                    const weightPerMeter = selfWeightLoad.w || 0;
+                    if (Math.abs(weightPerMeter) < EPS) return;
+
+                    const loadVector = scale(downwardUnit, weightPerMeter);
+                    const axialComponent = dot(loadVector, localX);
+                    const wyComponent = dot(loadVector, localY);
+                    const wzComponent = is2DFrame ? 0 : dot(loadVector, localZ);
+
+                    const hasTransverse = Math.abs(wyComponent) > EPS || Math.abs(wzComponent) > EPS;
+                    if (hasTransverse) {
+                        const distributedLoad = {
+                            memberIndex: selfWeightLoad.memberIndex,
+                            wy: Math.abs(wyComponent) > EPS ? wyComponent : 0,
+                            wz: is2DFrame ? 0 : (Math.abs(wzComponent) > EPS ? wzComponent : 0),
+                            w: weightPerMeter,
+                            isFromSelfWeight: true
+                        };
+                        console.log(`  部材${selfWeightLoad.memberIndex + 1}: wy=${distributedLoad.wy.toFixed(4)}kN/m, wz=${(distributedLoad.wz || 0).toFixed(4)}kN/m`);
+                        combinedMemberLoads.push(distributedLoad);
+                    } else {
+                        console.log(`  部材${selfWeightLoad.memberIndex + 1}: 分布荷重成分なし（軸方向のみ）`);
+                    }
+
+                    const axialMagnitude = Math.abs(axialComponent);
+                    if (axialMagnitude > EPS) {
+                        const totalAxialLoad = axialMagnitude * length;
+                        const sharedLoad = -totalAxialLoad / 2;
+                        const loadI = ensureNodeLoad(member.i);
+                        const loadJ = ensureNodeLoad(member.j);
+                        if (is2DFrame) {
+                            loadI.py += sharedLoad;
+                            loadJ.py += sharedLoad;
+                        } else {
+                            loadI.pz += sharedLoad;
+                            loadJ.pz += sharedLoad;
+                        }
+                        console.log(`    ↳ 節点${member.i + 1}/${member.j + 1}: 各${sharedLoad.toFixed(4)}kN (集中)`);
+                    }
+                });
+
+                // 軸方向成分を節点荷重に加算
+                if (selfWeightNodeMap.size > 0) {
+                    let totalVertical = 0;
+                    selfWeightNodeMap.forEach(load => {
+                        const existing = combinedNodeLoads.find(item => item.nodeIndex === load.nodeIndex);
+                        if (existing) {
+                            existing.px = (existing.px || 0) + (load.px || 0);
+                            existing.py = (existing.py || 0) + (load.py || 0);
+                            existing.pz = (existing.pz || 0) + (load.pz || 0);
+                            existing.mx = (existing.mx || 0) + (load.mx || 0);
+                            existing.my = (existing.my || 0) + (load.my || 0);
+                            existing.mz = (existing.mz || 0) + (load.mz || 0);
+                            if (load.isFromSelfWeight) existing.isFromSelfWeight = true;
+                        } else {
+                            combinedNodeLoads.push(load);
+                        }
+                        const verticalComponent = is2DFrame ? (load.py || 0) : (load.pz || 0);
+                        totalVertical += verticalComponent;
+                        console.log(`  節点${load.nodeIndex + 1}: ${is2DFrame ? 'Py' : 'Pz'}=${verticalComponent.toFixed(4)}kN (自重軸成分)`);
+                    });
+                    console.log(`  ▶ 節点自重合計: ${is2DFrame ? 'Py' : 'Pz'}=${totalVertical.toFixed(4)}kN`);
+                }
+            }
+
+            // 解析用に自重節点荷重（事前計算分）があれば統合
+            if (nodeSelfWeights && nodeSelfWeights.length > 0) {
+                console.log('🔧 自重節点荷重を解析に追加:');
+                nodeSelfWeights.forEach(selfWeightLoad => {
+                    const existingLoad = combinedNodeLoads.find(load => load.nodeIndex === selfWeightLoad.nodeIndex);
+                    const target = existingLoad || {
+                        nodeIndex: selfWeightLoad.nodeIndex,
+                        px: 0,
+                        py: 0,
+                        pz: 0,
+                        mx: 0,
+                        my: 0,
+                        mz: 0
+                    };
+
+                    ['px', 'py', 'pz', 'mx', 'my', 'mz'].forEach(key => {
+                        if (typeof selfWeightLoad[key] === 'number') {
+                            target[key] = (target[key] || 0) + selfWeightLoad[key];
+                        }
+                    });
+                    target.isFromSelfWeight = true;
+
+                    if (!existingLoad) {
+                        combinedNodeLoads.push(target);
+                    }
+
+                    const logLabel = is2DFrame ? 'Py' : 'Pz';
+                    const logValue = is2DFrame ? (target.py || 0) : (target.pz || 0);
+                    console.log(`  節点${target.nodeIndex + 1}: ${logLabel}=${logValue.toFixed(4)}kN (追加自重)`);
                 });
             }
             
@@ -4375,23 +4547,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 // 部材断面力の計算（2D/3Dで処理を分ける）
                 const memberForces = members.map((member, idx) => {
+                    // 部材に作用する荷重を取得
+                    const memberLoad = memberLoadMap.get(idx);
+                    const wy = memberLoad ? (memberLoad.wy !== undefined ? memberLoad.wy : (memberLoad.w || 0)) : 0;
+                    const wz = memberLoad ? (memberLoad.wz || 0) : 0;
+
                     if (is2DFrame) {
                         // 2D解析
                         const { T, k_local, i, j } = member;
                         const d_global_member = [ ...D_global.slice(i * 3, i * 3 + 3), ...D_global.slice(j * 3, j * 3 + 3) ];
                         const d_local = mat.multiply(T, d_global_member);
                         let f_local = mat.multiply(k_local, d_local);
-                        if(fixedEndForces[idx]) { 
-                            const fel_mat = fixedEndForces[idx].map(v=>[v]); 
-                            f_local = mat.add(f_local, fel_mat); 
+                        if(fixedEndForces[idx]) {
+                            const fel_mat = fixedEndForces[idx].map(v=>[v]);
+                            f_local = mat.add(f_local, fel_mat);
                         }
-                        return { 
-                            N_i: f_local[0][0], 
-                            Q_i: f_local[1][0], 
-                            M_i: f_local[2][0], 
-                            N_j: f_local[3][0], 
-                            Q_j: f_local[4][0], 
-                            M_j: f_local[5][0] 
+                        return {
+                            N_i: f_local[0][0],
+                            Q_i: f_local[1][0],
+                            M_i: f_local[2][0],
+                            N_j: f_local[3][0],
+                            Q_j: f_local[4][0],
+                            M_j: f_local[5][0],
+                            w: wy  // 等分布荷重を追加
                         };
                     } else {
                         // 3D解析
@@ -4423,7 +4601,9 @@ document.addEventListener('DOMContentLoaded', () => {
                             Q_i: f_local[2][0],
                             M_i: f_local[4][0],
                             Q_j: f_local[8][0],
-                            M_j: f_local[10][0]
+                            M_j: f_local[10][0],
+                            w: wy,   // 等分布荷重Y方向を追加
+                            wz: wz   // 等分布荷重Z方向を追加
                         };
                     }
                 });
@@ -4473,23 +4653,29 @@ document.addEventListener('DOMContentLoaded', () => {
             // 部材断面力の計算（2D/3Dで処理を分ける）
             // ==========================================================
             const memberForces = members.map((member, idx) => {
+                // 部材に作用する荷重を取得
+                const memberLoad = memberLoadMap.get(idx);
+                const wy = memberLoad ? (memberLoad.wy !== undefined ? memberLoad.wy : (memberLoad.w || 0)) : 0;
+                const wz = memberLoad ? (memberLoad.wz || 0) : 0;
+
                 if (is2DFrame) {
                     // 2D解析
                     const { T, k_local, i, j } = member;
                     const d_global_member = [ ...D_global.slice(i * 3, i * 3 + 3), ...D_global.slice(j * 3, j * 3 + 3) ];
                     const d_local = mat.multiply(T, d_global_member);
                     let f_local = mat.multiply(k_local, d_local);
-                    if(fixedEndForces[idx]) { 
-                        const fel_mat = fixedEndForces[idx].map(v=>[v]); 
-                        f_local = mat.add(f_local, fel_mat); 
+                    if(fixedEndForces[idx]) {
+                        const fel_mat = fixedEndForces[idx].map(v=>[v]);
+                        f_local = mat.add(f_local, fel_mat);
                     }
-                    return { 
-                        N_i: f_local[0][0], 
-                        Q_i: f_local[1][0], 
-                        M_i: f_local[2][0], 
-                        N_j: f_local[3][0], 
-                        Q_j: f_local[4][0], 
-                        M_j: f_local[5][0] 
+                    return {
+                        N_i: f_local[0][0],
+                        Q_i: f_local[1][0],
+                        M_i: f_local[2][0],
+                        N_j: f_local[3][0],
+                        Q_j: f_local[4][0],
+                        M_j: f_local[5][0],
+                        w: wy  // 等分布荷重を追加
                     };
                 } else {
                     // 3D解析
@@ -4500,10 +4686,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         D_global[j*6][0], D_global[j*6+1][0], D_global[j*6+2][0],
                         D_global[j*6+3][0], D_global[j*6+4][0], D_global[j*6+5][0]
                     ].map(v => [v]);
-                    
+
                     const d_local = mat.multiply(T3D, d_global_member);
                     let f_local = mat.multiply(k_local_3d, d_local);
-                    
+
                     // 3D部材荷重の固定端力は未実装のため、現在は0として扱う
                     // TODO: 3D部材荷重の固定端力を実装
 
@@ -4526,7 +4712,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         Q_i: f_local[2][0],    // デフォルトはZ方向
                         M_i: f_local[4][0],    // デフォルトはY軸周り
                         Q_j: f_local[8][0],    // デフォルトはZ方向
-                        M_j: f_local[10][0]    // デフォルトはY軸周り
+                        M_j: f_local[10][0],   // デフォルトはY軸周り
+                        w: wy,                 // 等分布荷重Y方向を追加
+                        wz: wz                 // 等分布荷重Z方向を追加
                     };
                 }
             });
@@ -4565,6 +4753,47 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
     
+    const clearRowValidationState = (row) => {
+        if (!row) return;
+        row.classList.remove('input-error');
+        delete row.dataset.validationError;
+        const controls = row.querySelectorAll('input, select, textarea');
+        controls.forEach(control => {
+            control.classList.remove('input-error-field');
+            control.removeAttribute('data-validation-message');
+            control.removeAttribute('aria-invalid');
+        });
+    };
+
+    const markRowValidationError = (row, message) => {
+        if (!row) return;
+        row.classList.add('input-error');
+        row.dataset.validationError = message;
+        const controls = row.querySelectorAll('input, select, textarea');
+        controls.forEach(control => {
+            control.classList.add('input-error-field');
+            control.setAttribute('data-validation-message', message);
+            control.setAttribute('aria-invalid', 'true');
+        });
+        if (elements && elements.errorMessage) {
+            elements.errorMessage.textContent = `エラー: ${message}`;
+            elements.errorMessage.style.display = 'block';
+        }
+    };
+
+    const getNodePopupField = (id, { required = true } = {}) => {
+        const element = document.getElementById(id);
+        if (!element && required) {
+            const message = `節点プロパティポップアップの要素 '${id}' が見つかりません。`;
+            console.error(`❌ ${message}`);
+            if (elements && elements.errorMessage) {
+                elements.errorMessage.textContent = `エラー: ${message}`;
+                elements.errorMessage.style.display = 'block';
+            }
+        }
+        return element || null;
+    };
+
     const parseInputs = () => {
         // プリセット読み込み中は簡易的なダミーデータを返してエラーを回避
         if (window.isLoadingPreset) {
@@ -4586,8 +4815,19 @@ document.addEventListener('DOMContentLoaded', () => {
             window.selfWeightLogCount = 0;
             window.resetErrorLogs = false;
         }
+
+        if (elements && elements.errorMessage) {
+            elements.errorMessage.style.display = 'none';
+            elements.errorMessage.textContent = '';
+        }
         
-        const nodes = Array.from(elements.nodesTable.rows).map((row, i) => {
+    const nodeRows = Array.from(elements.nodesTable.rows);
+    nodeRows.forEach(clearRowValidationState);
+
+    const membersRows = Array.from(elements.membersTable.rows);
+    membersRows.forEach(clearRowValidationState);
+
+    const nodes = nodeRows.map((row, i) => {
             // 安全な値取得
             const xInput = row.cells[1]?.querySelector('input');
             const yInput = row.cells[2]?.querySelector('input');
@@ -4621,7 +4861,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 rz_forced: rz_forced_rad
             };
         });
-        const members = Array.from(elements.membersTable.rows).map((row, index) => {
+    const members = membersRows.map((row, index) => {
             // 安全な節点番号取得
             const iNodeInput = row.cells[1]?.querySelector('input');
             const jNodeInput = row.cells[2]?.querySelector('input');
@@ -4700,7 +4940,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const zySectionInput = row.cells[10]?.querySelector('input');
             
             if (!izMomentInput || !iyMomentInput || !jTorsionInput || !aAreaInput || !zzSectionInput || !zySectionInput) {
-                throw new Error(`部材 ${index + 1}: 断面諸量の入力フィールドが見つかりません`);
+                const message = `部材 ${index + 1}: 断面諸量の入力フィールドが見つかりません`;
+                markRowValidationError(row, message);
+                throw new Error(message);
             }
             
             const Iz = parseFloat(izMomentInput.value) * 1e-8;
@@ -4819,10 +5061,27 @@ document.addEventListener('DOMContentLoaded', () => {
             // 2D互換性: dataset から追加の断面性能を読み取る (3Dでは不要だが残す)
             // const Zx_dataset = parseFloat(row.dataset.zx) * 1e-6, Zy_dataset = parseFloat(row.dataset.zy) * 1e-6;
             const ix = parseFloat(row.dataset.ix) * 1e-2 || Math.sqrt(Iz / A), iy = parseFloat(row.dataset.iy) * 1e-2 || Math.sqrt(Iy / A);
-            if (isNaN(E) || isNaN(Iz) || isNaN(Iy) || isNaN(J) || isNaN(A) || isNaN(Zz) || isNaN(Zy)) throw new Error(`部材 ${index + 1} の物性値が無効です。`);
-            if (i < 0 || j < 0 || i >= nodes.length || j >= nodes.length) throw new Error(`部材 ${index + 1} の節点番号が不正です。`);
+            if (isNaN(E) || isNaN(Iz) || isNaN(Iy) || isNaN(J) || isNaN(A) || isNaN(Zz) || isNaN(Zy)) {
+                const message = `部材 ${index + 1} の物性値が無効です。`;
+                markRowValidationError(row, message);
+                throw new Error(message);
+            }
+            if (i < 0 || j < 0 || i >= nodes.length || j >= nodes.length) {
+                const message = `部材 ${index + 1} の節点番号が不正です。`;
+                markRowValidationError(row, message);
+                throw new Error(message);
+            }
+            if (i === j) {
+                const message = `部材 ${index + 1}: 始端と終端の節点番号が同一です。異なる節点を指定してください。`;
+                markRowValidationError(row, message);
+                throw new Error(message);
+            }
             const ni = nodes[i], nj = nodes[j], dx = nj.x - ni.x, dy = nj.y - ni.y, dz = nj.z - ni.z, L = Math.sqrt(dx**2 + dy**2 + dz**2);
-            if(L === 0) throw new Error(`部材 ${index+1} の長さが0です。`);
+            if(L === 0) {
+                const message = `部材 ${index + 1}: 節点 ${i + 1} と節点 ${j + 1} の座標が同じため長さが0です。節点位置を見直してください。`;
+                markRowValidationError(row, message);
+                throw new Error(message);
+            }
             
             // 3D用の剛性マトリックスと変換マトリックスは frame_analyzer_3d.js で計算されるため、
             // ここでは2D互換の値を保持 (将来的に統合予定)
@@ -5473,25 +5732,125 @@ document.addEventListener('DOMContentLoaded', () => {
         // 分布荷重のテキスト領域を障害物として追加
         const loadObstacles = [...obstacles];
 
+        const subtractVec3 = (a, b) => ({
+            x: (a?.x ?? 0) - (b?.x ?? 0),
+            y: (a?.y ?? 0) - (b?.y ?? 0),
+            z: (a?.z ?? 0) - (b?.z ?? 0)
+        });
+        const crossVec3 = (a, b) => ({
+            x: a.y * b.z - a.z * b.y,
+            y: a.z * b.x - a.x * b.z,
+            z: a.x * b.y - a.y * b.x
+        });
+        const lengthVec3 = (v) => Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        const normalizeVec3 = (v) => {
+            const len = lengthVec3(v);
+            if (!isFinite(len) || len < 1e-9) return null;
+            return { x: v.x / len, y: v.y / len, z: v.z / len };
+        };
+        const projectDirection2D = (originNode, direction) => {
+            const originProjected = project3DTo2D(originNode, projectionMode);
+            const offsetNode = {
+                x: (originNode?.x ?? 0) + direction.x,
+                y: (originNode?.y ?? 0) + direction.y,
+                z: (originNode?.z ?? 0) + direction.z
+            };
+            const offsetProjected = project3DTo2D(offsetNode, projectionMode);
+            return {
+                x: offsetProjected.x - originProjected.x,
+                y: offsetProjected.y - originProjected.y
+            };
+        };
+        const lengthVec2 = (v) => Math.sqrt(v.x * v.x + v.y * v.y);
+        const normalizeVec2 = (v) => {
+            const len = lengthVec2(v);
+            if (!isFinite(len) || len < 1e-6) return null;
+            return { x: v.x / len, y: v.y / len };
+        };
+        const projectedDirectionCache = new Map();
+        const getProjectedLocalDirection = (memberIndex, component) => {
+            const cacheKey = `${memberIndex}-${component}-${projectionMode}`;
+            if (projectedDirectionCache.has(cacheKey)) {
+                return projectedDirectionCache.get(cacheKey);
+            }
+
+            const member = members[memberIndex];
+            if (!member) return null;
+            const nodeI = nodes[member.i];
+            const nodeJ = nodes[member.j];
+            if (!nodeI || !nodeJ) return null;
+
+            const axisVec = subtractVec3(nodeJ, nodeI);
+            const axisUnit = normalizeVec3(axisVec);
+            if (!axisUnit) return null;
+
+            const globalUp = { x: 0, y: 0, z: 1 };
+            let localY3D = crossVec3(axisUnit, globalUp);
+            if (!localY3D || lengthVec3(localY3D) < 1e-9) {
+                localY3D = crossVec3(axisUnit, { x: 1, y: 0, z: 0 });
+            }
+            if (!localY3D || lengthVec3(localY3D) < 1e-9) {
+                localY3D = crossVec3(axisUnit, { x: 0, y: 1, z: 0 });
+            }
+            const localYUnit = normalizeVec3(localY3D);
+            if (!localYUnit) return null;
+            const localZ3D = crossVec3(axisUnit, localYUnit);
+            const localZUnit = normalizeVec3(localZ3D);
+            if (!localZUnit) return null;
+
+            const targetDirection3D = component === 'localZ' ? localZUnit : localYUnit;
+            const projectedDir = projectDirection2D(nodeI, targetDirection3D);
+            const normalizedDir = normalizeVec2(projectedDir);
+            if (!normalizedDir) return null;
+
+            projectedDirectionCache.set(cacheKey, normalizedDir);
+            return normalizedDir;
+        };
+
+        const projectGlobalDirection = (point3D, vector3D) => {
+            if (!point3D || !vector3D) return null;
+            const baseProj = project3DTo2D(point3D, projectionMode);
+            const offsetPoint = {
+                x: point3D.x + (vector3D.x || 0),
+                y: point3D.y + (vector3D.y || 0),
+                z: point3D.z + (vector3D.z || 0)
+            };
+            const offsetProj = project3DTo2D(offsetPoint, projectionMode);
+            const baseScreen = transform(baseProj.x, baseProj.y);
+            const offsetScreen = transform(offsetProj.x, offsetProj.y);
+            const dx = offsetScreen.x - baseScreen.x;
+            const dy = offsetScreen.y - baseScreen.y;
+            const len = Math.hypot(dx, dy);
+            if (len < 1e-6) {
+                return null;
+            }
+            return { x: dx / len, y: dy / len };
+        };
+
         // まず分布荷重を描画して、そのテキスト領域と矢印領域を障害物に追加
         memberLoads.forEach(load => {
             // 3D用のmemberLoads形式（wy, wzを持つ）に対応
             // 投影モードに応じて適切な荷重値を選択
             let w = 0;
-            if (load.w !== undefined) {
-                // 2D用のデータ形式（後方互換性）
-                w = load.w;
-            } else if (load.wy !== undefined || load.wz !== undefined) {
-                // 3D用のデータ形式
-                // 投影モードに応じて表示する荷重成分を選択
-                if (projectionMode === 'xy') {
-                    w = (load.wy || 0); // Y方向（重力方向）の荷重
-                } else if (projectionMode === 'xz') {
-                    w = (load.wz || 0); // Z方向の荷重
-                } else if (projectionMode === 'yz') {
-                    // YZ平面ではY成分を表示
-                    w = (load.wy || 0);
+            const hasLegacyW = typeof load.w === 'number';
+            const wyComponent = typeof load.wy === 'number' ? load.wy : (hasLegacyW ? load.w : 0);
+            const wzComponent = typeof load.wz === 'number' ? load.wz : 0;
+
+            if (projectionMode === 'xy' || projectionMode === 'yz') {
+                w = wyComponent;
+            } else if (projectionMode === 'xz') {
+                w = wzComponent;
+            } else if (projectionMode === 'iso') {
+                // 平面図と同じルールで表示するため、まず垂直成分を優先
+                if (wyComponent !== 0) {
+                    w = wyComponent;
+                } else if (wzComponent !== 0) {
+                    w = wzComponent;
+                } else if (hasLegacyW) {
+                    w = load.w;
                 }
+            } else if (hasLegacyW) {
+                w = load.w;
             }
 
             if (w === 0) return;
@@ -5524,73 +5883,110 @@ document.addEventListener('DOMContentLoaded', () => {
             const numArrows = 5;
             const arrowLength = arrowSize * 1.5;
             const arrowHeadSize = 5;
-            const dir = Math.sign(w); 
-            const perpVecX = Math.sin(angle); 
-            const perpVecY = -Math.cos(angle); 
-            const firstArrowTipX = p1.x + dir * arrowLength * perpVecX; 
-            const firstArrowTipY = p1.y + dir * arrowLength * perpVecY; 
-            const lastArrowTipX = p2.x + dir * arrowLength * perpVecX; 
-            const lastArrowTipY = p2.y + dir * arrowLength * perpVecY; 
-            
-            // 分布荷重の矢印領域を事前に計算して障害物として追加
-            const arrowMinX = Math.min(p1.x, p2.x, firstArrowTipX, lastArrowTipX);
-            const arrowMaxX = Math.max(p1.x, p2.x, firstArrowTipX, lastArrowTipX);
-            const arrowMinY = Math.min(p1.y, p2.y, firstArrowTipY, lastArrowTipY);
-            const arrowMaxY = Math.max(p1.y, p2.y, firstArrowTipY, lastArrowTipY);
-            const arrowPadding = 5;
-            const arrowObstacle = {
-                x1: arrowMinX - arrowPadding,
-                y1: arrowMinY - arrowPadding,
-                x2: arrowMaxX + arrowPadding,
-                y2: arrowMaxY + arrowPadding
-            };
-            loadObstacles.push(arrowObstacle);
-            
-            ctx.beginPath(); 
-            ctx.moveTo(firstArrowTipX, firstArrowTipY); 
-            ctx.lineTo(lastArrowTipX, lastArrowTipY); 
-            ctx.stroke(); 
-            
-            for (let i = 0; i <= numArrows; i++) { 
-                const ratio = i / numArrows; 
-                const memberX = p1.x + (p2.x - p1.x) * ratio; 
-                const memberY = p1.y + (p2.y - p1.y) * ratio; 
-                const baseX = memberX + dir * arrowLength * perpVecX; 
-                const baseY = memberY + dir * arrowLength * perpVecY; 
-                ctx.beginPath(); 
-                ctx.moveTo(baseX, baseY); 
-                ctx.lineTo(memberX, memberY); 
-                const headAngle = Math.atan2(memberY - baseY, memberX - baseX); 
-                ctx.moveTo(memberX, memberY); 
-                ctx.lineTo(memberX - arrowHeadSize * Math.cos(headAngle - Math.PI / 6), memberY - arrowHeadSize * Math.sin(headAngle - Math.PI / 6)); 
-                ctx.moveTo(memberX, memberY); 
-                ctx.lineTo(memberX - arrowHeadSize * Math.cos(headAngle + Math.PI / 6), memberY - arrowHeadSize * Math.sin(headAngle + Math.PI / 6)); 
-                ctx.stroke(); 
-            } 
-            const textOffset = arrowLength + 10; 
-            const textX = (p1.x + p2.x) / 2 + dir * textOffset * perpVecX; 
-            const textY = (p1.y + p2.y) / 2 + dir * textOffset * perpVecY; 
-            ctx.fillStyle = '#ff4500'; 
-            
-            // 等分布荷重のテキスト表示（自重でない荷重のみ）
-            const loadText = `${Math.abs(w).toFixed(2)}kN/m`;
-            labelManager.draw(ctx, loadText, textX, textY, [...obstacles, arrowObstacle], {
-                type: 'member-load-w',
-                index: load.memberIndex,
-                value: w
-            }); 
-            
-            // 分布荷重のテキスト領域を障害物として追加
-            const displayText = loadText;
-            const metrics = ctx.measureText(displayText);
-            const textWidth = metrics.width;
-            const textHeight = 12;
-            const padding = 6;
-            loadObstacles.push({
-                x1: textX - textWidth/2 - padding,
-                y1: textY - textHeight - padding,
-                x2: textX + textWidth/2 + padding,
-                y2: textY + padding
+            const defaultDirection2D = { x: Math.sin(angle), y: -Math.cos(angle) };
+            const defaultDirectionNorm = normalizeVec2(defaultDirection2D) || { x: 0, y: -1 };
+
+            const components = [];
+
+            if (projectionMode === 'iso') {
+                if (wyComponent !== 0) {
+                    const localYDir = getProjectedLocalDirection(load.memberIndex, 'localY');
+                    if (localYDir) {
+                        components.push({ w: wyComponent, direction: { x: -localYDir.x, y: -localYDir.y }, label: 'wy' });
+                    }
+                }
+                if (wzComponent !== 0) {
+                    const localZDir = getProjectedLocalDirection(load.memberIndex, 'localZ');
+                    if (localZDir) {
+                        components.push({ w: wzComponent, direction: localZDir, label: 'wz' });
+                    }
+                }
+                if (components.length === 0 && hasLegacyW && load.w !== 0) {
+                    components.push({ w: load.w, direction: defaultDirection2D, label: null });
+                }
+            } else {
+                let selectedW = 0;
+                if (projectionMode === 'xy' || projectionMode === 'yz') {
+                    selectedW = wyComponent;
+                } else if (projectionMode === 'xz') {
+                    selectedW = wzComponent;
+                } else if (hasLegacyW) {
+                    selectedW = load.w;
+                }
+                if (selectedW !== 0) {
+                    components.push({ w: selectedW, direction: defaultDirection2D, label: null });
+                }
+            }
+
+            if (components.length === 0) return;
+
+            components.forEach(component => {
+                const dir = Math.sign(component.w) || 1;
+                const dirNorm = normalizeVec2(component.direction) || defaultDirectionNorm;
+                const firstArrowTipX = p1.x + dir * arrowLength * dirNorm.x;
+                const firstArrowTipY = p1.y + dir * arrowLength * dirNorm.y;
+                const lastArrowTipX = p2.x + dir * arrowLength * dirNorm.x;
+                const lastArrowTipY = p2.y + dir * arrowLength * dirNorm.y;
+
+                const arrowMinX = Math.min(p1.x, p2.x, firstArrowTipX, lastArrowTipX);
+                const arrowMaxX = Math.max(p1.x, p2.x, firstArrowTipX, lastArrowTipX);
+                const arrowMinY = Math.min(p1.y, p2.y, firstArrowTipY, lastArrowTipY);
+                const arrowMaxY = Math.max(p1.y, p2.y, firstArrowTipY, lastArrowTipY);
+                const arrowPadding = 5;
+                const arrowObstacle = {
+                    x1: arrowMinX - arrowPadding,
+                    y1: arrowMinY - arrowPadding,
+                    x2: arrowMaxX + arrowPadding,
+                    y2: arrowMaxY + arrowPadding
+                };
+                loadObstacles.push(arrowObstacle);
+
+                ctx.beginPath();
+                ctx.moveTo(firstArrowTipX, firstArrowTipY);
+                ctx.lineTo(lastArrowTipX, lastArrowTipY);
+                ctx.stroke();
+
+                for (let i = 0; i <= numArrows; i++) {
+                    const ratio = i / numArrows;
+                    const memberX = p1.x + (p2.x - p1.x) * ratio;
+                    const memberY = p1.y + (p2.y - p1.y) * ratio;
+                    const baseX = memberX + dir * arrowLength * dirNorm.x;
+                    const baseY = memberY + dir * arrowLength * dirNorm.y;
+                    ctx.beginPath();
+                    ctx.moveTo(baseX, baseY);
+                    ctx.lineTo(memberX, memberY);
+                    const headAngle = Math.atan2(memberY - baseY, memberX - baseX);
+                    ctx.moveTo(memberX, memberY);
+                    ctx.lineTo(memberX - arrowHeadSize * Math.cos(headAngle - Math.PI / 6), memberY - arrowHeadSize * Math.sin(headAngle - Math.PI / 6));
+                    ctx.moveTo(memberX, memberY);
+                    ctx.lineTo(memberX - arrowHeadSize * Math.cos(headAngle + Math.PI / 6), memberY - arrowHeadSize * Math.sin(headAngle + Math.PI / 6));
+                    ctx.stroke();
+                }
+
+                const textOffset = arrowLength + 10;
+                const textX = (p1.x + p2.x) / 2 + dir * textOffset * dirNorm.x;
+                const textY = (p1.y + p2.y) / 2 + dir * textOffset * dirNorm.y;
+                ctx.fillStyle = '#ff4500';
+
+                const labelPrefix = component.label ? `${component.label}=` : '';
+                const loadText = `${labelPrefix}${Math.abs(component.w).toFixed(2)}kN/m`;
+                labelManager.draw(ctx, loadText, textX, textY, [...obstacles, arrowObstacle], {
+                    type: 'member-load-w',
+                    index: load.memberIndex,
+                    component: component.label || 'default',
+                    value: component.w
+                });
+
+                const metrics = ctx.measureText(loadText);
+                const textWidth = metrics.width;
+                const textHeight = 12;
+                const padding = 6;
+                loadObstacles.push({
+                    x1: textX - textWidth / 2 - padding,
+                    y1: textY - textHeight - padding,
+                    x2: textX + textWidth / 2 + padding,
+                    y2: textY + padding
+                });
             });
         }); 
         
@@ -5599,139 +5995,104 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.fillStyle = '#ff4500';
         
         // 自重荷重を独立して描画（表示制御チェックボックスがONの場合のみ）
-        const isSelfWeightChecked = document.getElementById('consider-self-weight-checkbox')?.checked;
-        if (showSelfWeight && isSelfWeightChecked && memberSelfWeights && memberSelfWeights.length > 0) {
+    const isSelfWeightChecked = document.getElementById('consider-self-weight-checkbox')?.checked;
+    if (showSelfWeight && isSelfWeightChecked && memberSelfWeights && memberSelfWeights.length > 0) {
             ctx.strokeStyle = '#00aa00'; // 自重は緑色で表示
             ctx.fillStyle = '#00aa00';
-            
+
             memberSelfWeights.forEach(load => {
                 const member = members[load.memberIndex];
-                const n1 = nodes[member.i], n2 = nodes[member.j];
-                const p1 = transform(n1.x, n1.y), p2 = transform(n2.x, n2.y);
+        if (!member) return;
+
+        // 投影面に表示される部材のみを対象とする
+        if (!visibleNodeIndices.has(member.i) || !visibleNodeIndices.has(member.j)) return;
+
+        const n1 = nodes[member.i], n2 = nodes[member.j];
+        if (!n1 || !n2) return;
+
+        const proj1 = project3DTo2D(n1, projectionMode);
+        const proj2 = project3DTo2D(n2, projectionMode);
+        const p1 = transform(proj1.x, proj1.y);
+        const p2 = transform(proj2.x, proj2.y);
                 const memberNumber = load.memberIndex + 1;
                 
-                if (load.loadType === 'distributed') {
-                    // 水平部材：等分布荷重として描画
-                    if (load.w === 0) return;
-                    
-                    const L = Math.sqrt((p2.x - p1.x)**2 + (p2.y - p1.y)**2);
-                    const arrowSpacing = 20, numArrows = Math.max(2, Math.floor(L / arrowSpacing));
-                    const arrowLength = 15; // arrowLengthを外側で定義
-                    
-                    // 垂直下向きの矢印を描画
-                    for (let i = 0; i <= numArrows; i++) {
-                        const t = i / numArrows;
-                        const x = p1.x + t * (p2.x - p1.x);
-                        const y = p1.y + t * (p2.y - p1.y);
-                        
-                        ctx.beginPath();
-                        ctx.moveTo(x, y + arrowLength);
-                        ctx.lineTo(x, y);
-                        ctx.lineTo(x - 3, y + 5);
-                        ctx.moveTo(x, y);
-                        ctx.lineTo(x + 3, y + 5);
-                        ctx.stroke();
-                    }
-                    
-                    // 水平線を描画
-                    ctx.beginPath();
-                    ctx.moveTo(p1.x, p1.y + arrowLength);
-                    ctx.lineTo(p2.x, p2.y + arrowLength);
-                    ctx.stroke();
-                    
-                    const textX = (p1.x + p2.x) / 2;
-                    const textY = (p1.y + p2.y) / 2 + 25;
-                    const loadText = `部材${memberNumber}自重：${Math.abs(load.w).toFixed(2)}kN/m`;
-                    labelManager.draw(ctx, loadText, textX, textY, loadObstacles);
-                    
-                } else if (load.loadType === 'concentrated') {
-                    // 垂直部材：集中荷重として描画
-                    const lowerY = Math.max(p1.y, p2.y);
-                    const nodeX = p1.y > p2.y ? p1.x : p2.x;
-                    const arrowLength = 20;
-                    const arrowSize = 8;
-                    
-                    // 垂直下向きの集中荷重矢印
-                    ctx.beginPath();
-                    ctx.moveTo(nodeX, lowerY - arrowLength);
-                    ctx.lineTo(nodeX, lowerY);
-                    ctx.lineTo(nodeX - arrowSize/2, lowerY - arrowSize);
-                    ctx.moveTo(nodeX, lowerY);
-                    ctx.lineTo(nodeX + arrowSize/2, lowerY - arrowSize);
-                    ctx.stroke();
-                    
-                    const textX = nodeX + 15;
-                    const textY = lowerY - arrowLength/2;
-                    // 集中荷重の個別表示は削除（節点合計で表示）
-                    // const loadText = `部材${memberNumber}自重：${load.totalWeight.toFixed(2)}kN`;
-                    // labelManager.draw(ctx, loadText, textX, textY, loadObstacles);
-                    
-                } else if (load.loadType === 'mixed') {
-                    // 斜め部材：混合荷重として描画
-                    
-                    // 垂直成分（等分布荷重）の描画
-                    if (load.w > 0) {
-                        const L = Math.sqrt((p2.x - p1.x)**2 + (p2.y - p1.y)**2);
-                        const arrowSpacing = 20, numArrows = Math.max(2, Math.floor(L / arrowSpacing));
-                        
-                        for (let i = 0; i <= numArrows; i++) {
-                            const t = i / numArrows;
-                            const x = p1.x + t * (p2.x - p1.x);
-                            const y = p1.y + t * (p2.y - p1.y);
-                            const arrowLength = 12;
-                            
-                            // 垂直下向きの矢印
-                            ctx.beginPath();
-                            ctx.moveTo(x, y + arrowLength);
-                            ctx.lineTo(x, y);
-                            ctx.lineTo(x - 2, y + 4);
-                            ctx.moveTo(x, y);
-                            ctx.lineTo(x + 2, y + 4);
-                            ctx.stroke();
-                        }
-                    }
-                    
-                    // 水平成分（節点荷重）の描画
-                    if (load.horizontalComponent > 0) {
-                        const arrowLength = 15;
-                        const arrowSize = 6;
-                        const horizontalDir = (p2.x - p1.x) > 0 ? 1 : -1;
-                        
-                        // 両端節点に水平矢印
-                        [p1, p2].forEach((point, idx) => {
-                            ctx.beginPath();
-                            ctx.moveTo(point.x + arrowLength * horizontalDir, point.y);
-                            ctx.lineTo(point.x, point.y);
-                            ctx.lineTo(point.x + arrowSize * horizontalDir, point.y - arrowSize/2);
-                            ctx.moveTo(point.x, point.y);
-                            ctx.lineTo(point.x + arrowSize * horizontalDir, point.y + arrowSize/2);
-                            ctx.stroke();
-                        });
-                    }
-                    
-                    const textX = (p1.x + p2.x) / 2;
-                    const textY = (p1.y + p2.y) / 2 + 20;
-                    // 混合荷重の個別表示は削除（節点合計で表示）
-                    // const loadText = `部材${memberNumber}自重：${load.totalWeight.toFixed(2)}kN (混合)`;
-                    // labelManager.draw(ctx, loadText, textX, textY, loadObstacles);
+                // 自重は常にグローバル-Z方向（鉛直下向き）に作用
+                if (load.w === 0) return;
+
+                const midPoint = {
+                    x: (n1.x + n2.x) / 2,
+                    y: (n1.y + n2.y) / 2,
+                    z: (n1.z + n2.z) / 2
+                };
+
+                const globalDown = { x: 0, y: 0, z: -1 };
+                const projectedDown = projectGlobalDirection(midPoint, globalDown);
+                const hasProjectedDown = projectedDown && Math.hypot(projectedDown.x, projectedDown.y) > 1e-6;
+                if (!hasProjectedDown) {
+                    console.warn(`部材${memberNumber}: 自重方向が投影面で得られませんでした。描画をスキップします。`);
+                    return;
                 }
-                
-                // 自重荷重のテキスト領域を障害物として追加（等分布荷重のみ）
-                if (load.loadType === 'distributed') {
-                    const displayText = `部材${memberNumber}自重：${Math.abs(load.w).toFixed(2)}kN/m`;
-                    const metrics = ctx.measureText(displayText);
-                    const w = metrics.width;
-                    const h = 12;
-                    const padding = 6;
-                    const textX = (p1.x + p2.x) / 2;
-                    const textY = (p1.y + p2.y) / 2 - 25;
-                    loadObstacles.push({
-                        x1: textX - w/2 - padding,
-                        y1: textY - h - padding,
-                        x2: textX + w/2 + padding,
-                        y2: textY + padding
-                    });
+
+                const downDir = normalizeVec2(projectedDown);
+                if (!downDir) {
+                    console.warn(`部材${memberNumber}: 自重方向ベクトルが正規化できないため描画をスキップします。`, projectedDown);
+                    return;
                 }
+                const perpDir = normalizeVec2({ x: -downDir.y, y: downDir.x });
+                if (!perpDir || !isFinite(perpDir.x) || !isFinite(perpDir.y)) {
+                    console.warn(`部材${memberNumber}: 自重矢印の直交方向が無効のため描画をスキップします。`, perpDir);
+                    return;
+                }
+
+                const screenDistance = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+                const arrowSpacing = 20;
+                const numArrows = Math.max(2, Math.floor(screenDistance / arrowSpacing));
+                const arrowLength = 18;
+                const tailOffset = arrowLength;
+                const headLength = 6;
+                const headWidth = 4;
+
+                for (let i = 0; i <= numArrows; i++) {
+                    const t = i / numArrows;
+                    const headX = p1.x + t * (p2.x - p1.x);
+                    const headY = p1.y + t * (p2.y - p1.y);
+                    const tailX = headX - downDir.x * tailOffset;
+                    const tailY = headY - downDir.y * tailOffset;
+
+                    ctx.beginPath();
+                    ctx.moveTo(tailX, tailY);
+                    ctx.lineTo(headX, headY);
+                    ctx.stroke();
+
+                    const leftX = headX - downDir.x * headLength + perpDir.x * headWidth;
+                    const leftY = headY - downDir.y * headLength + perpDir.y * headWidth;
+                    const rightX = headX - downDir.x * headLength - perpDir.x * headWidth;
+                    const rightY = headY - downDir.y * headLength - perpDir.y * headWidth;
+
+                    ctx.beginPath();
+                    ctx.moveTo(headX, headY);
+                    ctx.lineTo(leftX, leftY);
+                    ctx.moveTo(headX, headY);
+                    ctx.lineTo(rightX, rightY);
+                    ctx.stroke();
+                }
+
+                const textOffset = tailOffset + 12;
+                const textX = (p1.x + p2.x) / 2 - downDir.x * textOffset;
+                const textY = (p1.y + p2.y) / 2 - downDir.y * textOffset;
+                const loadText = `部材${memberNumber}自重：${Math.abs(load.w).toFixed(2)}kN/m (−Z)`;
+                labelManager.draw(ctx, loadText, textX, textY, loadObstacles);
+
+                const metrics = ctx.measureText(loadText);
+                const w = metrics.width;
+                const h = 12;
+                const padding = 6;
+                loadObstacles.push({
+                    x1: textX - w / 2 - padding,
+                    y1: textY - h - padding,
+                    x2: textX + w / 2 + padding,
+                    y2: textY + padding
+                });
             });
         }
         
@@ -5832,40 +6193,59 @@ document.addEventListener('DOMContentLoaded', () => {
         if (showSelfWeight) {
             // 1. 個別の矢印描画
             nodeSelfWeights.forEach(load => {
-                if (load.px === 0 && load.py === 0 && load.mz === 0) return;
+                if ((load.pz === undefined || load.pz === 0) && (load.mz === 0 || load.mz === undefined)) return;
                 // 節点が表示対象でない場合はスキップ
                 if (!visibleNodeIndices.has(load.nodeIndex)) return;
-                const node = projectedNodes[load.nodeIndex];
-                const pos = transform(node.x, node.y); 
+                const node3D = nodes[load.nodeIndex];
+                const projectedNode = projectedNodes[load.nodeIndex];
+                const pos = transform(projectedNode.x, projectedNode.y);
                 
                 // 自重荷重用の緑色で描画
                 ctx.strokeStyle = '#32CD32';
                 ctx.fillStyle = '#32CD32';
             
-            if(load.px !== 0){ 
-                const dir = Math.sign(load.px); 
-                const tailX = pos.x - arrowSize * loadScale * dir;
-                ctx.beginPath(); 
-                ctx.moveTo(tailX, pos.y); 
-                ctx.lineTo(pos.x, pos.y); 
-                ctx.lineTo(pos.x - arrowSize * dir, pos.y - arrowSize/2); 
-                ctx.moveTo(pos.x, pos.y); 
-                ctx.lineTo(pos.x - arrowSize * dir, pos.y + arrowSize/2); 
-                ctx.stroke(); 
-            } 
-            
-            if(load.py !== 0){ 
-                const dir = Math.sign(load.py); 
-                const tailY = pos.y - arrowSize * loadScale * dir;
-                ctx.beginPath(); 
-                ctx.moveTo(pos.x, tailY); 
-                ctx.lineTo(pos.x, pos.y); 
-                ctx.lineTo(pos.x - arrowSize/2, pos.y - arrowSize * dir); 
-                ctx.moveTo(pos.x, pos.y); 
-                ctx.lineTo(pos.x + arrowSize/2, pos.y - arrowSize * dir); 
-                ctx.stroke(); 
-            } 
-            
+            if (load.pz && load.pz !== 0) {
+                const projectedDown = projectGlobalDirection(node3D, { x: 0, y: 0, z: -1 });
+                const hasProjectedDown = projectedDown && Math.hypot(projectedDown.x, projectedDown.y) > 1e-6;
+
+                if (hasProjectedDown) {
+                    const downDir = projectedDown;
+                    const perpDir = normalizeVec2({ x: -downDir.y, y: downDir.x }) || { x: 1, y: 0 };
+                    const arrowLen = arrowSize * loadScale;
+                    const headX = pos.x;
+                    const headY = pos.y;
+                    const tailX = headX - downDir.x * arrowLen;
+                    const tailY = headY - downDir.y * arrowLen;
+
+                    ctx.beginPath();
+                    ctx.moveTo(tailX, tailY);
+                    ctx.lineTo(headX, headY);
+                    ctx.stroke();
+
+                    const headLength = arrowSize * 0.9;
+                    const headWidth = arrowSize * 0.6;
+                    const leftX = headX - downDir.x * headLength + perpDir.x * headWidth;
+                    const leftY = headY - downDir.y * headLength + perpDir.y * headWidth;
+                    const rightX = headX - downDir.x * headLength - perpDir.x * headWidth;
+                    const rightY = headY - downDir.y * headLength - perpDir.y * headWidth;
+
+                    ctx.beginPath();
+                    ctx.moveTo(headX, headY);
+                    ctx.lineTo(leftX, leftY);
+                    ctx.moveTo(headX, headY);
+                    ctx.lineTo(rightX, rightY);
+                    ctx.stroke();
+                } else {
+                    const radius = arrowSize * 0.7;
+                    ctx.beginPath();
+                    ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.arc(pos.x, pos.y, radius * 0.4, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
             if(load.mz !== 0){ 
                 const dir = -Math.sign(load.mz); 
                 const r = arrowSize * 1.5; 
@@ -5894,17 +6274,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const nodeWeightSummary = new Map();
         console.log('📊 nodeSelfWeights詳細:');
         nodeSelfWeights.forEach((load, idx) => {
-            console.log(`  [${idx}] 節点${load.nodeIndex + 1}: px=${load.px.toFixed(3)}, py=${load.py.toFixed(3)}, mz=${load.mz.toFixed(3)}`);
+            const pz = (load.pz || 0).toFixed(3);
+            const mz = (load.mz || 0).toFixed(3);
+            console.log(`  [${idx}] 節点${load.nodeIndex + 1}: pz=${pz}, mz=${mz}`);
             
             const nodeIndex = load.nodeIndex;
             if (!nodeWeightSummary.has(nodeIndex)) {
-                nodeWeightSummary.set(nodeIndex, { px: 0, py: 0, mz: 0 });
+                nodeWeightSummary.set(nodeIndex, { pz: 0, mz: 0 });
             }
             
             const summary = nodeWeightSummary.get(nodeIndex);
-            summary.px += load.px;
-            summary.py += load.py;
-            summary.mz += load.mz;
+            summary.pz += load.pz || 0;
+            summary.mz += load.mz || 0;
         });
         
         // デバッグログ
@@ -5912,8 +6293,8 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('  対象節点荷重数:', nodeSelfWeights.length);
         console.log('  表示予定節点数:', nodeWeightSummary.size);
         nodeWeightSummary.forEach((totalLoad, nodeIndex) => {
-            const totalForce = Math.sqrt(totalLoad.px * totalLoad.px + totalLoad.py * totalLoad.py);
-            console.log(`  節点${nodeIndex + 1}: 合力=${totalForce.toFixed(3)}kN, px=${totalLoad.px.toFixed(3)}, py=${totalLoad.py.toFixed(3)}, mz=${totalLoad.mz.toFixed(3)}`);
+            const totalForce = Math.abs(totalLoad.pz);
+            console.log(`  節点${nodeIndex + 1}: Pz=${totalLoad.pz.toFixed(3)}kN, Mz=${totalLoad.mz.toFixed(3)}kN·m`);
         });
         
         // 3. 合計ラベルを描画
@@ -5922,12 +6303,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const pos = transform(node.x, node.y);
             const nodeNumber = nodeIndex + 1;
             
-            // 合計荷重を計算
-            const totalForce = Math.sqrt(totalLoad.px * totalLoad.px + totalLoad.py * totalLoad.py);
+            // 合計荷重を計算（Pzのみ）
+            const totalForce = Math.abs(totalLoad.pz);
             const hasMoment = Math.abs(totalLoad.mz) > 0.001;
             
             // デバッグログ
-            console.log(`  節点${nodeNumber}処理中: 合力=${totalForce.toFixed(3)}, モーメント=${hasMoment}, px=${totalLoad.px.toFixed(3)}, py=${totalLoad.py.toFixed(3)}`);
+            console.log(`  節点${nodeNumber}処理中: Pz=${totalLoad.pz.toFixed(3)}, モーメント=${hasMoment}`);
             
             // 表示のしきい値をより低く設定
             if (totalForce < 0.001 && !hasMoment) {
@@ -5937,20 +6318,12 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // 表示位置を決定（最も大きな荷重成分の位置を基準）
             let textX, textY;
-            const maxPx = Math.abs(totalLoad.px);
-            const maxPy = Math.abs(totalLoad.py);
             const maxMz = Math.abs(totalLoad.mz);
             
-            if (maxPx >= maxPy && maxPx >= maxMz && totalLoad.px !== 0) {
-                // X方向荷重が最大の場合
-                const dir = Math.sign(totalLoad.px);
-                textX = pos.x - (arrowSize * loadScale * 0.9) * dir;
-                textY = pos.y - 8;
-            } else if (maxPy >= maxPx && maxPy >= maxMz && totalLoad.py !== 0) {
-                // Y方向荷重が最大の場合
-                const dir = Math.sign(totalLoad.py);
-                textX = pos.x + 8;
-                textY = pos.y + (arrowSize * loadScale * 0.9) * dir;
+            if (totalForce >= maxMz && totalLoad.pz !== 0) {
+                const downDir = projectGlobalDirection(nodes[nodeIndex], { x: 0, y: 0, z: -1 }) || { x: 0, y: 1 };
+                textX = pos.x - downDir.x * (arrowSize * loadScale * 1.1);
+                textY = pos.y - downDir.y * (arrowSize * loadScale * 1.1);
             } else if (totalLoad.mz !== 0) {
                 // モーメント荷重がある場合
                 const r = arrowSize * 1.5;
@@ -5967,13 +6340,13 @@ document.addEventListener('DOMContentLoaded', () => {
             let labelText;
             if (hasMoment && totalForce > 0.001) {
                 // 力とモーメントの両方がある場合
-                labelText = `節点${nodeNumber}自重：${totalForce.toFixed(2)}kN, ${Math.abs(totalLoad.mz).toFixed(2)}kN·m`;
+                labelText = `節点${nodeNumber}自重：Pz=${totalLoad.pz.toFixed(2)}kN, Mz=${Math.abs(totalLoad.mz).toFixed(2)}kN·m`;
             } else if (hasMoment) {
                 // モーメントのみの場合
-                labelText = `節点${nodeNumber}自重：${Math.abs(totalLoad.mz).toFixed(2)}kN·m`;
+                labelText = `節点${nodeNumber}自重：Mz=${Math.abs(totalLoad.mz).toFixed(2)}kN·m`;
             } else {
                 // 力のみの場合
-                labelText = `節点${nodeNumber}自重：${totalForce.toFixed(2)}kN`;
+                labelText = `節点${nodeNumber}自重：Pz=${totalLoad.pz.toFixed(2)}kN`;
             }
             
             console.log(`  節点${nodeNumber}: "${labelText}" を位置 (${textX.toFixed(1)}, ${textY.toFixed(1)}) に表示`);
@@ -6071,7 +6444,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // ==========================================================
     };
     // 表示対象の節点インデックスを取得する関数
-    const getVisibleNodeIndices = (nodes) => {
+    function getVisibleNodeIndices(nodes) {
         const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
         const hiddenCoord = elements.hiddenAxisCoord ? parseFloat(elements.hiddenAxisCoord.value) : null;
         const tolerance = 0.01;
@@ -6097,7 +6470,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         return visibleNodeIndices;
-    };
+    }
+    window.getVisibleNodeIndices = getVisibleNodeIndices;
 
     // 各投影面の全ての座標値を取得する関数
     const getAllFrameCoordinates = (nodes, projectionMode) => {
@@ -7414,37 +7788,48 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             const candidates = [];
             const numCandidates = 7;
             
-            for (let i = 0; i < numCandidates; i++) {
-                const t = i / (numCandidates - 1);
-                const x = start_pos.x + (end_pos.x - start_pos.x) * t;
-                const y = start_pos.y + (end_pos.y - start_pos.y) * t;
-                
-                candidates.push({ x, y, t });
-            }
-            
-            // 最適な位置を選択
-            let bestPosition = candidates[Math.floor(numCandidates / 2)]; // デフォルトは中点
-            let minOverlap = Infinity;
-            
-            for (const candidate of candidates) {
-                const candidateBox = {
-                    x: candidate.x - boxWidth / 2,
-                    y: candidate.y - boxHeight / 2,
-                    width: boxWidth,
-                    height: boxHeight
-                };
-                
-                let overlapCount = 0;
-                let totalOverlapArea = 0;
-                
-                for (const existing of ratioLabelPositions) {
-                    if (boxesOverlap(candidateBox, existing)) {
+                for (let i = 0; i <= numArrows; i++) {
+                    const t = i / numArrows;
+                    const headX = p1.x + t * (p2.x - p1.x);
+                    const headY = p1.y + t * (p2.y - p1.y);
+
+                    if (downDir) {
+                        const tailX = headX - downDir.x * tailOffset;
+                        const tailY = headY - downDir.y * tailOffset;
+
+                        ctx.beginPath();
+                        ctx.moveTo(tailX, tailY);
+                        ctx.lineTo(headX, headY);
+                        ctx.stroke();
+
+                        const headLength = arrowSize * 0.9;
+                        const headWidth = arrowSize * 0.6;
+                        const leftX = headX - downDir.x * headLength + perpDir.x * headWidth;
+                        const leftY = headY - downDir.y * headLength + perpDir.y * headWidth;
+                        const rightX = headX - downDir.x * headLength - perpDir.x * headWidth;
+                        const rightY = headY - downDir.y * headLength - perpDir.y * headWidth;
+
+                        ctx.beginPath();
+                        ctx.moveTo(headX, headY);
+                        ctx.lineTo(leftX, leftY);
+                        ctx.moveTo(headX, headY);
+                        ctx.lineTo(rightX, rightY);
+                        ctx.stroke();
+                    } else {
+                        const radius = arrowSize * 0.6;
+                        ctx.beginPath();
+                        ctx.arc(headX, headY, radius, 0, Math.PI * 2);
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.arc(headX, headY, radius * 0.4, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
                         overlapCount++;
                         totalOverlapArea += calculateOverlapArea(candidateBox, existing);
-                    }
-                }
-                
-                // 中心寄りを優遇
+                const textOffset = tailOffset + 12;
+                const textX = downDir ? (p1.x + p2.x) / 2 - downDir.x * textOffset : (p1.x + p2.x) / 2;
+                const textY = downDir ? (p1.y + p2.y) / 2 - downDir.y * textOffset : (p1.y + p2.y) / 2 - (arrowSize * 2.0);
+                const loadText = `部材${memberNumber}自重：${Math.abs(load.w).toFixed(2)}kN/m (−Z)`;
                 const centerBias = Math.abs(candidate.t - 0.5) * 200;
                 const overlapScore = overlapCount * 1000 + totalOverlapArea + centerBias;
                 
@@ -7744,10 +8129,14 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         if (!lastDrawingContext) return -1; 
         try { 
             const { nodes } = parseInputs(); 
-            console.log('getNodeAt nodes:', { nodeCount: nodes.length });
+            const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+            const visibleNodeIndices = getVisibleNodeIndices(nodes);
+            console.log('getNodeAt nodes:', { nodeCount: nodes.length, projectionMode, visibleCount: visibleNodeIndices.size });
             const tolerance = 10; 
             for (let i = 0; i < nodes.length; i++) { 
-                const nodePos = lastDrawingContext.transform(nodes[i].x, nodes[i].y); 
+                if (!visibleNodeIndices.has(i)) continue;
+                const projected = project3DTo2D(nodes[i], projectionMode);
+                const nodePos = lastDrawingContext.transform(projected.x, projected.y); 
                 const dist = Math.sqrt((canvasX - nodePos.x)**2 + (canvasY - nodePos.y)**2); 
                 console.log(`getNodeAt node ${i}:`, { nodePos, dist, tolerance, hit: dist < tolerance });
                 if (dist < tolerance) return i; 
@@ -7762,12 +8151,20 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         if (!lastDrawingContext) return -1; 
         try { 
             const { nodes, members } = parseInputs(); 
-            console.log('getMemberAt data:', { nodeCount: nodes.length, memberCount: members.length });
+            const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+            const visibleNodeIndices = getVisibleNodeIndices(nodes);
+            console.log('getMemberAt data:', { nodeCount: nodes.length, memberCount: members.length, projectionMode, visibleCount: visibleNodeIndices.size });
             const tolerance = 5; 
             for (let i = 0; i < members.length; i++) { 
                 const member = members[i]; 
-                const p1 = lastDrawingContext.transform(nodes[member.i].x, nodes[member.i].y);
-                const p2 = lastDrawingContext.transform(nodes[member.j].x, nodes[member.j].y); 
+                if (!visibleNodeIndices.has(member.i) || !visibleNodeIndices.has(member.j)) {
+                    console.log(`getMemberAt member ${i}: skipped (hidden depth)`);
+                    continue;
+                }
+                const p1Projected = project3DTo2D(nodes[member.i], projectionMode);
+                const p2Projected = project3DTo2D(nodes[member.j], projectionMode);
+                const p1 = lastDrawingContext.transform(p1Projected.x, p1Projected.y);
+                const p2 = lastDrawingContext.transform(p2Projected.x, p2Projected.y); 
                 const dx = p2.x - p1.x, dy = p2.y - p1.y, lenSq = dx*dx + dy*dy; 
                 if (lenSq === 0) continue; 
                 let t = ((canvasX - p1.x) * dx + (canvasY - p1.y) * dy) / lenSq; 
@@ -7848,17 +8245,18 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 }
                 
                 if (!densityCell) {
-                    // 挿入位置を動的に決定（断面係数Zセルの後、位置8）
-                    let insertPosition = 8;
-                    // より安全に、Z値セルを探してその次に挿入
+                    // 挿入位置を決定：断面係数Zy列（位置10）の後、つまり位置11
+                    let insertPosition = 11;
+                    // より安全に、断面係数Zyセルを探してその次に挿入
                     for (let k = 0; k < row.cells.length; k++) {
                         const cell = row.cells[k];
-                        if (cell.querySelector('input[title*="断面係数"]')) {
+                        const input = cell.querySelector('input[title*="断面係数 Zy"]');
+                        if (input) {
                             insertPosition = k + 1;
                             break;
                         }
                     }
-                    
+
                     densityCell = row.insertCell(insertPosition);
                     densityCell.className = 'density-cell';
                     
@@ -9304,6 +9702,46 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
     document.getElementById('popup-cancel').onclick = () => { elements.memberPropsPopup.style.display = 'none'; };
     document.getElementById('popup-delete-member').onclick = () => { if(selectedMemberIndex !== null) { elements.membersTable.rows[selectedMemberIndex].querySelector('.delete-row-btn').click(); elements.memberPropsPopup.style.display='none'; } };
 
+    const analyzeNodeRowLayout = (nodeRow) => {
+        const defaultResult = {
+            is3D: window.is3DMode === true,
+            supportSelect: null,
+            supportCellIndex: -1,
+            numericInputsCount: 0,
+            inputs: {}
+        };
+
+        if (!(nodeRow instanceof HTMLTableRowElement)) {
+            return defaultResult;
+        }
+
+        const supportSelect = nodeRow.querySelector('select') || null;
+        const cells = Array.from(nodeRow.cells || []);
+        const supportCellIndex = supportSelect ? cells.findIndex((cell) => cell.contains(supportSelect)) : -1;
+        const numericInputs = Array.from(nodeRow.querySelectorAll('input[type="number"]') || []);
+        const getInput = (index) => numericInputs[index] || null;
+
+        const inferred3D = window.is3DMode === true || numericInputs.length >= 9 || supportCellIndex > 3;
+
+        return {
+            is3D: inferred3D,
+            supportSelect,
+            supportCellIndex,
+            numericInputsCount: numericInputs.length,
+            inputs: {
+                x: getInput(0),
+                y: getInput(1),
+                z: inferred3D ? getInput(2) : null,
+                dx: inferred3D ? getInput(3) : getInput(2),
+                dy: inferred3D ? getInput(4) : getInput(3),
+                dz: inferred3D ? getInput(5) : null,
+                rx: inferred3D ? getInput(6) : null,
+                ry: inferred3D ? getInput(7) : null,
+                rz: inferred3D ? getInput(8) : getInput(4)
+            }
+        };
+    };
+
     // 節点プロパティ編集ポップアップを開き、データを設定する関数
     const openNodeEditor = (nodeIndex) => {
         selectedNodeIndex = nodeIndex;
@@ -9315,11 +9753,16 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             return;
         }
 
+        const layoutInfo = analyzeNodeRowLayout(nodeRow);
+
         // デバッグ: テーブル構造を確認
         console.log('🔍 テーブル行の構造:', {
             nodeIndex,
             cellCount: nodeRow.cells.length,
             is3DMode: window.is3DMode,
+            inferredIs3D: layoutInfo.is3D,
+            supportCellIndex: layoutInfo.supportCellIndex,
+            numericInputsCount: layoutInfo.numericInputsCount,
             cells: Array.from(nodeRow.cells).map((cell, idx) => ({
                 index: idx,
                 html: cell.innerHTML.substring(0, 50)
@@ -9330,25 +9773,24 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
 
         // 各入力フィールドの存在確認
         const popupElements = {
-            x: document.getElementById('popup-x'),
-            y: document.getElementById('popup-y'),
-            z: document.getElementById('popup-z'),
-            support: document.getElementById('popup-support'),
-            dx: document.getElementById('popup-dx'),
-            dy: document.getElementById('popup-dy'),
-            dz: document.getElementById('popup-dz'),
-            rx: document.getElementById('popup-rx'),
-            ry: document.getElementById('popup-ry'),
-            rz: document.getElementById('popup-rz'),
-            px: document.getElementById('popup-px'),
-            py: document.getElementById('popup-py'),
-            pz: document.getElementById('popup-pz'),
-            mx: document.getElementById('popup-mx'),
-            my: document.getElementById('popup-my'),
-            mz: document.getElementById('popup-mz')
+            x: getNodePopupField('popup-x'),
+            y: getNodePopupField('popup-y'),
+            z: getNodePopupField('popup-z', { required: layoutInfo.is3D }),
+            support: getNodePopupField('popup-support'),
+            px: getNodePopupField('popup-px'),
+            py: getNodePopupField('popup-py'),
+            pz: getNodePopupField('popup-pz', { required: layoutInfo.is3D }),
+            mx: getNodePopupField('popup-mx', { required: layoutInfo.is3D }),
+            my: getNodePopupField('popup-my', { required: layoutInfo.is3D }),
+            mz: getNodePopupField('popup-mz', { required: layoutInfo.is3D }),
+            dx: getNodePopupField('popup-dx'),
+            dy: getNodePopupField('popup-dy'),
+            dz: getNodePopupField('popup-dz', { required: layoutInfo.is3D }),
+            rx: getNodePopupField('popup-rx', { required: layoutInfo.is3D }),
+            ry: getNodePopupField('popup-ry', { required: layoutInfo.is3D }),
+            rz: getNodePopupField('popup-rz', { required: layoutInfo.is3D })
         };
 
-        // nullチェック
         for (const [key, element] of Object.entries(popupElements)) {
             if (!element) {
                 console.error(`❌ popup-${key} 要素が見つかりません`);
@@ -9356,48 +9798,43 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             }
         }
 
-        // 2D/3Dモード判定
-        const is3D = window.is3DMode === true;
-
-        // ヘルパー関数: セルから安全に値を取得
-        const getCellValue = (cellIndex, selector = 'input') => {
-            if (!nodeRow.cells[cellIndex]) {
-                console.warn(`⚠️ セル[${cellIndex}]が存在しません`);
-                return '0';
-            }
-            const element = nodeRow.cells[cellIndex].querySelector(selector);
-            if (!element) {
-                console.warn(`⚠️ セル[${cellIndex}]内に${selector}要素が見つかりません`);
-                return '0';
-            }
-            return element.value || '0';
+        const readInputValue = (input, fallback = '0') => {
+            if (!input) return fallback;
+            const value = input.value;
+            return value !== undefined && value !== null && value !== '' ? value : fallback;
         };
 
+        const { inputs: nodeInputs, supportSelect } = layoutInfo;
+        if (!supportSelect) {
+            console.warn('⚠️ 支持条件を表すselect要素が節点行内で検出できませんでした');
+        }
+        const supportValue = supportSelect ? supportSelect.value : (popupElements.support.value || 'free');
+
         // 各入力フィールドに現在の値を設定 (モード別)
-        if (is3D) {
+        if (layoutInfo.is3D) {
             // 3Dモード
-            popupElements.x.value = getCellValue(1);
-            popupElements.y.value = getCellValue(2);
-            popupElements.z.value = getCellValue(3);
-            popupElements.support.value = getCellValue(4, 'select');
-            popupElements.dx.value = getCellValue(5);
-            popupElements.dy.value = getCellValue(6);
-            popupElements.dz.value = getCellValue(7);
-            popupElements.rx.value = getCellValue(8);
-            popupElements.ry.value = getCellValue(9);
-            popupElements.rz.value = getCellValue(10);
+            popupElements.x.value = readInputValue(nodeInputs.x);
+            popupElements.y.value = readInputValue(nodeInputs.y);
+            popupElements.z.value = readInputValue(nodeInputs.z);
+            popupElements.support.value = supportValue;
+            popupElements.dx.value = readInputValue(nodeInputs.dx);
+            popupElements.dy.value = readInputValue(nodeInputs.dy);
+            popupElements.dz.value = readInputValue(nodeInputs.dz);
+            popupElements.rx.value = readInputValue(nodeInputs.rx);
+            popupElements.ry.value = readInputValue(nodeInputs.ry);
+            popupElements.rz.value = readInputValue(nodeInputs.rz);
         } else {
             // 2Dモード (Z, dz, rx, ry, rzは0固定)
-            popupElements.x.value = getCellValue(1);
-            popupElements.y.value = getCellValue(2);
+            popupElements.x.value = readInputValue(nodeInputs.x);
+            popupElements.y.value = readInputValue(nodeInputs.y);
             popupElements.z.value = '0';
-            popupElements.support.value = getCellValue(3, 'select');
-            popupElements.dx.value = getCellValue(4);
-            popupElements.dy.value = getCellValue(5);
+            popupElements.support.value = supportValue;
+            popupElements.dx.value = readInputValue(nodeInputs.dx);
+            popupElements.dy.value = readInputValue(nodeInputs.dy);
             popupElements.dz.value = '0';
             popupElements.rx.value = '0';
             popupElements.ry.value = '0';
-            popupElements.rz.value = '0';
+            popupElements.rz.value = readInputValue(nodeInputs.rz);
         }
 
         // 荷重行から安全に値を取得
@@ -9445,41 +9882,83 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         if (selectedNodeIndex === null) return;
         pushState();
 
-        // 2D/3Dモード判定
-        const is3D = window.is3DMode === true;
-        console.log('🔍 節点プロパティ保存: is3D =', is3D, 'window.is3DMode =', window.is3DMode);
-
-        // 節点テーブルの値を更新
         const nodeRow = elements.nodesTable.rows[selectedNodeIndex];
+        const layoutInfo = analyzeNodeRowLayout(nodeRow);
+        const { inputs: nodeInputs, supportSelect } = layoutInfo;
+        const is3D = layoutInfo.is3D;
+        console.log('🔍 節点プロパティ保存:', {
+            is3D,
+            windowIs3DMode: window.is3DMode,
+            supportCellIndex: layoutInfo.supportCellIndex,
+            numericInputsCount: layoutInfo.numericInputsCount
+        });
+
+        if (!nodeInputs.x || !nodeInputs.y) {
+            console.error('❌ 節点プロパティ保存: 座標入力フィールドが見つかりません', nodeInputs);
+            return;
+        }
+        if (!supportSelect) {
+            console.error('❌ 節点プロパティ保存: 支持条件selectが見つかりません');
+            return;
+        }
+
+        const popupValues = {
+            x: getNodePopupField('popup-x'),
+            y: getNodePopupField('popup-y'),
+            z: getNodePopupField('popup-z', { required: is3D }),
+            support: getNodePopupField('popup-support'),
+            px: getNodePopupField('popup-px'),
+            py: getNodePopupField('popup-py'),
+            pz: getNodePopupField('popup-pz', { required: is3D }),
+            mx: getNodePopupField('popup-mx', { required: is3D }),
+            my: getNodePopupField('popup-my', { required: is3D }),
+            mz: getNodePopupField('popup-mz', { required: is3D }),
+            dx: getNodePopupField('popup-dx'),
+            dy: getNodePopupField('popup-dy'),
+            dz: getNodePopupField('popup-dz', { required: is3D }),
+            rx: getNodePopupField('popup-rx', { required: is3D }),
+            ry: getNodePopupField('popup-ry', { required: is3D }),
+            rz: getNodePopupField('popup-rz', { required: is3D })
+        };
+
+        const missingFields = Object.entries(popupValues)
+            .filter(([_, element]) => !element)
+            .map(([key]) => key);
+
+        if (missingFields.length > 0) {
+            console.warn('節点プロパティ保存処理を中断しました。欠落フィールド:', missingFields);
+            return;
+        }
 
         if (is3D) {
             // 3Dモード
-            nodeRow.cells[1].querySelector('input').value = document.getElementById('popup-x').value;
-            nodeRow.cells[2].querySelector('input').value = document.getElementById('popup-y').value;
-            nodeRow.cells[3].querySelector('input').value = document.getElementById('popup-z').value;
-            nodeRow.cells[4].querySelector('select').value = document.getElementById('popup-support').value;
-            nodeRow.cells[5].querySelector('input').value = document.getElementById('popup-dx').value;
-            nodeRow.cells[6].querySelector('input').value = document.getElementById('popup-dy').value;
-            nodeRow.cells[7].querySelector('input').value = document.getElementById('popup-dz').value;
-            nodeRow.cells[8].querySelector('input').value = document.getElementById('popup-rx').value;
-            nodeRow.cells[9].querySelector('input').value = document.getElementById('popup-ry').value;
-            nodeRow.cells[10].querySelector('input').value = document.getElementById('popup-rz').value;
+            nodeInputs.x.value = popupValues.x.value;
+            nodeInputs.y.value = popupValues.y.value;
+            if (nodeInputs.z) nodeInputs.z.value = popupValues.z.value;
+            supportSelect.value = popupValues.support.value;
+            if (nodeInputs.dx) nodeInputs.dx.value = popupValues.dx.value;
+            if (nodeInputs.dy) nodeInputs.dy.value = popupValues.dy.value;
+            if (nodeInputs.dz) nodeInputs.dz.value = popupValues.dz.value;
+            if (nodeInputs.rx) nodeInputs.rx.value = popupValues.rx.value;
+            if (nodeInputs.ry) nodeInputs.ry.value = popupValues.ry.value;
+            if (nodeInputs.rz) nodeInputs.rz.value = popupValues.rz.value;
         } else {
             // 2Dモード (Z座標と回転は無視)
-            nodeRow.cells[1].querySelector('input').value = document.getElementById('popup-x').value;
-            nodeRow.cells[2].querySelector('input').value = document.getElementById('popup-y').value;
-            nodeRow.cells[3].querySelector('select').value = document.getElementById('popup-support').value;
-            nodeRow.cells[4].querySelector('input').value = document.getElementById('popup-dx').value;
-            nodeRow.cells[5].querySelector('input').value = document.getElementById('popup-dy').value;
+            nodeInputs.x.value = popupValues.x.value;
+            nodeInputs.y.value = popupValues.y.value;
+            supportSelect.value = popupValues.support.value;
+            if (nodeInputs.dx) nodeInputs.dx.value = popupValues.dx.value;
+            if (nodeInputs.dy) nodeInputs.dy.value = popupValues.dy.value;
+            if (nodeInputs.rz) nodeInputs.rz.value = popupValues.rz.value || '0';
         }
 
         // 節点荷重テーブルの値を更新または作成/削除
-        const px = document.getElementById('popup-px').value || 0;
-        const py = document.getElementById('popup-py').value || 0;
-        const pz = document.getElementById('popup-pz').value || 0;
-        const mx = document.getElementById('popup-mx').value || 0;
-        const my = document.getElementById('popup-my').value || 0;
-        const mz = document.getElementById('popup-mz').value || 0;
+        const px = popupValues.px.value || 0;
+        const py = popupValues.py.value || 0;
+        const pz = (popupValues.pz && popupValues.pz.value) || 0;
+        const mx = (popupValues.mx && popupValues.mx.value) || 0;
+        const my = (popupValues.my && popupValues.my.value) || 0;
+        const mz = (popupValues.mz && popupValues.mz.value) || 0;
 
         let loadRow = Array.from(elements.nodeLoadsTable.rows).find(row => parseInt(row.cells[0].querySelector('input').value) - 1 === selectedNodeIndex);
 
