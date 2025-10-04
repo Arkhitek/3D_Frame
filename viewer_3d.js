@@ -7,6 +7,11 @@ if (typeof THREE === 'undefined') {
 
 // 3Dシーン用のグローバル変数
 let scene, camera, renderer, controls, labelRenderer, animationFrameId;
+let axisScene, axisCamera, axisRenderer, axisHelper;
+
+const AXIS_CANVAS_SIZE = 120;
+const AXIS_MARGIN = 15;
+
 const canvasContainer = document.getElementById('canvas-3d-container');
 const infoPanel = document.getElementById('info-panel');
 
@@ -24,6 +29,15 @@ let labelVisibility = {
  * 3Dシーンの初期化
  */
 function init() {
+    if (!canvasContainer) {
+        console.error('3D canvas container not found');
+        return;
+    }
+
+    if (getComputedStyle(canvasContainer).position === 'static') {
+        canvasContainer.style.position = 'relative';
+    }
+
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0xf0f0f0);
 
@@ -33,8 +47,32 @@ function init() {
 
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    renderer.setPixelRatio(pixelRatio);
     canvasContainer.appendChild(renderer.domElement);
+
+    if (axisRenderer) {
+        if (axisRenderer.domElement && axisRenderer.domElement.parentNode) {
+            axisRenderer.domElement.parentNode.removeChild(axisRenderer.domElement);
+        }
+        axisRenderer.dispose();
+    }
+    axisRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    axisRenderer.setPixelRatio(pixelRatio);
+    axisRenderer.setSize(AXIS_CANVAS_SIZE, AXIS_CANVAS_SIZE);
+    axisRenderer.autoClear = true;
+    axisRenderer.setClearColor(0xf0f0f0, 1);
+
+    const axisCanvas = axisRenderer.domElement;
+    axisCanvas.style.position = 'absolute';
+    axisCanvas.style.left = `${AXIS_MARGIN}px`;
+    axisCanvas.style.bottom = `${AXIS_MARGIN}px`;
+    axisCanvas.style.width = `${AXIS_CANVAS_SIZE}px`;
+    axisCanvas.style.height = `${AXIS_CANVAS_SIZE}px`;
+    axisCanvas.style.pointerEvents = 'none';
+    axisCanvas.style.userSelect = 'none';
+    axisCanvas.style.zIndex = '2';
+    canvasContainer.appendChild(axisCanvas);
 
     labelRenderer = new THREE.CSS2DRenderer();
     labelRenderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
@@ -42,6 +80,8 @@ function init() {
     labelRenderer.domElement.style.top = '0';
     labelRenderer.domElement.style.pointerEvents = 'none';
     canvasContainer.appendChild(labelRenderer.domElement);
+
+    initAxisHelper();
 
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -82,21 +122,37 @@ function update3DModel(data) {
 
     // シーン内の全オブジェクトを完全に削除する再帰関数
     function disposeObject(obj) {
-        if (obj.geometry) {
+        if (!obj) return;
+
+        if (obj.children && obj.children.length > 0) {
+            const children = [...obj.children];
+            children.forEach(child => {
+                disposeObject(child);
+                if (obj.children.includes(child)) {
+                    obj.remove(child);
+                }
+            });
+        }
+
+        if (obj.isCSS2DObject && obj.element && obj.element.parentNode) {
+            obj.element.parentNode.removeChild(obj.element);
+        }
+
+        if (obj.geometry && typeof obj.geometry.dispose === 'function') {
             obj.geometry.dispose();
         }
-        if (obj.material) {
-            if (Array.isArray(obj.material)) {
-                obj.material.forEach(m => m.dispose());
-            } else {
-                obj.material.dispose();
+
+        const disposeMaterial = material => {
+            if (!material) return;
+            if (Array.isArray(material)) {
+                material.forEach(m => m && typeof m.dispose === 'function' && m.dispose());
+            } else if (typeof material.dispose === 'function') {
+                material.dispose();
             }
-        }
-        // 子要素を再帰的に削除
-        while (obj.children.length > 0) {
-            const child = obj.children[0];
-            disposeObject(child);
-            obj.remove(child);
+        };
+
+        if (obj.material) {
+            disposeMaterial(obj.material);
         }
     }
 
@@ -108,32 +164,268 @@ function update3DModel(data) {
         }
     });
     objectsToRemove.forEach(obj => {
-        disposeObject(obj);
         scene.remove(obj);
+        disposeObject(obj);
     });
 
+    if (labelRenderer) {
+        while (labelRenderer.domElement.firstChild) {
+            labelRenderer.domElement.removeChild(labelRenderer.domElement.firstChild);
+        }
+    }
+
+    const {
+        nodes = [],
+        members = [],
+        nodeLoads = [],
+        memberLoads = [],
+        memberSelfWeights = [],
+        nodeSelfWeights = []
+    } = data;
+
     // 新しいモデルを構築
-    build3DModel(scene, data.nodes, data.members);
+    build3DModel(scene, nodes, members, {
+        nodeLoads,
+        memberLoads,
+        memberSelfWeights,
+        nodeSelfWeights
+    });
 }
 
 function animate() {
     animationFrameId = requestAnimationFrame(animate);
-    controls.update();
-    renderer.render(scene, camera);
-    labelRenderer.render(scene, camera);
+    if (controls) controls.update();
+
+    if (renderer && scene && camera) {
+        renderer.render(scene, camera);
+    }
+
+    renderAxisHelper();
+
+    if (labelRenderer && scene && camera) {
+        labelRenderer.render(scene, camera);
+    }
 }
 
 function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
+    if (!canvasContainer || !camera || !renderer) return;
+
+    const width = Math.max(1, canvasContainer.clientWidth);
+    const height = Math.max(1, canvasContainer.clientHeight);
+
+    camera.aspect = width / height;
     camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    labelRenderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setSize(width, height);
+
+    if (labelRenderer) {
+        labelRenderer.setSize(width, height);
+    }
+
+    if (axisRenderer) {
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+        axisRenderer.setPixelRatio(pixelRatio);
+        axisRenderer.setSize(AXIS_CANVAS_SIZE, AXIS_CANVAS_SIZE);
+    }
+}
+
+function initAxisHelper() {
+    if (!axisRenderer) return;
+
+    axisScene = new THREE.Scene();
+
+    axisCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
+    axisCamera.position.set(0, 0, 4);
+
+    axisHelper = new THREE.Group();
+    axisScene.add(axisHelper);
+
+    const createTextSprite = (text, color) => {
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = 128;
+        canvas.height = 128;
+
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = color;
+        context.font = 'bold 90px Arial';
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillText(text, 64, 64);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        if (renderer && renderer.capabilities && typeof renderer.capabilities.getMaxAnisotropy === 'function') {
+            texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        }
+        texture.needsUpdate = true;
+
+        const spriteMaterial = new THREE.SpriteMaterial({
+            map: texture,
+            transparent: true,
+            depthTest: false,
+            depthWrite: false
+        });
+        const sprite = new THREE.Sprite(spriteMaterial);
+        sprite.scale.set(0.32, 0.32, 1);
+        sprite.renderOrder = 2;
+        sprite.userData.dispose = () => {
+            texture.dispose();
+        };
+        return sprite;
+    };
+
+    const arrowLength = 1.4;
+    const arrowHeadLength = 0.35;
+    const arrowHeadWidth = 0.22;
+    const labelOffset = arrowLength + 0.25;
+
+    const axes = [
+        { label: 'X', color: 0xff3b30, dir: new THREE.Vector3(1, 0, 0) },
+        { label: 'Y', color: 0x34c759, dir: new THREE.Vector3(0, 0, 1) },
+        { label: 'Z', color: 0x007aff, dir: new THREE.Vector3(0, 1, 0) }
+    ];
+
+    axes.forEach(({ label, color, dir }) => {
+        const normalized = dir.clone().normalize();
+        const arrow = new THREE.ArrowHelper(
+            normalized,
+            new THREE.Vector3(0, 0, 0),
+            arrowLength,
+            color,
+            arrowHeadLength,
+            arrowHeadWidth
+        );
+        arrow.frustumCulled = false;
+        arrow.cone.renderOrder = 1;
+        arrow.line.renderOrder = 1;
+        if (arrow.cone.material) {
+            arrow.cone.material.depthTest = false;
+            arrow.cone.material.depthWrite = false;
+        }
+        if (arrow.line.material) {
+            arrow.line.material.depthTest = false;
+            arrow.line.material.depthWrite = false;
+        }
+        axisHelper.add(arrow);
+
+        const labelSprite = createTextSprite(label, `#${color.toString(16).padStart(6, '0')}`);
+        labelSprite.position.copy(normalized.clone().multiplyScalar(labelOffset));
+        axisHelper.add(labelSprite);
+    });
+
+    const originSphere = new THREE.Mesh(
+        new THREE.SphereGeometry(0.08, 16, 16),
+        new THREE.MeshBasicMaterial({ color: 0x555555, depthTest: false, depthWrite: false })
+    );
+    originSphere.renderOrder = 1;
+    axisHelper.add(originSphere);
+}
+
+function renderAxisHelper() {
+    if (!axisScene || !axisCamera || !axisRenderer || !camera) {
+        return;
+    }
+
+    if (axisHelper && camera) {
+        axisHelper.quaternion.copy(camera.quaternion);
+    }
+
+    axisCamera.position.set(0, 0, 4);
+    axisCamera.lookAt(0, 0, 0);
+    axisCamera.updateMatrixWorld();
+
+    axisRenderer.render(axisScene, axisCamera);
 }
 
 // --- 以下、frame_analyzer.jsから移植した3Dモデル構築ロジック ---
 
-function build3DModel(scene, nodes, members) {
+function build3DModel(scene, nodes, members, loadData = {}) {
+    const {
+        nodeLoads = [],
+        memberLoads = [],
+        memberSelfWeights = [],
+        nodeSelfWeights = []
+    } = loadData || {};
+
+    const COLORS = {
+        externalDistributed: { int: 0xff4500, hex: '#ff4500' },
+        externalConcentrated: { int: 0x1e90ff, hex: '#1e90ff' },
+        selfWeight: { int: 0x00aa00, hex: '#00aa00' }
+    };
+
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+    const formatValue = (value, decimals = 2) => {
+        if (!isFinite(value)) return '0.00';
+        const fixed = Number(value).toFixed(decimals);
+        return fixed.replace('-0.00', '0.00');
+    };
+
+    const createLoadLabel = (text, position, colorHex) => {
+        if (typeof THREE.CSS2DObject === 'undefined') return null;
+        const element = document.createElement('div');
+        element.className = 'load-label-3d';
+        element.textContent = text;
+        element.style.color = colorHex;
+        element.style.fontSize = '11px';
+        element.style.fontWeight = 'bold';
+        element.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
+        element.style.padding = '2px 4px';
+        element.style.borderRadius = '3px';
+        element.style.border = `1px solid ${colorHex}`;
+        element.style.pointerEvents = 'none';
+        element.style.userSelect = 'none';
+
+        const label = new THREE.CSS2DObject(element);
+        label.position.copy(position);
+        return label;
+    };
+
+    const addForceArrow = (group, origin, axis, magnitude, color, labelPrefix, unit) => {
+        if (!axis || !isFinite(magnitude) || Math.abs(magnitude) < 1e-6) return;
+        const normalized = axis.clone().normalize();
+        if (!isFinite(normalized.lengthSq()) || normalized.lengthSq() === 0) return;
+
+        const direction = normalized.clone().multiplyScalar(Math.sign(magnitude) || 1);
+        const arrowLength = clamp(Math.abs(magnitude) * 0.2 + 0.6, 0.6, 3.0);
+        const arrowOrigin = origin.clone().sub(direction.clone().multiplyScalar(arrowLength));
+        const arrowHeadLength = Math.min(arrowLength * 0.3, 0.6);
+        const arrowHeadWidth = arrowHeadLength * 0.6;
+
+        const arrow = new THREE.ArrowHelper(direction, arrowOrigin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
+        group.add(arrow);
+
+        const labelShift = Math.min(arrowLength * 0.25, 0.35);
+        const labelPosition = arrowOrigin.clone().add(direction.clone().multiplyScalar(arrowLength - labelShift));
+        const label = createLoadLabel(`${labelPrefix}${formatValue(magnitude)}${unit}`, labelPosition, color.hex);
+        if (label) group.add(label);
+    };
+
+    const addMomentIndicator = (group, origin, axis, magnitude, color, labelPrefix) => {
+        if (!axis || !isFinite(magnitude) || Math.abs(magnitude) < 1e-6) return;
+
+        const normalized = axis.clone().normalize();
+        if (!isFinite(normalized.lengthSq()) || normalized.lengthSq() === 0) return;
+
+        const radius = clamp(0.45 + Math.abs(magnitude) * 0.05, 0.45, 1.6);
+        const tubeRadius = radius * 0.08;
+
+        const geometry = new THREE.TorusGeometry(radius, tubeRadius, 16, 48);
+        const material = new THREE.MeshBasicMaterial({ color: color.int, transparent: true, opacity: 0.85 });
+        const torus = new THREE.Mesh(geometry, material);
+        const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), normalized);
+        torus.quaternion.copy(quaternion);
+        torus.position.copy(origin);
+        group.add(torus);
+
+        const labelPosition = origin.clone()
+            .add(normalized.clone().multiplyScalar(radius + 0.25))
+            .add(new THREE.Vector3(0, 0.15, 0));
+        const label = createLoadLabel(`${labelPrefix}${formatValue(magnitude)}kN·m`, labelPosition, color.hex);
+        if (label) group.add(label);
+    };
+
     const memberGroup = new THREE.Group();
+    const loadGroup = new THREE.Group();
+    const nodePositions = [];
     const nodeMaterial = new THREE.MeshLambertMaterial({ color: 0x1565C0 });
     const nodeGeometry = new THREE.BoxGeometry(0.4, 0.4, 0.4);
 
@@ -146,14 +438,16 @@ function build3DModel(scene, nodes, members) {
         const nodeMesh = new THREE.Mesh(nodeGeometry, nodeMaterial);
         const nodeY = node.y !== undefined ? node.y : 0;  // 入力Y座標(水平)
         const nodeZ = node.z !== undefined ? node.z : 0;  // 入力Z座標(鉛直)
-        nodeMesh.position.set(node.x, nodeZ, nodeY);  // Three.js: (X水平, Y鉛直上向き, Z水平)
+        const nodePosition = new THREE.Vector3(node.x, nodeZ, nodeY);
+        nodeMesh.position.copy(nodePosition);  // Three.js: (X水平, Y鉛直上向き, Z水平)
         memberGroup.add(nodeMesh);
+        nodePositions[i] = nodePosition.clone();
 
         // ピン支持の場合は赤い球体を追加
         if (node.support === 'pinned' || node.support === 'pin') {
             const supportMaterial = new THREE.MeshLambertMaterial({ color: 0xFF0000 });
             const supportSphere = new THREE.Mesh(new THREE.SphereGeometry(0.3, 32, 32), supportMaterial);
-            supportSphere.position.set(node.x, nodeZ, nodeY);
+            supportSphere.position.copy(nodePosition);
             memberGroup.add(supportSphere);
         }
 
@@ -161,7 +455,7 @@ function build3DModel(scene, nodes, members) {
         nodeDiv.className = 'label';
         nodeDiv.textContent = `N${i + 1}`;
         const nodeLabel = new THREE.CSS2DObject(nodeDiv);
-        nodeLabel.position.set(node.x, nodeZ + 0.5, nodeY);
+        nodeLabel.position.copy(nodePosition).add(new THREE.Vector3(0, 0.5, 0));
         nodeLabelsGroup.add(nodeLabel);
     });
 
@@ -204,6 +498,110 @@ function build3DModel(scene, nodes, members) {
             console.warn(`部材 ${member.i+1}-${member.j+1} の3Dメッシュ作成に失敗しました:`, e);
         }
     });
+
+    // 部材等分布荷重の描画
+    const distributedLoads = [];
+    memberLoads.forEach(load => {
+        distributedLoads.push({
+            memberIndex: load.memberIndex,
+            wy: load.wy !== undefined ? load.wy : (load.w !== undefined ? load.w : 0),
+            wz: load.wz || 0,
+            isFromSelfWeight: !!load.isFromSelfWeight
+        });
+    });
+
+    memberSelfWeights.forEach(load => {
+        if (load.loadType === 'distributed' || (load.loadType === 'mixed' && load.w)) {
+            distributedLoads.push({
+                memberIndex: load.memberIndex,
+                wy: load.w || 0,
+                wz: 0,
+                isFromSelfWeight: true
+            });
+        }
+    });
+
+    if (distributedLoads.length > 0) {
+        const numArrows = 5;
+        const arrowLength = 0.8;
+        const arrowHeadLength = arrowLength * 0.25;
+        const arrowHeadWidth = arrowLength * 0.18;
+
+        distributedLoads.forEach(load => {
+            const member = members[load.memberIndex];
+            if (!member) return;
+            const p1 = nodePositions[member.i];
+            const p2 = nodePositions[member.j];
+            if (!p1 || !p2) return;
+
+            const wy = load.wy || 0;
+            const wz = load.wz || 0;
+            if (wy === 0 && wz === 0) return;
+
+            const color = load.isFromSelfWeight ? COLORS.selfWeight : COLORS.externalDistributed;
+
+            for (let i = 0; i <= numArrows; i++) {
+                const t = i / numArrows;
+                const position = new THREE.Vector3().lerpVectors(p1, p2, t);
+
+                if (wy !== 0) {
+                    const baseDir = new THREE.Vector3(0, 0, Math.sign(wy));
+                    const dir = baseDir.clone().multiplyScalar(-1);
+                    const origin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
+                    const arrow = new THREE.ArrowHelper(dir, origin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
+                    loadGroup.add(arrow);
+                }
+
+                if (wz !== 0) {
+                    const baseDir = new THREE.Vector3(0, Math.sign(wz), 0);
+                    const dir = baseDir.clone().multiplyScalar(-1);
+                    const origin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
+                    const arrow = new THREE.ArrowHelper(dir, origin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
+                    loadGroup.add(arrow);
+                }
+            }
+
+            const labelParts = [];
+            if (wy !== 0) labelParts.push(`wy=${formatValue(wy)}kN/m`);
+            if (wz !== 0) labelParts.push(`wz=${formatValue(wz)}kN/m`);
+            if (labelParts.length > 0) {
+                const midpoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+                const offset = new THREE.Vector3();
+                if (wy !== 0) offset.z += Math.sign(wy) * 0.6;
+                if (wz !== 0) offset.y += Math.sign(wz) * 0.6;
+                if (offset.lengthSq() === 0) offset.y = 0.6;
+
+                const label = createLoadLabel(labelParts.join(' '), midpoint.clone().add(offset), color.hex);
+                if (label) loadGroup.add(label);
+            }
+        });
+    }
+
+    // 節点荷重の描画
+    const nodeLoadsCombined = [];
+    nodeLoads.forEach(load => nodeLoadsCombined.push({ ...load, isFromSelfWeight: false }));
+    nodeSelfWeights.forEach(load => nodeLoadsCombined.push({ ...load, isFromSelfWeight: true }));
+
+    if (nodeLoadsCombined.length > 0) {
+        nodeLoadsCombined.forEach(load => {
+            const position = nodePositions[load.nodeIndex];
+            if (!position) return;
+            const color = load.isFromSelfWeight ? COLORS.selfWeight : COLORS.externalConcentrated;
+            const prefix = load.isFromSelfWeight ? 'SW ' : '';
+
+            addForceArrow(loadGroup, position, new THREE.Vector3(1, 0, 0), load.px || 0, color, `${prefix}Px=`, 'kN');
+            addForceArrow(loadGroup, position, new THREE.Vector3(0, 0, 1), load.py || 0, color, `${prefix}Py=`, 'kN');
+            addForceArrow(loadGroup, position, new THREE.Vector3(0, 1, 0), load.pz || 0, color, `${prefix}Pz=`, 'kN');
+
+            addMomentIndicator(loadGroup, position, new THREE.Vector3(1, 0, 0), load.mx || 0, color, `${prefix}Mx=`);
+            addMomentIndicator(loadGroup, position, new THREE.Vector3(0, 0, 1), load.my || 0, color, `${prefix}My=`);
+            addMomentIndicator(loadGroup, position, new THREE.Vector3(0, 1, 0), load.mz || 0, color, `${prefix}Mz=`);
+        });
+    }
+
+    if (loadGroup.children.length > 0) {
+        memberGroup.add(loadGroup);
+    }
 
     scene.add(memberGroup);
     scene.add(nodeLabelsGroup);

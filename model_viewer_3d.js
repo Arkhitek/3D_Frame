@@ -1,22 +1,36 @@
 // model_viewer_3d.js - モデル図の3D表示機能
 
+// モデル図3Dビューア用のグローバル変数（windowスコープ共有のためvarを使用）
+var modelScene = null;
+var modelCamera = null;
+var modelRenderer = null;
+var modelControls = null;
+var modelAnimationFrameId = null;
+
+var modelLabelRenderer = null; // CSS2DRenderer for labels
+var modelNodeLabelsGroup = null;
+var modelMemberLabelsGroup = null;
+var modelRaycaster = null;
+var modelMouse = null;
+var modelNodeMeshes = [];  // 節点メッシュの配列
+var modelMemberMeshes = []; // 部材メッシュの配列
+var modelSelectedNode = null;
+var modelSelectedMember = null;
+var modelFirstMemberNode = null;
+var modelGridHelper = null;
+var modelContainerResizeObserver = null; // コンテナのリサイズ監視用
+var modelLastKnownSize = { width: 0, height: 0 }; // 最後に認識したコンテナサイズ
+var modelAxisHelper = null; // 座標軸ヘルパー用のカメラとシーン
+var modelAxisScene = null;
+var modelAxisCamera = null;
+var modelAxisRenderer = null;
+
 if (typeof THREE === 'undefined') {
     console.warn('Three.js not loaded - 3D model view will not be available');
 }
 
-// モデル図3Dビューア用のグローバル変数
-let modelScene, modelCamera, modelRenderer, modelControls, modelAnimationFrameId;
-let modelLabelRenderer; // CSS2DRenderer for labels
-let modelNodeLabelsGroup, modelMemberLabelsGroup;
-let modelRaycaster, modelMouse;
-let modelNodeMeshes = [];  // 節点メッシュの配列
-let modelMemberMeshes = []; // 部材メッシュの配列
-let modelSelectedNode = null;
-let modelSelectedMember = null;
-let modelFirstMemberNode = null;
-let modelGridHelper = null;
-let modelContainerResizeObserver = null; // コンテナのリサイズ監視用
-let modelLastKnownSize = { width: 0, height: 0 }; // 最後に認識したコンテナサイズ
+const MODEL_AXIS_CANVAS_SIZE = 120;
+const MODEL_AXIS_MARGIN = 15;
 
 /**
  * モデル図3Dシーンの初期化
@@ -44,6 +58,13 @@ function initModel3DView() {
             modelLabelRenderer.domElement.removeChild(modelLabelRenderer.domElement.firstChild);
         }
         container.removeChild(modelLabelRenderer.domElement);
+    }
+    if (modelAxisRenderer) {
+        if (modelAxisRenderer.domElement && modelAxisRenderer.domElement.parentNode) {
+            modelAxisRenderer.domElement.parentNode.removeChild(modelAxisRenderer.domElement);
+        }
+        modelAxisRenderer.dispose();
+        modelAxisRenderer = null;
     }
     if (modelAnimationFrameId) {
         cancelAnimationFrame(modelAnimationFrameId);
@@ -96,6 +117,23 @@ function initModel3DView() {
     
     container.appendChild(modelRenderer.domElement);
 
+    // 座標軸用の小型レンダラーを作成
+    modelAxisRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    modelAxisRenderer.setPixelRatio(pixelRatio);
+    modelAxisRenderer.setSize(MODEL_AXIS_CANVAS_SIZE, MODEL_AXIS_CANVAS_SIZE);
+    modelAxisRenderer.autoClear = true;
+    modelAxisRenderer.setClearColor(0xf5f5f5, 1);
+
+    const axisCanvas = modelAxisRenderer.domElement;
+    axisCanvas.style.position = 'absolute';
+    axisCanvas.style.left = `${MODEL_AXIS_MARGIN}px`;
+    axisCanvas.style.bottom = `${MODEL_AXIS_MARGIN}px`;
+    axisCanvas.style.width = `${MODEL_AXIS_CANVAS_SIZE}px`;
+    axisCanvas.style.height = `${MODEL_AXIS_CANVAS_SIZE}px`;
+    axisCanvas.style.pointerEvents = 'none';
+    axisCanvas.style.userSelect = 'none';
+    container.appendChild(axisCanvas);
+
     // CSS2DRendererを作成（ラベル用）
     if (typeof THREE.CSS2DRenderer !== 'undefined') {
         modelLabelRenderer = new THREE.CSS2DRenderer();
@@ -147,6 +185,9 @@ function initModel3DView() {
     modelRenderer.domElement.addEventListener('contextmenu', onModel3DContextMenu);
     modelRenderer.domElement.addEventListener('mousemove', onModel3DMouseMove);
 
+    // 座標軸ヘルパーを初期化
+    initAxisHelper();
+
     // アニメーションループ開始
     animateModel3D();
 
@@ -187,9 +228,16 @@ function initModel3DView() {
 function animateModel3D() {
     modelAnimationFrameId = requestAnimationFrame(animateModel3D);
     if (modelControls) modelControls.update();
+
     if (modelRenderer && modelScene && modelCamera) {
+        // メインシーンをレンダリング
+        modelRenderer.clear();
         modelRenderer.render(modelScene, modelCamera);
+
+        // 座標軸ヘルパーを描画（メインシーンの後）
+        renderAxisHelper();
     }
+
     if (modelLabelRenderer && modelScene && modelCamera) {
         modelLabelRenderer.render(modelScene, modelCamera);
     }
@@ -217,13 +265,154 @@ function onModel3DResize() {
     if (modelLabelRenderer) {
         modelLabelRenderer.setSize(actualWidth, actualHeight);
     }
+    if (modelAxisRenderer) {
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+        modelAxisRenderer.setPixelRatio(pixelRatio);
+        modelAxisRenderer.setSize(MODEL_AXIS_CANVAS_SIZE, MODEL_AXIS_CANVAS_SIZE);
+    }
+}
+
+function disposeModelObject(object) {
+    if (!object) return;
+
+    // まず子要素を再帰的に処理
+    if (object.children && object.children.length > 0) {
+        // コピーを作成してから処理（ループ中の変更を避ける）
+        const children = [...object.children];
+        children.forEach(child => {
+            disposeModelObject(child);
+            if (object.children.includes(child)) {
+                object.remove(child);
+            }
+        });
+    }
+
+    // CSS2DラベルのDOM要素を削除
+    if (object.isCSS2DObject && object.element && object.element.parentNode) {
+        object.element.parentNode.removeChild(object.element);
+    }
+
+    // ジオメトリとマテリアルを解放
+    if (object.geometry && typeof object.geometry.dispose === 'function') {
+        object.geometry.dispose();
+    }
+
+    const disposeMaterial = material => {
+        if (!material) return;
+        if (Array.isArray(material)) {
+            material.forEach(m => m && typeof m.dispose === 'function' && m.dispose());
+        } else if (typeof material.dispose === 'function') {
+            material.dispose();
+        }
+    };
+
+    if (object.material) {
+        disposeMaterial(object.material);
+    }
 }
 
 /**
  * モデル図3Dの更新
  */
-function updateModel3DView(nodes, members, memberLoads = []) {
+function updateModel3DView(nodes, members, loadData = {}) {
     if (!modelScene) return;
+
+    const loadBundle = Array.isArray(loadData)
+        ? { memberLoads: loadData }
+        : (loadData || {});
+
+    const memberLoads = Array.isArray(loadBundle.memberLoads) ? loadBundle.memberLoads : [];
+    const nodeLoads = Array.isArray(loadBundle.nodeLoads) ? loadBundle.nodeLoads : [];
+    const memberSelfWeights = Array.isArray(loadBundle.memberSelfWeights) ? loadBundle.memberSelfWeights : [];
+    const nodeSelfWeights = Array.isArray(loadBundle.nodeSelfWeights) ? loadBundle.nodeSelfWeights : [];
+
+    const COLORS = {
+        externalDistributed: { int: 0xff4500, hex: '#ff4500' },
+        externalConcentrated: { int: 0x1e90ff, hex: '#1e90ff' },
+        selfWeight: { int: 0x00aa00, hex: '#00aa00' }
+    };
+
+    const showExternalLoads = document.getElementById('show-external-loads')?.checked ?? true;
+    const showSelfWeight = document.getElementById('show-self-weight')?.checked ?? true;
+    const considerSelfWeight = document.getElementById('consider-self-weight-checkbox')?.checked ?? false;
+    const includeSelfWeightLoads = showSelfWeight && considerSelfWeight;
+
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+    const formatLoadValue = (value, decimals = 2) => {
+        if (!isFinite(value)) return '0.00';
+        const fixed = Number(value).toFixed(decimals);
+        return fixed.replace('-0.00', '0.00');
+    };
+
+    const createLoadLabel = (text, position, colorHex) => {
+        if (typeof THREE.CSS2DObject === 'undefined') return null;
+        const element = document.createElement('div');
+        element.className = 'load-label-3d';
+        element.textContent = text;
+        element.style.color = colorHex;
+        element.style.fontSize = '11px';
+        element.style.fontWeight = 'bold';
+        element.style.backgroundColor = 'rgba(255, 255, 255, 0.92)';
+        element.style.padding = '2px 4px';
+        element.style.borderRadius = '3px';
+        element.style.border = `1px solid ${colorHex}`;
+        element.style.pointerEvents = 'none';
+        element.style.userSelect = 'none';
+
+        const labelObject = new THREE.CSS2DObject(element);
+        labelObject.position.copy(position);
+        return labelObject;
+    };
+
+    const addForceArrow = (group, origin, axis, magnitude, color, labelPrefix, unit) => {
+        if (!axis || !isFinite(magnitude) || Math.abs(magnitude) < 1e-6) return;
+
+        const normalizedAxis = axis.clone().normalize();
+        if (!isFinite(normalizedAxis.lengthSq()) || normalizedAxis.lengthSq() === 0) return;
+
+        const direction = normalizedAxis.clone().multiplyScalar(Math.sign(magnitude) || 1);
+        const arrowLength = clamp(Math.abs(magnitude) * 0.2 + 0.6, 0.6, 3.0);
+        const arrowOrigin = origin.clone().sub(direction.clone().multiplyScalar(arrowLength));
+        const arrowHeadLength = Math.min(arrowLength * 0.3, 0.6);
+        const arrowHeadWidth = arrowHeadLength * 0.6;
+
+        const arrow = new THREE.ArrowHelper(direction, arrowOrigin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
+        group.add(arrow);
+
+        const labelText = `${labelPrefix}${formatLoadValue(magnitude)}${unit}`;
+    const labelShift = Math.min(arrowLength * 0.25, 0.35);
+    const labelPosition = arrowOrigin.clone().sub(direction.clone().multiplyScalar(labelShift));
+        const label = createLoadLabel(labelText, labelPosition, color.hex);
+        if (label) {
+            group.add(label);
+        }
+    };
+
+    const addMomentIndicator = (group, origin, axis, magnitude, color, labelPrefix) => {
+        if (!axis || !isFinite(magnitude) || Math.abs(magnitude) < 1e-6) return;
+
+        const normalizedAxis = axis.clone().normalize();
+        if (!isFinite(normalizedAxis.lengthSq()) || normalizedAxis.lengthSq() === 0) return;
+
+        const radius = clamp(0.45 + Math.abs(magnitude) * 0.05, 0.45, 1.6);
+        const tubeRadius = radius * 0.08;
+
+        const geometry = new THREE.TorusGeometry(radius, tubeRadius, 16, 48);
+        const material = new THREE.MeshBasicMaterial({ color: color.int, transparent: true, opacity: 0.85 });
+        const torus = new THREE.Mesh(geometry, material);
+        const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), normalizedAxis);
+        torus.quaternion.copy(quaternion);
+        torus.position.copy(origin);
+        group.add(torus);
+
+        const labelPosition = origin.clone()
+            .add(normalizedAxis.clone().multiplyScalar(radius + 0.25))
+            .add(new THREE.Vector3(0, 0.15, 0));
+        const label = createLoadLabel(`${labelPrefix}${formatLoadValue(magnitude)}kN·m`, labelPosition, color.hex);
+        if (label) {
+            group.add(label);
+        }
+    };
 
     // 既存のオブジェクトを削除（グリッドとライトは保持）
     const objectsToRemove = [];
@@ -233,29 +422,15 @@ function updateModel3DView(nodes, members, memberLoads = []) {
         }
     });
     objectsToRemove.forEach(obj => {
-        // CSS2DObjectの場合、DOM要素も削除
-        if (obj.isCSS2DObject && obj.element && obj.element.parentNode) {
-            obj.element.parentNode.removeChild(obj.element);
-        }
-        // ジオメトリとマテリアルのクリーンアップ
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) {
-            if (Array.isArray(obj.material)) {
-                obj.material.forEach(m => m.dispose());
-            } else {
-                obj.material.dispose();
-            }
-        }
-        // グループの場合、子要素も再帰的に処理
-        if (obj.children && obj.children.length > 0) {
-            obj.children.forEach(child => {
-                if (child.isCSS2DObject && child.element && child.element.parentNode) {
-                    child.element.parentNode.removeChild(child.element);
-                }
-            });
-        }
         modelScene.remove(obj);
+        disposeModelObject(obj);
     });
+
+    if (modelLabelRenderer) {
+        while (modelLabelRenderer.domElement.firstChild) {
+            modelLabelRenderer.domElement.removeChild(modelLabelRenderer.domElement.firstChild);
+        }
+    }
 
     // 配列をクリア
     modelNodeMeshes = [];
@@ -264,6 +439,8 @@ function updateModel3DView(nodes, members, memberLoads = []) {
     if (!nodes || nodes.length === 0) return;
 
     const modelGroup = new THREE.Group();
+    const loadGroup = new THREE.Group();
+    const nodePositions = [];
 
     // 節点を描画（高品質マテリアルを使用）
     const nodeGeometry = new THREE.SphereGeometry(0.15, 32, 32); // セグメント数を増やして滑らかに
@@ -287,10 +464,12 @@ function updateModel3DView(nodes, members, memberLoads = []) {
         const nodeMesh = new THREE.Mesh(nodeGeometry, material.clone());
         const nodeY = node.y !== undefined ? node.y : 0;
         const nodeZ = node.z !== undefined ? node.z : 0;
-        nodeMesh.position.set(node.x, nodeZ, nodeY);
+        const nodePosition = new THREE.Vector3(node.x, nodeZ, nodeY);
+        nodeMesh.position.copy(nodePosition);
         nodeMesh.userData = { type: 'node', index: i };
         modelGroup.add(nodeMesh);
         modelNodeMeshes.push(nodeMesh);
+        nodePositions[i] = nodePosition.clone();
 
         // 節点ラベルを追加（CSS2DObject）
         if (typeof THREE.CSS2DObject !== 'undefined') {
@@ -308,7 +487,7 @@ function updateModel3DView(nodes, members, memberLoads = []) {
             nodeLabel.style.userSelect = 'none';
             
             const labelObject = new THREE.CSS2DObject(nodeLabel);
-            labelObject.position.set(node.x, nodeZ + 0.3, nodeY); // 節点の少し上に配置
+            labelObject.position.copy(nodePosition).add(new THREE.Vector3(0, 0.3, 0)); // 節点の少し上に配置
             modelGroup.add(labelObject);
         }
 
@@ -322,7 +501,7 @@ function updateModel3DView(nodes, members, memberLoads = []) {
                 emissiveIntensity: 0.15
             });
             const supportSphere = new THREE.Mesh(new THREE.SphereGeometry(0.25, 32, 32), supportMaterial);
-            supportSphere.position.set(node.x, nodeZ, nodeY);
+            supportSphere.position.copy(nodePosition);
             modelGroup.add(supportSphere);
         }
 
@@ -336,7 +515,7 @@ function updateModel3DView(nodes, members, memberLoads = []) {
                 emissiveIntensity: 0.15
             });
             const supportBox = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), supportMaterial);
-            supportBox.position.set(node.x, nodeZ, nodeY);
+            supportBox.position.copy(nodePosition);
             modelGroup.add(supportBox);
         }
     });
@@ -370,26 +549,63 @@ function updateModel3DView(nodes, members, memberLoads = []) {
         const p1 = new THREE.Vector3(nodeI.x, z1, y1);
         const p2 = new THREE.Vector3(nodeJ.x, z2, y2);
 
-        const direction = new THREE.Vector3().subVectors(p2, p1);
-        const length = direction.length();
+        const directionVector = new THREE.Vector3().subVectors(p2, p1);
+        const length = directionVector.length();
+        if (length <= 0) return;
 
-        // 部材を円筒で描画（セグメント数を増やして滑らかに）
-        const radius = 0.05;
-        const geometry = new THREE.CylinderGeometry(radius, radius, length, 16, 1); // 8→16に増やす
-        const material = (modelSelectedMember === index) ? selectedMemberMaterial.clone() : memberMaterial.clone();
-        const cylinder = new THREE.Mesh(geometry, material);
-
-        // 部材の中心位置
+        const directionNormalized = directionVector.clone().normalize();
         const midpoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
-        cylinder.position.copy(midpoint);
+        const baseMaterial = (modelSelectedMember === index) ? selectedMemberMaterial.clone() : memberMaterial.clone();
 
-        // 部材の向きを設定
-        const axis = new THREE.Vector3(0, 1, 0);
-        cylinder.quaternion.setFromUnitVectors(axis, direction.clone().normalize());
+        let memberMesh = null;
+        const sectionShape = createSectionShapeFromInfo(member.sectionInfo, member);
 
-        cylinder.userData = { type: 'member', index: index };
-        modelGroup.add(cylinder);
-        modelMemberMeshes.push(cylinder);
+        if (sectionShape) {
+            try {
+                const extrudeSettings = { depth: length, bevelEnabled: false };
+                const extrudeGeometry = new THREE.ExtrudeGeometry(sectionShape, extrudeSettings);
+                memberMesh = new THREE.Mesh(extrudeGeometry, baseMaterial);
+
+                const edgesGeometry = new THREE.EdgesGeometry(extrudeGeometry, 15);
+                const edgesMaterial = new THREE.LineBasicMaterial({
+                    color: 0x000000,
+                    linewidth: 1,
+                    transparent: true,
+                    opacity: 0.35,
+                    depthTest: false
+                });
+                const edges = new THREE.LineSegments(edgesGeometry, edgesMaterial);
+                memberMesh.add(edges);
+
+                const isVertical = Math.abs(directionNormalized.y) > 0.95;
+                memberMesh.position.copy(p1);
+                memberMesh.up.set(isVertical ? 1 : 0, isVertical ? 0 : 1, 0);
+                memberMesh.lookAt(p2);
+
+                // 垂直部材の場合は90度回転、それ以外はsectionAxisに従う
+                if (isVertical) {
+                    memberMesh.rotateZ(Math.PI / 2);
+                } else if (member.sectionAxis && member.sectionAxis.key === 'y') {
+                    memberMesh.rotateZ(Math.PI / 2);
+                }
+            } catch (error) {
+                console.warn('Extrude failed for member; falling back to cylinder geometry.', error, member.sectionInfo);
+                memberMesh = null;
+            }
+        }
+
+        if (!memberMesh) {
+            const radius = 0.05;
+            const fallbackGeometry = new THREE.CylinderGeometry(radius, radius, length, 16, 1);
+            memberMesh = new THREE.Mesh(fallbackGeometry, baseMaterial);
+            memberMesh.position.copy(midpoint);
+            const axis = new THREE.Vector3(0, 1, 0);
+            memberMesh.quaternion.setFromUnitVectors(axis, directionNormalized);
+        }
+
+        memberMesh.userData = { type: 'member', index: index };
+        modelGroup.add(memberMesh);
+        modelMemberMeshes.push(memberMesh);
 
         // 部材ラベルを追加（CSS2DObject）
         if (typeof THREE.CSS2DObject !== 'undefined') {
@@ -424,114 +640,173 @@ function updateModel3DView(nodes, members, memberLoads = []) {
 
         if (member.i_conn === 'pinned') {
             const hingeSphere = new THREE.Mesh(new THREE.SphereGeometry(0.12, 24, 24), redMaterial);
-            hingeSphere.position.copy(p1).addScaledVector(direction.normalize(), 0.3);
+            hingeSphere.position.copy(p1).addScaledVector(directionNormalized, 0.3);
             modelGroup.add(hingeSphere);
         }
 
         if (member.j_conn === 'pinned') {
             const hingeSphere = new THREE.Mesh(new THREE.SphereGeometry(0.12, 24, 24), redMaterial);
-            hingeSphere.position.copy(p2).addScaledVector(direction.normalize(), -0.3);
+            hingeSphere.position.copy(p2).addScaledVector(directionNormalized, -0.3);
             modelGroup.add(hingeSphere);
         }
     });
 
     // 部材荷重の描画（等分布荷重の矢印）
-    if (memberLoads && memberLoads.length > 0) {
-        memberLoads.forEach(load => {
+    const distributedLoads = [];
+
+    memberLoads.forEach(load => {
+        distributedLoads.push({
+            memberIndex: load.memberIndex,
+            wy: load.wy !== undefined ? load.wy : (load.w !== undefined ? load.w : 0),
+            wz: load.wz || 0,
+            isFromSelfWeight: !!load.isFromSelfWeight
+        });
+    });
+
+    memberSelfWeights.forEach(load => {
+        if (!includeSelfWeightLoads) return;
+        if (load.loadType === 'distributed' || (load.loadType === 'mixed' && load.w)) {
+            distributedLoads.push({
+                memberIndex: load.memberIndex,
+                wy: load.w || 0,
+                wz: 0,
+                isFromSelfWeight: true
+            });
+        }
+    });
+
+    if (distributedLoads.length > 0) {
+        const numArrows = 5;
+        const arrowLength = 0.8;
+        const arrowHeadLength = arrowLength * 0.25;
+        const arrowHeadWidth = arrowLength * 0.18;
+
+        distributedLoads.forEach(load => {
+            const isSelfWeight = !!load.isFromSelfWeight;
+            if (isSelfWeight && !includeSelfWeightLoads) return;
+            if (!isSelfWeight && !showExternalLoads) return;
+
             const member = members[load.memberIndex];
             if (!member) return;
 
-            const wy = load.wy || load.w || 0;  // Y方向荷重（下向き）
-            const wz = load.wz || 0;  // Z方向荷重
+            const startPos = nodePositions[member.i];
+            const endPos = nodePositions[member.j];
+            if (!startPos || !endPos) return;
 
-            // 荷重が0の場合はスキップ
+            const p1 = startPos.clone();
+            const p2 = endPos.clone();
+            const color = isSelfWeight ? COLORS.selfWeight : COLORS.externalDistributed;
+            const wy = load.wy || 0;
+            const wz = load.wz || 0;
+
             if (wy === 0 && wz === 0) return;
 
-            const nodeI = nodes[member.i];
-            const nodeJ = nodes[member.j];
-            if (!nodeI || !nodeJ) return;
+            // 部材軸方向ベクトル
+            const memberAxis = new THREE.Vector3().subVectors(p2, p1).normalize();
 
-            const y1 = nodeI.y !== undefined ? nodeI.y : 0;
-            const y2 = nodeJ.y !== undefined ? nodeJ.y : 0;
-            const z1 = nodeI.z !== undefined ? nodeI.z : 0;
-            const z2 = nodeJ.z !== undefined ? nodeJ.z : 0;
+            // 部材のローカル座標系を計算
+            // wy方向（部材ローカルy軸）: 部材軸と直交する方向
+            // wz方向（部材ローカルz軸）: 鉛直方向
+            let localY, localZ;
 
-            const p1 = new THREE.Vector3(nodeI.x, z1, y1);
-            const p2 = new THREE.Vector3(nodeJ.x, z2, y2);
-            const direction = new THREE.Vector3().subVectors(p2, p1);
-            const length = direction.length();
+            // 部材が垂直かどうか判定
+            const isVertical = Math.abs(memberAxis.y) > 0.95;
 
-            // 等分布荷重の矢印を複数描画
-            const numArrows = 5;
-            const arrowColor = load.isFromSelfWeight ? 0x00aa00 : 0xff4500;
-            const arrowLength = 0.8;  // 矢印の長さ
+            if (isVertical) {
+                // 垂直部材の場合: localYはグローバルZ方向（手前方向）
+                localY = new THREE.Vector3(0, 0, 1);
+                localZ = new THREE.Vector3(1, 0, 0); // グローバルX方向
+            } else {
+                // 水平または斜め部材の場合
+                // localZ = グローバルY軸（上方向）
+                localZ = new THREE.Vector3(0, 1, 0);
+                // localY = 部材軸 × localZ（外積で部材軸と直交する方向）
+                localY = new THREE.Vector3().crossVectors(memberAxis, localZ).normalize();
+
+                // 外積結果が0ベクトルになる場合の対策
+                if (localY.lengthSq() < 0.001) {
+                    localY = new THREE.Vector3(0, 0, 1);
+                }
+            }
 
             for (let i = 0; i <= numArrows; i++) {
                 const t = i / numArrows;
                 const position = new THREE.Vector3().lerpVectors(p1, p2, t);
 
-                // Y方向荷重（重力方向）
                 if (wy !== 0) {
-                    const arrowDir = new THREE.Vector3(0, 0, Math.sign(wy));  // Z軸方向（画面上下）
-                    const arrowOrigin = position.clone().sub(arrowDir.clone().multiplyScalar(arrowLength));
-                    const arrow = new THREE.ArrowHelper(
-                        arrowDir,
-                        arrowOrigin,
-                        arrowLength,
-                        arrowColor,
-                        arrowLength * 0.2,  // ヘッドの長さ
-                        arrowLength * 0.15  // ヘッドの幅
-                    );
-                    modelGroup.add(arrow);
+                    // 部材ローカルy方向（部材軸と直交）
+                    const baseDir = localY.clone().multiplyScalar(Math.sign(wy));
+                    const arrowDir = baseDir.clone().multiplyScalar(-1);
+                    const arrowOrigin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
+                    const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
+                    loadGroup.add(arrow);
                 }
 
-                // Z方向荷重
                 if (wz !== 0) {
-                    const arrowDir = new THREE.Vector3(0, Math.sign(wz), 0);  // Y軸方向
-                    const arrowOrigin = position.clone().sub(arrowDir.clone().multiplyScalar(arrowLength));
-                    const arrow = new THREE.ArrowHelper(
-                        arrowDir,
-                        arrowOrigin,
-                        arrowLength,
-                        arrowColor,
-                        arrowLength * 0.2,
-                        arrowLength * 0.15
-                    );
-                    modelGroup.add(arrow);
+                    // 部材ローカルz方向（鉛直方向）
+                    const baseDir = localZ.clone().multiplyScalar(Math.sign(wz));
+                    const arrowDir = baseDir.clone().multiplyScalar(-1);
+                    const arrowOrigin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
+                    const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
+                    loadGroup.add(arrow);
                 }
             }
 
-            // 荷重値のラベルを部材中央に表示
-            if (typeof THREE.CSS2DObject !== 'undefined') {
+            const labelParts = [];
+            if (wy !== 0) labelParts.push(`wy=${formatLoadValue(wy)}kN/m`);
+            if (wz !== 0) labelParts.push(`wz=${formatLoadValue(wz)}kN/m`);
+            const loadText = labelParts.join(' ');
+
+            if (loadText) {
                 const midpoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
-                const loadLabel = document.createElement('div');
-                loadLabel.className = 'load-label-3d';
+                const labelOffset = new THREE.Vector3();
+                if (wy !== 0) labelOffset.add(localY.clone().multiplyScalar(Math.sign(wy) * 0.6));
+                if (wz !== 0) labelOffset.add(localZ.clone().multiplyScalar(Math.sign(wz) * 0.6));
+                if (labelOffset.lengthSq() === 0) labelOffset.y = 0.6;
 
-                let loadText = '';
-                if (wy !== 0 && wz !== 0) {
-                    loadText = `wy=${Math.abs(wy).toFixed(2)} wz=${Math.abs(wz).toFixed(2)}kN/m`;
-                } else if (wy !== 0) {
-                    loadText = `${Math.abs(wy).toFixed(2)}kN/m`;
-                } else {
-                    loadText = `wz=${Math.abs(wz).toFixed(2)}kN/m`;
+                const labelPosition = midpoint.clone().add(labelOffset);
+                const label = createLoadLabel(loadText, labelPosition, color.hex);
+                if (label) {
+                    loadGroup.add(label);
                 }
-
-                loadLabel.textContent = loadText;
-                loadLabel.style.color = load.isFromSelfWeight ? '#00aa00' : '#ff4500';
-                loadLabel.style.fontSize = '11px';
-                loadLabel.style.fontWeight = 'bold';
-                loadLabel.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
-                loadLabel.style.padding = '2px 4px';
-                loadLabel.style.borderRadius = '3px';
-                loadLabel.style.border = `1px solid ${load.isFromSelfWeight ? '#00aa00' : '#ff4500'}`;
-                loadLabel.style.pointerEvents = 'none';
-                loadLabel.style.userSelect = 'none';
-
-                const labelObject = new THREE.CSS2DObject(loadLabel);
-                labelObject.position.copy(midpoint).add(new THREE.Vector3(0, 0.5, 0));
-                modelGroup.add(labelObject);
             }
         });
+    }
+
+    // 節点荷重の描画（集中荷重・モーメント）
+    const nodeLoadsToRender = [];
+    if (showExternalLoads) {
+        nodeLoads.forEach(load => {
+            nodeLoadsToRender.push({ ...load, isFromSelfWeight: false });
+        });
+    }
+    if (includeSelfWeightLoads) {
+        nodeSelfWeights.forEach(load => {
+            nodeLoadsToRender.push({ ...load, isFromSelfWeight: true });
+        });
+    }
+
+    if (nodeLoadsToRender.length > 0) {
+        nodeLoadsToRender.forEach(load => {
+            const nodePos = nodePositions[load.nodeIndex];
+            if (!nodePos) return;
+
+            const color = load.isFromSelfWeight ? COLORS.selfWeight : COLORS.externalConcentrated;
+            const prefix = load.isFromSelfWeight ? 'SW ' : '';
+
+            addForceArrow(loadGroup, nodePos, new THREE.Vector3(1, 0, 0), load.px || 0, color, `${prefix}Px=`, 'kN');
+            addForceArrow(loadGroup, nodePos, new THREE.Vector3(0, 0, 1), load.py || 0, color, `${prefix}Py=`, 'kN');
+            addForceArrow(loadGroup, nodePos, new THREE.Vector3(0, 1, 0), load.pz || 0, color, `${prefix}Pz=`, 'kN');
+
+            addMomentIndicator(loadGroup, nodePos, new THREE.Vector3(1, 0, 0), load.mx || 0, color, `${prefix}Mx=`);
+            addMomentIndicator(loadGroup, nodePos, new THREE.Vector3(0, 0, 1), load.my || 0, color, `${prefix}My=`);
+            addMomentIndicator(loadGroup, nodePos, new THREE.Vector3(0, 1, 0), load.mz || 0, color, `${prefix}Mz=`);
+        });
+    }
+
+    // 作成した荷重グループを追加
+    if (loadGroup.children.length > 0) {
+        modelGroup.add(loadGroup);
     }
 
     // 部材追加モードで第一節点が選択されている場合
@@ -685,8 +960,8 @@ function toggleModel3DView(show) {
 
         // 現在のモデルデータを描画
         try {
-            const { nodes, members } = parseInputs();
-            updateModel3DView(nodes, members);
+            const { nodes, members, nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights } = parseInputs();
+            updateModel3DView(nodes, members, { nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights });
             
             // 3D表示に切り替えた後、自動スケーリングを実行
             setTimeout(() => {
@@ -758,8 +1033,8 @@ function onModel3DClick(event) {
 
             // 再描画
             try {
-                const { nodes, members } = parseInputs();
-                updateModel3DView(nodes, members);
+                const { nodes, members, nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights } = parseInputs();
+                updateModel3DView(nodes, members, { nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights });
             } catch (e) {
                 console.error('Error updating view:', e);
             }
@@ -775,8 +1050,8 @@ function onModel3DClick(event) {
 
             // 再描画
             try {
-                const { nodes, members } = parseInputs();
-                updateModel3DView(nodes, members);
+                const { nodes, members, nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights } = parseInputs();
+                updateModel3DView(nodes, members, { nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights });
             } catch (e) {
                 console.error('Error updating view:', e);
             }
@@ -786,8 +1061,8 @@ function onModel3DClick(event) {
             modelSelectedMember = null;
 
             try {
-                const { nodes, members } = parseInputs();
-                updateModel3DView(nodes, members);
+                const { nodes, members, nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights } = parseInputs();
+                updateModel3DView(nodes, members, { nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights });
             } catch (e) {
                 console.error('Error updating view:', e);
             }
@@ -827,8 +1102,8 @@ function onModel3DClick(event) {
 
                 // 再描画
                 try {
-                    const { nodes, members } = parseInputs();
-                    updateModel3DView(nodes, members);
+                    const { nodes, members, nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights } = parseInputs();
+                    updateModel3DView(nodes, members, { nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights });
                 } catch (e) {
                     console.error('Error updating view:', e);
                 }
@@ -965,12 +1240,20 @@ function disposeModel3DView() {
             if (obj.isCSS2DObject && obj.element && obj.element.parentNode) {
                 obj.element.parentNode.removeChild(obj.element);
             }
+            if (obj.userData && typeof obj.userData.dispose === 'function') {
+                obj.userData.dispose();
+            }
             if (obj.geometry) obj.geometry.dispose();
+            const disposeMaterial = (material) => {
+                if (!material) return;
+                if (material.map) material.map.dispose();
+                if (typeof material.dispose === 'function') material.dispose();
+            };
             if (obj.material) {
                 if (Array.isArray(obj.material)) {
-                    obj.material.forEach(m => m.dispose());
+                    obj.material.forEach(disposeMaterial);
                 } else {
-                    obj.material.dispose();
+                    disposeMaterial(obj.material);
                 }
             }
             modelScene.remove(obj);
@@ -994,4 +1277,358 @@ function disposeModel3DView() {
         modelContainerResizeObserver = null;
     }
     modelLastKnownSize = { width: 0, height: 0 };
+
+    // 座標軸ヘルパーのクリーンアップ
+    if (modelAxisScene) {
+        while (modelAxisScene.children.length > 0) {
+            const obj = modelAxisScene.children[0];
+            if (obj.isCSS2DObject && obj.element && obj.element.parentNode) {
+                obj.element.parentNode.removeChild(obj.element);
+            }
+            if (obj.userData && typeof obj.userData.dispose === 'function') {
+                obj.userData.dispose();
+            }
+            if (obj.geometry) obj.geometry.dispose();
+            const disposeMaterial = (material) => {
+                if (!material) return;
+                if (material.map) material.map.dispose();
+                if (typeof material.dispose === 'function') material.dispose();
+            };
+            if (obj.material) {
+                if (Array.isArray(obj.material)) {
+                    obj.material.forEach(disposeMaterial);
+                } else {
+                    disposeMaterial(obj.material);
+                }
+            }
+            modelAxisScene.remove(obj);
+        }
+        modelAxisScene = null;
+    }
+    modelAxisCamera = null;
+    modelAxisHelper = null;
+}
+
+/**
+ * 座標軸ヘルパーの初期化
+ */
+function initAxisHelper() {
+    if (!modelRenderer) return;
+
+    modelAxisScene = new THREE.Scene();
+
+    modelAxisCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
+    modelAxisCamera.position.set(0, 0, 4);
+
+    modelAxisHelper = new THREE.Group();
+    modelAxisScene.add(modelAxisHelper);
+
+    const createTextSprite = (text, color) => {
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = 128;
+        canvas.height = 128;
+
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = color;
+        context.font = 'bold 90px Arial';
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillText(text, 64, 64);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        if (modelRenderer.capabilities && typeof modelRenderer.capabilities.getMaxAnisotropy === 'function') {
+            texture.anisotropy = modelRenderer.capabilities.getMaxAnisotropy();
+        }
+        texture.needsUpdate = true;
+
+        const spriteMaterial = new THREE.SpriteMaterial({
+            map: texture,
+            transparent: true,
+            depthTest: false,
+            depthWrite: false
+        });
+        const sprite = new THREE.Sprite(spriteMaterial);
+        sprite.scale.set(0.32, 0.32, 1);
+        sprite.renderOrder = 2;
+        sprite.userData.dispose = () => {
+            texture.dispose();
+        };
+        return sprite;
+    };
+
+    const arrowLength = 1.4;
+    const arrowHeadLength = 0.35;
+    const arrowHeadWidth = 0.22;
+    const labelOffset = arrowLength + 0.25;
+
+    const axes = [
+        { label: 'X', color: 0xff3b30, dir: new THREE.Vector3(1, 0, 0) },
+        { label: 'Y', color: 0x34c759, dir: new THREE.Vector3(0, 0, 1) },
+        { label: 'Z', color: 0x007aff, dir: new THREE.Vector3(0, 1, 0) }
+    ];
+
+    axes.forEach(({ label, color, dir }) => {
+        const normalized = dir.clone().normalize();
+        const arrow = new THREE.ArrowHelper(
+            normalized,
+            new THREE.Vector3(0, 0, 0),
+            arrowLength,
+            color,
+            arrowHeadLength,
+            arrowHeadWidth
+        );
+        arrow.frustumCulled = false;
+        arrow.cone.renderOrder = 1;
+        arrow.line.renderOrder = 1;
+        arrow.cone.material.depthTest = false;
+        arrow.cone.material.depthWrite = false;
+        arrow.line.material.depthTest = false;
+        arrow.line.material.depthWrite = false;
+        modelAxisHelper.add(arrow);
+
+    const labelSprite = createTextSprite(label, `#${color.toString(16).padStart(6, '0')}`);
+    labelSprite.position.copy(normalized.clone().multiplyScalar(labelOffset));
+        modelAxisHelper.add(labelSprite);
+    });
+
+    const originSphere = new THREE.Mesh(
+        new THREE.SphereGeometry(0.08, 16, 16),
+        new THREE.MeshBasicMaterial({ color: 0x555555, depthTest: false, depthWrite: false })
+    );
+    originSphere.renderOrder = 1;
+    modelAxisHelper.add(originSphere);
+}
+
+/**
+ * 座標軸ヘルパーの描画
+ */
+function renderAxisHelper() {
+    if (!modelAxisScene || !modelAxisCamera || !modelAxisRenderer || !modelCamera) {
+        return;
+    }
+
+    if (modelAxisHelper) {
+        modelAxisHelper.quaternion.copy(modelCamera.quaternion);
+    }
+
+    modelAxisCamera.position.set(0, 0, 4);
+    modelAxisCamera.lookAt(0, 0, 0);
+    modelAxisCamera.updateMatrixWorld();
+
+    modelAxisRenderer.render(modelAxisScene, modelAxisCamera);
+}
+
+/**
+ * Create a simple THREE.Shape from sectionInfo.rawDims when possible.
+ * Supports a subset of section types (rectangular, pipe, circular/estimated).
+ * Returns null if shape cannot be created.
+ */
+function createSectionShapeFromInfo(sectionInfo, member) {
+    const MM_TO_M = 0.001;
+
+    const toNumber = (value) => {
+        if (typeof value === 'number') return value;
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (trimmed === '') return null;
+            const parsed = parseFloat(trimmed);
+            return Number.isFinite(parsed) ? parsed : null;
+        }
+        return null;
+    };
+
+    let info = sectionInfo;
+
+    if ((!info || !info.rawDims) && member && typeof member.A === 'number' && member.A > 0) {
+        const A_m2 = member.A;
+        const A_cm2 = A_m2 * 1e4;
+        const radius_cm = Math.sqrt(A_cm2 / Math.PI);
+        const diameter_cm = radius_cm * 2;
+        const diameter_mm = diameter_cm * 10;
+        info = {
+            typeKey: 'estimated',
+            label: '推定断面（円形）',
+            rawDims: {
+                D: diameter_mm,
+                D_scaled: diameter_mm
+            }
+        };
+    }
+
+    if (!info || !info.rawDims) return null;
+
+    const dims = info.rawDims;
+    const typeKey = info.typeKey || '';
+    const shape = new THREE.Shape();
+
+    try {
+        switch (typeKey) {
+            case 'hkatakou_hiro':
+            case 'hkatakou_naka':
+            case 'hkatakou_hoso':
+            case 'ikatakou':
+            case 'keiryouhkatakou':
+            case 'keiryourippuhkatakou': {
+                const H = toNumber(dims.H);
+                const B = toNumber(dims.B);
+                const t1 = toNumber(dims.t1);
+                const t2 = toNumber(dims.t2);
+                if (!H || !B || !t1 || !t2) return null;
+                const halfH = (H * MM_TO_M) / 2;
+                const halfB = (B * MM_TO_M) / 2;
+                const halfT1 = (t1 * MM_TO_M) / 2;
+                const t2m = t2 * MM_TO_M;
+                shape.moveTo(-halfB, halfH);
+                shape.lineTo(halfB, halfH);
+                shape.lineTo(halfB, halfH - t2m);
+                shape.lineTo(halfT1, halfH - t2m);
+                shape.lineTo(halfT1, -halfH + t2m);
+                shape.lineTo(halfB, -halfH + t2m);
+                shape.lineTo(halfB, -halfH);
+                shape.lineTo(-halfB, -halfH);
+                shape.lineTo(-halfB, -halfH + t2m);
+                shape.lineTo(-halfT1, -halfH + t2m);
+                shape.lineTo(-halfT1, halfH - t2m);
+                shape.lineTo(-halfB, halfH - t2m);
+                shape.lineTo(-halfB, halfH);
+                return shape;
+            }
+            case 'seihoukei':
+            case 'tyouhoukei': {
+                const A = toNumber(dims.A);
+                const B = toNumber(dims.B) || A;
+                const t = toNumber(dims.t);
+                if (!A || !B || !t) return null;
+                const halfA = (A * MM_TO_M) / 2;
+                const halfB = (B * MM_TO_M) / 2;
+                const tm = t * MM_TO_M;
+                shape.moveTo(-halfB, -halfA);
+                shape.lineTo(halfB, -halfA);
+                shape.lineTo(halfB, halfA);
+                shape.lineTo(-halfB, halfA);
+                shape.lineTo(-halfB, -halfA);
+                const hole = new THREE.Path();
+                hole.moveTo(-halfB + tm, -halfA + tm);
+                hole.lineTo(-halfB + tm, halfA - tm);
+                hole.lineTo(halfB - tm, halfA - tm);
+                hole.lineTo(halfB - tm, -halfA + tm);
+                hole.lineTo(-halfB + tm, -halfA + tm);
+                shape.holes.push(hole);
+                return shape;
+            }
+            case 'koukan':
+            case 'pipe': {
+                const D = toNumber(dims.D);
+                const t = toNumber(dims.t);
+                if (!D || !t) return null;
+                const outer = (D * MM_TO_M) / 2;
+                const inner = outer - (t * MM_TO_M);
+                shape.absarc(0, 0, outer, 0, Math.PI * 2, false);
+                const hole = new THREE.Path();
+                hole.absarc(0, 0, inner, 0, Math.PI * 2, true);
+                shape.holes.push(hole);
+                return shape;
+            }
+            case 'mizogatakou':
+            case 'keimizogatakou': {
+                const H = toNumber(dims.H);
+                const B = toNumber(dims.B) || toNumber(dims.A);
+                const t1 = toNumber(dims.t1) || toNumber(dims.t);
+                const t2 = toNumber(dims.t2) || toNumber(dims.t);
+                if (!H || !B || !t1 || !t2) return null;
+                const halfH = (H * MM_TO_M) / 2;
+                const flangeWidth = B * MM_TO_M;
+                const webThick = t1 * MM_TO_M;
+                const flangeThick = t2 * MM_TO_M;
+                shape.moveTo(-flangeWidth / 2, halfH);
+                shape.lineTo(flangeWidth / 2, halfH);
+                shape.lineTo(flangeWidth / 2, halfH - flangeThick);
+                shape.lineTo(webThick / 2, halfH - flangeThick);
+                shape.lineTo(webThick / 2, -halfH + flangeThick);
+                shape.lineTo(flangeWidth / 2, -halfH + flangeThick);
+                shape.lineTo(flangeWidth / 2, -halfH);
+                shape.lineTo(-flangeWidth / 2, -halfH);
+                shape.lineTo(-flangeWidth / 2, -halfH + flangeThick);
+                shape.lineTo(-webThick / 2, -halfH + flangeThick);
+                shape.lineTo(-webThick / 2, halfH - flangeThick);
+                shape.lineTo(-flangeWidth / 2, halfH - flangeThick);
+                shape.lineTo(-flangeWidth / 2, halfH);
+                return shape;
+            }
+            case 'rippumizokatakou': {
+                const H = toNumber(dims.H);
+                const A = toNumber(dims.A);
+                const C = toNumber(dims.C);
+                const t = toNumber(dims.t);
+                if (!H || !A || !C || !t) return null;
+                const halfH = (H * MM_TO_M) / 2;
+                const flangeWidth = A * MM_TO_M;
+                const lip = C * MM_TO_M;
+                const thick = t * MM_TO_M;
+                shape.moveTo(-flangeWidth / 2, halfH);
+                shape.lineTo(flangeWidth / 2, halfH);
+                shape.lineTo(flangeWidth / 2, halfH - lip);
+                shape.lineTo(flangeWidth / 2 - thick, halfH - lip);
+                shape.lineTo(flangeWidth / 2 - thick, halfH - thick);
+                shape.lineTo(-flangeWidth / 2 + thick, halfH - thick);
+                shape.lineTo(-flangeWidth / 2 + thick, -halfH + thick);
+                shape.lineTo(flangeWidth / 2 - thick, -halfH + thick);
+                shape.lineTo(flangeWidth / 2 - thick, -halfH + lip);
+                shape.lineTo(flangeWidth / 2, -halfH + lip);
+                shape.lineTo(flangeWidth / 2, -halfH);
+                shape.lineTo(-flangeWidth / 2, -halfH);
+                shape.lineTo(-flangeWidth / 2, halfH);
+                return shape;
+            }
+            case 'touhenyamakatakou':
+            case 'futouhenyamagata': {
+                const A = toNumber(dims.A);
+                const B = toNumber(dims.B) || A;
+                const t = toNumber(dims.t);
+                if (!A || !B || !t) return null;
+                const height = A * MM_TO_M;
+                const width = B * MM_TO_M;
+                const thick = t * MM_TO_M;
+                shape.moveTo(0, height);
+                shape.lineTo(width, height);
+                shape.lineTo(width, height - thick);
+                shape.lineTo(thick, height - thick);
+                shape.lineTo(thick, 0);
+                shape.lineTo(0, 0);
+                shape.lineTo(0, height);
+                return shape;
+            }
+            case '矩形':
+            case 'rectangular': {
+                const H = toNumber(dims.H);
+                const B = toNumber(dims.B);
+                if (!H || !B) return null;
+                const halfH = (H * MM_TO_M) / 2;
+                const halfB = (B * MM_TO_M) / 2;
+                shape.moveTo(-halfB, -halfH);
+                shape.lineTo(halfB, -halfH);
+                shape.lineTo(halfB, halfH);
+                shape.lineTo(-halfB, halfH);
+                shape.lineTo(-halfB, -halfH);
+                return shape;
+            }
+            case '円形':
+            case 'circular':
+            case 'circle':
+            case 'round':
+            case 'estimated': {
+                const D = toNumber(dims.D) || toNumber(dims.D_scaled) || toNumber(dims.d) || toNumber(dims.diameter) || toNumber(dims.Dm);
+                if (!D) return null;
+                const radius = (D * MM_TO_M) / 2;
+                shape.absarc(0, 0, radius, 0, Math.PI * 2, false);
+                return shape;
+            }
+            default:
+                return null;
+        }
+    } catch (err) {
+        console.warn('createSectionShapeFromInfo failed:', err, info);
+        return null;
+    }
 }

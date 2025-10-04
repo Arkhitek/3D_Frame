@@ -247,6 +247,12 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const clampDispScale = (value) => {
+        if (!isFinite(value)) return 1;
+        if (value <= 0) return 0;
+        return Math.min(value, 100000);
+    };
+
     // キャンバスをクリア
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -303,9 +309,87 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
     const frameHeight = 900; // 各構面の高さ
     const framePadding = 40; // 構面間の余白
     const headerHeight = 80; // ヘッダー高さ
-    
+    const margin = 40; // 描画領域の余白
+    const drawAreaWidth = frameWidth - 2 * margin;
+    const drawAreaHeight = frameHeight - 2 * margin;
+
+    const prepareFrameGeometry = (frame) => {
+        const visibleNodeSet = new Set();
+        nodes.forEach((node, idx) => {
+            let coordToCheck = 0;
+            if (frame.mode === 'xy') {
+                coordToCheck = node.z;
+            } else if (frame.mode === 'xz') {
+                coordToCheck = node.y;
+            } else if (frame.mode === 'yz') {
+                coordToCheck = node.x;
+            }
+            if (Math.abs(coordToCheck - frame.coord) < tolerance) {
+                visibleNodeSet.add(idx);
+            }
+        });
+
+        const visibleMemberIndices = [];
+        members.forEach((member, idx) => {
+            if (visibleNodeSet.has(member.i) && visibleNodeSet.has(member.j)) {
+                visibleMemberIndices.push(idx);
+            }
+        });
+
+        if (visibleMemberIndices.length === 0) {
+            return { frame, hasContent: false };
+        }
+
+        let minX = Infinity, maxX = -Infinity;
+        let minY = Infinity, maxY = -Infinity;
+
+        visibleMemberIndices.forEach(idx => {
+            const member = members[idx];
+            const pi = project3DTo2D(nodes[member.i], frame.mode);
+            const pj = project3DTo2D(nodes[member.j], frame.mode);
+            minX = Math.min(minX, pi.x, pj.x);
+            maxX = Math.max(maxX, pi.x, pj.x);
+            minY = Math.min(minY, pi.y, pj.y);
+            maxY = Math.max(maxY, pi.y, pj.y);
+        });
+
+        if (!isFinite(minX) || !isFinite(maxX) || !isFinite(minY) || !isFinite(maxY)) {
+            return { frame, hasContent: false };
+        }
+
+        const modelWidth = maxX - minX;
+        const modelHeight = maxY - minY;
+        let scale = 1;
+        if (modelWidth > 0 && modelHeight > 0) {
+            scale = Math.min(drawAreaWidth / modelWidth, drawAreaHeight / modelHeight) * 0.9;
+        }
+
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+
+        return {
+            frame,
+            hasContent: true,
+            visibleNodeIndices: Array.from(visibleNodeSet),
+            visibleMemberIndices,
+            minX,
+            maxX,
+            minY,
+            maxY,
+            scale,
+            centerX,
+            centerY
+        };
+    };
+
+    const frameGeometries = frameData
+        .map(frame => prepareFrameGeometry(frame))
+        .filter(geometry => geometry.hasContent);
+
+    if (frameGeometries.length === 0) return;
+
     // キャンバスサイズを調整（横スクロール対応）
-    const totalWidth = frameData.length * (frameWidth + framePadding) + framePadding;
+    const totalWidth = frameGeometries.length * (frameWidth + framePadding) + framePadding;
     const totalHeight = frameHeight + headerHeight + framePadding * 2;
 
     // 高DPI対応: デバイスピクセル比を取得
@@ -326,7 +410,7 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
     let dispScale = 0;
     if (D_global.length > 0) {
         if (manualScale !== null) {
-            dispScale = manualScale;
+            dispScale = clampDispScale(manualScale);
         } else {
             let max_disp = 0;
             if (is3D) {
@@ -361,23 +445,97 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
             // 変位倍率の計算: 構造サイズと変位量の比率を考慮
             // 目標: 最大変位が構造サイズの5%程度に表示されるようにする
             if (max_disp > 1e-12 && structureSize > 0) {
-                dispScale = (structureSize * 0.05) / max_disp;
-                // 適切な範囲に制限（最小10、最大100000）
-                dispScale = Math.max(10, Math.min(dispScale, 100000));
+                dispScale = clampDispScale((structureSize * 0.05) / max_disp);
             } else if (max_disp > 1e-12) {
                 // 構造サイズが取得できない場合のフォールバック
-                dispScale = 1000;
-            }
-
-            lastDisplacementScale = dispScale;
-            if (elements.dispScaleInput) {
-                elements.dispScaleInput.value = dispScale.toFixed(2);
+                dispScale = clampDispScale(1000);
             }
         }
     }
 
+    const calculateFrameDispScaleLimit = (geometry) => {
+        if (!geometry.hasContent || geometry.scale <= 0) return Infinity;
+
+        const localTransform = (px, py) => ({
+            x: frameWidth / 2 + (px - geometry.centerX) * geometry.scale,
+            y: frameHeight / 2 - (py - geometry.centerY) * geometry.scale
+        });
+
+        const minAllowedX = margin;
+        const maxAllowedX = frameWidth - margin;
+        const minAllowedY = margin;
+        const maxAllowedY = frameHeight - margin;
+
+        const numDivisions = 20;
+        let frameLimit = Infinity;
+
+        for (const memberIdx of geometry.visibleMemberIndices) {
+            const member = members[memberIdx];
+            const memberForce = memberForces && memberForces[memberIdx] ? memberForces[memberIdx] : null;
+
+            for (let k = 0; k <= numDivisions; k++) {
+                const xi = k / numDivisions;
+                const originalPoint = calculateMemberDeformation(member, nodes, D_global, memberForce, xi, 0);
+                const deformedUnit = calculateMemberDeformation(member, nodes, D_global, memberForce, xi, 1);
+                if (!originalPoint || !deformedUnit) continue;
+
+                const originalProjected = project3DTo2D(originalPoint, geometry.frame.mode);
+                const deformedProjected = project3DTo2D(deformedUnit, geometry.frame.mode);
+
+                const originalPixel = localTransform(originalProjected.x, originalProjected.y);
+                const unitPixel = localTransform(deformedProjected.x, deformedProjected.y);
+
+                const deltaX = unitPixel.x - originalPixel.x;
+                const deltaY = unitPixel.y - originalPixel.y;
+
+                if (Math.abs(deltaX) > 1e-6) {
+                    const availableX = deltaX > 0
+                        ? maxAllowedX - originalPixel.x
+                        : originalPixel.x - minAllowedX;
+                    if (availableX <= 0) return 0;
+                    frameLimit = Math.min(frameLimit, availableX / Math.abs(deltaX));
+                }
+
+                if (Math.abs(deltaY) > 1e-6) {
+                    const availableY = deltaY > 0
+                        ? maxAllowedY - originalPixel.y
+                        : originalPixel.y - minAllowedY;
+                    if (availableY <= 0) return 0;
+                    frameLimit = Math.min(frameLimit, availableY / Math.abs(deltaY));
+                }
+            }
+        }
+
+        if (!isFinite(frameLimit) || frameLimit <= 0) return Infinity;
+        return frameLimit * 0.98;
+    };
+
+    let autoScaleLimit = Infinity;
+    frameGeometries.forEach(geometry => {
+        const limit = calculateFrameDispScaleLimit(geometry);
+        if (limit < autoScaleLimit) {
+            autoScaleLimit = limit;
+        }
+    });
+
+    if (autoScaleLimit < Infinity) {
+        if (dispScale > 0) {
+            dispScale = clampDispScale(Math.min(dispScale, autoScaleLimit));
+        } else {
+            dispScale = clampDispScale(autoScaleLimit);
+        }
+    } else if (dispScale > 0) {
+        dispScale = clampDispScale(dispScale);
+    }
+
+    lastDisplacementScale = dispScale;
+    if (elements.dispScaleInput) {
+        elements.dispScaleInput.value = dispScale.toFixed(2);
+    }
+
     // 各フレームを描画（横並び）
-    frameData.forEach((frame, index) => {
+    frameGeometries.forEach((geometry, index) => {
+        const frame = geometry.frame;
         const x = framePadding + index * (frameWidth + framePadding);
         const y = headerHeight + framePadding;
 
@@ -405,80 +563,18 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
         ctx.rect(x, y, frameWidth, frameHeight);
         ctx.clip();
 
-        // この構面の節点と部材を取得
-        const tolerance = 0.01;
-        const visibleNodes = new Set();
-        nodes.forEach((node, idx) => {
-            let coordToCheck = 0;
-            if (frame.mode === 'xy') {
-                coordToCheck = node.z;
-            } else if (frame.mode === 'xz') {
-                coordToCheck = node.y;
-            } else if (frame.mode === 'yz') {
-                coordToCheck = node.x;
-            }
-            if (Math.abs(coordToCheck - frame.coord) < tolerance) {
-                visibleNodes.add(idx);
-            }
+        const transform = (px, py) => ({
+            x: x + frameWidth / 2 + (px - geometry.centerX) * geometry.scale,
+            y: y + frameHeight / 2 - (py - geometry.centerY) * geometry.scale
         });
-
-        // この構面の部材のみをフィルタリング
-        const visibleMembers = members.filter(m =>
-            visibleNodes.has(m.i) && visibleNodes.has(m.j)
-        );
-
-        if (visibleMembers.length === 0) {
-            ctx.restore();
-            return;
-        }
-
-        // モデルの範囲を計算
-        let minX = Infinity, maxX = -Infinity;
-        let minY = Infinity, maxY = -Infinity;
-
-        visibleMembers.forEach(m => {
-            const ni = nodes[m.i];
-            const nj = nodes[m.j];
-            const pi = project3DTo2D(ni, frame.mode);
-            const pj = project3DTo2D(nj, frame.mode);
-            minX = Math.min(minX, pi.x, pj.x);
-            maxX = Math.max(maxX, pi.x, pj.x);
-            minY = Math.min(minY, pi.y, pj.y);
-            maxY = Math.max(maxY, pi.y, pj.y);
-        });
-
-        const modelWidth = maxX - minX;
-        const modelHeight = maxY - minY;
-        const margin = 40;
-        const drawWidth = frameWidth - 2 * margin;
-        const drawHeight = frameHeight - 2 * margin;
-
-        let scale = 1;
-        if (modelWidth > 0 && modelHeight > 0) {
-            scale = Math.min(drawWidth / modelWidth, drawHeight / modelHeight) * 0.9;
-        }
-
-        const centerX = (minX + maxX) / 2;
-        const centerY = (minY + maxY) / 2;
-        const offsetX = x + frameWidth / 2;
-        const offsetY = y + frameHeight / 2;
-
-        // セル内座標変換関数
-        const transform = (px, py) => {
-            return {
-                x: offsetX + (px - centerX) * scale,
-                y: offsetY - (py - centerY) * scale
-            };
-        };
 
         // 元の構造を描画（グレー）
         ctx.strokeStyle = '#ccc';
         ctx.lineWidth = 1;
-        visibleMembers.forEach(m => {
-            const ni = nodes[m.i];
-            const nj = nodes[m.j];
-            const pi = project3DTo2D(ni, frame.mode);
-            const pj = project3DTo2D(nj, frame.mode);
+        geometry.visibleMemberIndices.forEach(memberIdx => {
+            const member = members[memberIdx];
+            const pi = project3DTo2D(nodes[member.i], frame.mode);
+            const pj = project3DTo2D(nodes[member.j], frame.mode);
             const p1 = transform(pi.x, pi.y);
             const p2 = transform(pj.x, pj.y);
             ctx.beginPath();
@@ -490,89 +586,59 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
         // 変形後の構造を描画（赤、太線）- 曲げ変形を考慮
         ctx.strokeStyle = 'red';
         ctx.lineWidth = 2.5;
-        visibleMembers.forEach(m => {
-            const ni = nodes[m.i];
-            const nj = nodes[m.j];
-            
-            // 部材の対応するインデックスを取得
-            const memberIndex = members.findIndex(mem => mem.i === m.i && mem.j === m.j);
+        geometry.visibleMemberIndices.forEach(memberIdx => {
+            const member = members[memberIdx];
+            const memberForce = memberForces && memberForces[memberIdx] ? memberForces[memberIdx] : null;
 
-            if (is3D) {
-                ctx.beginPath();
-                // 部材を20分割して滑らかな曲線を描画（10→20に増やして精度向上）
-                const numDivisions = 20;
-                for (let k = 0; k <= numDivisions; k++) {
-                    const xi = k / numDivisions;
-                    
-                    // 新しい変形計算関数を使用（曲げを考慮）
-                    const deformed = calculateMemberDeformation(
-                        m, nodes, D_global, 
-                        memberForces && memberForces[memberIndex] ? memberForces[memberIndex] : null,
-                        xi, dispScale
-                    );
-                    
-                    if (deformed) {
-                        const projected = project3DTo2D(deformed, frame.mode);
-                        const p = transform(projected.x, projected.y);
-                        
-                        if (k === 0) ctx.moveTo(p.x, p.y);
-                        else ctx.lineTo(p.x, p.y);
-                    }
+            ctx.beginPath();
+            const numDivisions = 20;
+            for (let k = 0; k <= numDivisions; k++) {
+                const xi = k / numDivisions;
+                const deformed = calculateMemberDeformation(
+                    member,
+                    nodes,
+                    D_global,
+                    memberForce,
+                    xi,
+                    dispScale
+                );
+
+                if (deformed) {
+                    const projected = project3DTo2D(deformed, frame.mode);
+                    const point = transform(projected.x, projected.y);
+
+                    if (k === 0) ctx.moveTo(point.x, point.y);
+                    else ctx.lineTo(point.x, point.y);
                 }
-                ctx.stroke();
-            } else {
-                // 2Dの場合も同様に変形計算関数を使用
-                ctx.beginPath();
-                const numDivisions = 20;
-                for (let k = 0; k <= numDivisions; k++) {
-                    const xi = k / numDivisions;
-                    
-                    const deformed = calculateMemberDeformation(
-                        m, nodes, D_global,
-                        memberForces && memberForces[memberIndex] ? memberForces[memberIndex] : null,
-                        xi, dispScale
-                    );
-                    
-                    if (deformed) {
-                        const projected = project3DTo2D(deformed, frame.mode);
-                        const p = transform(projected.x, projected.y);
-                        
-                        if (k === 0) ctx.moveTo(p.x, p.y);
-                        else ctx.lineTo(p.x, p.y);
-                    }
-                }
-                ctx.stroke();
             }
+            ctx.stroke();
         });
 
         // 節点の変位量を表示
         ctx.fillStyle = 'blue';
-        ctx.font = 'bold 18px Arial';  // フォントサイズを11px→18pxに拡大
+        ctx.font = 'bold 18px Arial';
         ctx.textAlign = 'center';
-        Array.from(visibleNodes).forEach(nodeIdx => {
+        geometry.visibleNodeIndices.forEach(nodeIdx => {
             const node = nodes[nodeIdx];
             const projected = project3DTo2D(node, frame.mode);
-            const p = transform(projected.x, projected.y);
+            const point = transform(projected.x, projected.y);
 
-            // 節点を円で描画（サイズを拡大）
             ctx.fillStyle = 'blue';
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 6, 0, 2 * Math.PI);  // 半径を4→6に拡大
+            ctx.arc(point.x, point.y, 6, 0, 2 * Math.PI);
             ctx.fill();
 
-            // 変位量を表示（mm単位）- より見やすく
             if (is3D && D_global.length > nodeIdx * 6 + 2) {
                 const dx = D_global[nodeIdx * 6][0] * 1000;
                 const dy = D_global[nodeIdx * 6 + 1][0] * 1000;
                 const dz = D_global[nodeIdx * 6 + 2][0] * 1000;
-                const totalDisp = Math.sqrt(dx*dx + dy*dy + dz*dz);
-                if (totalDisp > 0.1) { // 0.1mm以上の変位のみ表示
-                    // 白い縁取りを太くして視認性向上
+                const totalDisp = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                if (totalDisp > 0.1) {
                     ctx.strokeStyle = 'white';
-                    ctx.lineWidth = 5;  // 3→5に拡大
-                    ctx.strokeText(`${totalDisp.toFixed(1)}mm`, p.x, p.y - 15);  // 単位を追加、位置を調整
+                    ctx.lineWidth = 5;
+                    ctx.strokeText(`${totalDisp.toFixed(1)}mm`, point.x, point.y - 15);
                     ctx.fillStyle = 'darkblue';
-                    ctx.fillText(`${totalDisp.toFixed(1)}mm`, p.x, p.y - 15);
+                    ctx.fillText(`${totalDisp.toFixed(1)}mm`, point.x, point.y - 15);
                 }
             }
         });
@@ -787,9 +853,10 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
         }
 
         // 応力図のスケール（ピクセル単位）- 描画領域のサイズに応じて調整
-        // 最大応力が描画領域の8%程度のピクセル数になるようにスケーリング
-        const maxStressPixels = Math.min(drawWidth, drawHeight) * 0.08;
-        const stressScale = maxStress > 0 ? maxStressPixels / maxStress : 1;
+        // 最大応力が描画領域からはみ出さないように制限
+        // まず仮のスケールを計算
+        let maxStressPixels = Math.min(drawWidth, drawHeight) * 0.06; // 8%から6%に縮小
+        let stressScale = maxStress > 0 ? maxStressPixels / maxStress : 1;
 
         const centerX = (minX + maxX) / 2;
         const centerY = (minY + maxY) / 2;
@@ -803,6 +870,68 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
                 y: offsetY - (py - centerY) * modelScale
             };
         };
+
+        // 実際の描画範囲を事前計算して、枠をはみ出さないようにスケールを調整
+        let maxOffsetFromFrame = 0;
+        visibleMembers.forEach(m => {
+            const memberIndex = members.findIndex(mem => mem.i === m.i && mem.j === m.j);
+            if (memberIndex === -1 || !memberForces[memberIndex]) return;
+
+            const forces = memberForces[memberIndex];
+            const ni = nodes[m.i];
+            const nj = nodes[m.j];
+            const pi = project3DTo2D(ni, frame.mode);
+            const pj = project3DTo2D(nj, frame.mode);
+
+            // 部材の長さを計算
+            const L = Math.sqrt(
+                Math.pow(nj.x - ni.x, 2) +
+                Math.pow((nj.y || 0) - (ni.y || 0), 2) +
+                Math.pow((nj.z || 0) - (ni.z || 0), 2)
+            );
+
+            const w = m.w || 0;
+            let axis = 'y';
+            if (frame.mode === 'xy') axis = 'z';
+            else if (frame.mode === 'xz') axis = 'y';
+            else if (frame.mode === 'yz') axis = 'x';
+
+            // 部材上の各点での応力値を計算
+            for (let k = 0; k <= 20; k++) {
+                const xi = k / 20;
+                let stressValue = 0;
+
+                if (stressType === 'moment') {
+                    stressValue = calculateMemberMoment(forces, L, xi, axis, w);
+                } else if (stressType === 'axial') {
+                    stressValue = forces.N_i || 0;
+                } else if (stressType === 'shear') {
+                    stressValue = calculateMemberShear(forces, L, xi, axis, w);
+                }
+
+                const offset = Math.abs(stressValue * stressScale);
+                const pos_x = pi.x + (pj.x - pi.x) * xi;
+                const pos_y = pi.y + (pj.y - pi.y) * xi;
+                const p = transform(pos_x, pos_y);
+
+                // 枠からのはみ出しをチェック
+                const distToLeft = p.x - x;
+                const distToRight = (x + frameWidth) - p.x;
+                const distToTop = p.y - y;
+                const distToBottom = (y + frameHeight) - p.y;
+
+                const minDist = Math.min(distToLeft, distToRight, distToTop, distToBottom);
+                if (offset > minDist) {
+                    maxOffsetFromFrame = Math.max(maxOffsetFromFrame, offset - minDist);
+                }
+            }
+        });
+
+        // はみ出しがある場合はスケールを縮小
+        if (maxOffsetFromFrame > 0) {
+            const reductionFactor = maxStressPixels / (maxStressPixels + maxOffsetFromFrame);
+            stressScale *= reductionFactor * 0.95; // 安全のため5%余裕を持たせる
+        }
 
         // 元の構造を描画（グレー）
         ctx.strokeStyle = '#ccc';

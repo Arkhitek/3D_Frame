@@ -5394,8 +5394,8 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        ctx.strokeStyle = '#ff4500';
-        ctx.fillStyle = '#ff4500';
+    ctx.strokeStyle = '#ff4500';
+    ctx.fillStyle = '#ff4500';
         ctx.lineWidth = 1.5;
 
         // 分布荷重のテキスト領域を障害物として追加
@@ -5553,22 +5553,22 @@ document.addEventListener('DOMContentLoaded', () => {
                         const y = p1.y + t * (p2.y - p1.y);
                         
                         ctx.beginPath();
-                        ctx.moveTo(x, y - arrowLength);
+                        ctx.moveTo(x, y + arrowLength);
                         ctx.lineTo(x, y);
-                        ctx.lineTo(x - 3, y - 5);
+                        ctx.lineTo(x - 3, y + 5);
                         ctx.moveTo(x, y);
-                        ctx.lineTo(x + 3, y - 5);
+                        ctx.lineTo(x + 3, y + 5);
                         ctx.stroke();
                     }
                     
                     // 水平線を描画
                     ctx.beginPath();
-                    ctx.moveTo(p1.x, p1.y - arrowLength);
-                    ctx.lineTo(p2.x, p2.y - arrowLength);
+                    ctx.moveTo(p1.x, p1.y + arrowLength);
+                    ctx.lineTo(p2.x, p2.y + arrowLength);
                     ctx.stroke();
                     
                     const textX = (p1.x + p2.x) / 2;
-                    const textY = (p1.y + p2.y) / 2 - 25;
+                    const textY = (p1.y + p2.y) / 2 + 25;
                     const loadText = `部材${memberNumber}自重：${Math.abs(load.w).toFixed(2)}kN/m`;
                     labelManager.draw(ctx, loadText, textX, textY, loadObstacles);
                     
@@ -5610,11 +5610,11 @@ document.addEventListener('DOMContentLoaded', () => {
                             
                             // 垂直下向きの矢印
                             ctx.beginPath();
-                            ctx.moveTo(x, y - arrowLength);
+                            ctx.moveTo(x, y + arrowLength);
                             ctx.lineTo(x, y);
-                            ctx.lineTo(x - 2, y - 4);
+                            ctx.lineTo(x - 2, y + 4);
                             ctx.moveTo(x, y);
-                            ctx.lineTo(x + 2, y - 4);
+                            ctx.lineTo(x + 2, y + 4);
                             ctx.stroke();
                         }
                     }
@@ -5628,17 +5628,17 @@ document.addEventListener('DOMContentLoaded', () => {
                         // 両端節点に水平矢印
                         [p1, p2].forEach((point, idx) => {
                             ctx.beginPath();
-                            ctx.moveTo(point.x - arrowLength * horizontalDir, point.y);
+                            ctx.moveTo(point.x + arrowLength * horizontalDir, point.y);
                             ctx.lineTo(point.x, point.y);
-                            ctx.lineTo(point.x - arrowSize * horizontalDir, point.y - arrowSize/2);
+                            ctx.lineTo(point.x + arrowSize * horizontalDir, point.y - arrowSize/2);
                             ctx.moveTo(point.x, point.y);
-                            ctx.lineTo(point.x - arrowSize * horizontalDir, point.y + arrowSize/2);
+                            ctx.lineTo(point.x + arrowSize * horizontalDir, point.y + arrowSize/2);
                             ctx.stroke();
                         });
                     }
                     
                     const textX = (p1.x + p2.x) / 2;
-                    const textY = (p1.y + p2.y) / 2 - 20;
+                    const textY = (p1.y + p2.y) / 2 + 20;
                     // 混合荷重の個別表示は削除（節点合計で表示）
                     // const loadText = `部材${memberNumber}自重：${load.totalWeight.toFixed(2)}kN (混合)`;
                     // labelManager.draw(ctx, loadText, textX, textY, loadObstacles);
@@ -5672,24 +5672,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 const node = projectedNodes[load.nodeIndex];
                 const pos = transform(node.x, node.y); 
                 
-                // 外部荷重用の赤色で描画
-                ctx.strokeStyle = '#ff4500';
-                ctx.fillStyle = '#ff4500';
+                // 外部集中荷重は青色で描画
+                const concentratedColor = '#1e90ff';
+                ctx.strokeStyle = concentratedColor;
+                ctx.fillStyle = concentratedColor;
             
             if(load.px !== 0){ 
                 const dir = Math.sign(load.px); 
+                const tailX = pos.x - arrowSize * loadScale * dir;
                 ctx.beginPath(); 
-                ctx.moveTo(pos.x - arrowSize * loadScale * dir, pos.y); 
+                ctx.moveTo(tailX, pos.y); 
                 ctx.lineTo(pos.x, pos.y); 
                 ctx.lineTo(pos.x - arrowSize * dir, pos.y - arrowSize/2); 
                 ctx.moveTo(pos.x, pos.y); 
                 ctx.lineTo(pos.x - arrowSize * dir, pos.y + arrowSize/2); 
                 ctx.stroke(); 
                 
-                // 荷重値のテキスト表示を矢印の先端近くに配置
-                const textX = pos.x - (arrowSize * loadScale * 0.7) * dir;
+                // 荷重値のテキスト表示を矢印の矢尻付近に配置
+                const textX = pos.x - (arrowSize * loadScale * 0.3) * dir;
                 const textY = pos.y;
-                ctx.fillStyle = '#ff4500';
+                ctx.fillStyle = concentratedColor;
                 labelManager.draw(ctx, `${load.px}kN`, textX, textY, loadObstacles, {
                     type: 'node-load-px',
                     index: load.nodeIndex,
@@ -5699,18 +5701,19 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if(load.py !== 0){ 
                 const dir = Math.sign(load.py); 
+                const tailY = pos.y - arrowSize * loadScale * dir;
                 ctx.beginPath(); 
-                ctx.moveTo(pos.x, pos.y + arrowSize * loadScale * dir); 
+                ctx.moveTo(pos.x, tailY); 
                 ctx.lineTo(pos.x, pos.y); 
-                ctx.lineTo(pos.x - arrowSize/2, pos.y + arrowSize * dir); 
+                ctx.lineTo(pos.x - arrowSize/2, pos.y - arrowSize * dir); 
                 ctx.moveTo(pos.x, pos.y); 
-                ctx.lineTo(pos.x + arrowSize/2, pos.y + arrowSize * dir); 
+                ctx.lineTo(pos.x + arrowSize/2, pos.y - arrowSize * dir); 
                 ctx.stroke(); 
                 
-                // 荷重値のテキスト表示を矢印の先端近くに配置
+                // 荷重値のテキスト表示を矢印の矢尻付近に配置
                 const textX = pos.x;
-                const textY = pos.y + (arrowSize * loadScale * 0.8) * dir;
-                ctx.fillStyle = '#ff4500';
+                const textY = pos.y - (arrowSize * loadScale * 0.3) * dir;
+                ctx.fillStyle = concentratedColor;
                 labelManager.draw(ctx, `${load.py}kN`, textX, textY, loadObstacles, {
                     type: 'node-load-py',
                     index: load.nodeIndex,
@@ -5743,7 +5746,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // モーメント荷重値のテキスト表示を矢印の近くに配置
                 const textX = pos.x;
                 const textY = pos.y - r * 0.7;
-                ctx.fillStyle = '#ff4500';
+                ctx.fillStyle = concentratedColor;
                 labelManager.draw(ctx, `${load.mz}kN·m`, textX, textY, loadObstacles, {
                     type: 'node-load-mz',
                     index: load.nodeIndex,
@@ -5769,8 +5772,9 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if(load.px !== 0){ 
                 const dir = Math.sign(load.px); 
+                const tailX = pos.x - arrowSize * loadScale * dir;
                 ctx.beginPath(); 
-                ctx.moveTo(pos.x - arrowSize * loadScale * dir, pos.y); 
+                ctx.moveTo(tailX, pos.y); 
                 ctx.lineTo(pos.x, pos.y); 
                 ctx.lineTo(pos.x - arrowSize * dir, pos.y - arrowSize/2); 
                 ctx.moveTo(pos.x, pos.y); 
@@ -5780,12 +5784,13 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if(load.py !== 0){ 
                 const dir = Math.sign(load.py); 
+                const tailY = pos.y - arrowSize * loadScale * dir;
                 ctx.beginPath(); 
-                ctx.moveTo(pos.x, pos.y + arrowSize * loadScale * dir); 
+                ctx.moveTo(pos.x, tailY); 
                 ctx.lineTo(pos.x, pos.y); 
-                ctx.lineTo(pos.x - arrowSize/2, pos.y + arrowSize * dir); 
+                ctx.lineTo(pos.x - arrowSize/2, pos.y - arrowSize * dir); 
                 ctx.moveTo(pos.x, pos.y); 
-                ctx.lineTo(pos.x + arrowSize/2, pos.y + arrowSize * dir); 
+                ctx.lineTo(pos.x + arrowSize/2, pos.y - arrowSize * dir); 
                 ctx.stroke(); 
             } 
             
@@ -6295,7 +6300,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const modelViewModeSelect = document.getElementById('model-view-mode');
         if (modelViewModeSelect && modelViewModeSelect.value === '3d' && typeof updateModel3DView === 'function') {
             try {
-                updateModel3DView(nodes, members, memberLoads);
+                updateModel3DView(nodes, members, { nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights });
             } catch (e) {
                 console.error('Error updating model 3D view:', e);
             }
@@ -7719,8 +7724,8 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         // 3Dビューも更新
         if (typeof updateModel3DView === 'function') {
             try {
-                const { nodes, members } = parseInputs();
-                updateModel3DView(nodes, members);
+                const { nodes, members, nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights } = parseInputs();
+                updateModel3DView(nodes, members, { nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights });
             } catch (e) {
                 console.error('Error updating 3D view:', e);
             }
@@ -7854,7 +7859,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
     };
 
     elements.membersTable.addEventListener('click', (e) => {
-    if (e.target && e.target.classList.contains('select-props-btn')) {
+    if (e.target && (e.target.classList.contains('select-props-btn') || e.target.classList.contains('section-select-btn'))) {
         const row = e.target.closest('tr');
         if (row) {
             const memberIndex = Array.from(row.parentNode.children).indexOf(row);
@@ -9868,9 +9873,16 @@ const p_truss = {
 
 const STRONG_AXIS_INFO = Object.freeze({ key: 'x', mode: 'strong', label: '強軸 (X軸)' });
 
+const H_SECTION_TYPE_TABLE = Object.freeze([
+    { key: 'hkatakou_hiro', label: 'H形鋼（広幅）', minRatio: 0.85 },
+    { key: 'hkatakou_naka', label: 'H形鋼（中幅）', minRatio: 0.65 },
+    { key: 'hkatakou_hoso', label: 'H形鋼（細幅）', minRatio: 0 }
+]);
+
 const PRESET_SECTION_IMAGE_URLS = {
     hkatakou_hoso: 'https://arkhitek.co.jp/wp-content/uploads/2025/09/H形鋼.png',
-    hkatakou_hiro: 'https://arkhitek.co.jp/wp-content/uploads/2025/09/H形鋼.png'
+    hkatakou_hiro: 'https://arkhitek.co.jp/wp-content/uploads/2025/09/H形鋼.png',
+    hkatakou_naka: 'https://arkhitek.co.jp/wp-content/uploads/2025/09/H形鋼.png'
 };
 
 const cloneDeep = (value) => (value === undefined || value === null) ? value : JSON.parse(JSON.stringify(value));
@@ -10497,6 +10509,212 @@ const deriveSectionDimensions = (sectionInfo) => {
     return null;
 };
 
+const toFiniteNumber = (value) => {
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value === 'string') {
+        const parsed = Number(value.replace(/,/g, ''));
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+};
+
+const normalizeLegacyLabel = (value) => {
+    if (typeof value !== 'string') return '';
+    return value
+        .trim()
+        .toLowerCase()
+        .replace(/[×ｘ]/g, 'x')
+        .replace(/[－―–−ー]/g, '-')
+        .replace(/[（）()]/g, '')
+        .replace(/\s+/g, '');
+};
+
+const formatDimensionForLabel = (value) => {
+    const num = toFiniteNumber(value);
+    if (num === null) return '';
+    const rounded = Math.round(num);
+    if (Math.abs(num - rounded) < 1e-6) return String(rounded);
+    return Number(num.toFixed(2)).toString();
+};
+
+const buildLegacyLabelAliases = (sectionInfo) => {
+    if (!sectionInfo || typeof sectionInfo !== 'object') return [];
+
+    const aliases = new Set();
+    const pushAlias = (label) => {
+        const normalized = normalizeLegacyLabel(label);
+        if (normalized) aliases.add(normalized);
+    };
+
+    pushAlias(sectionInfo.label);
+    if (sectionInfo.designation) {
+        pushAlias(sectionInfo.designation);
+        if (sectionInfo.typeLabel) {
+            pushAlias(`${sectionInfo.typeLabel} ${sectionInfo.designation}`);
+        }
+    }
+
+    const dims = sectionInfo.rawDims || {};
+    const typeKey = sectionInfo.typeKey || '';
+    const H = formatDimensionForLabel(dims.H);
+    const B = formatDimensionForLabel(dims.B);
+    const t1 = formatDimensionForLabel(dims.t1);
+    const t2 = formatDimensionForLabel(dims.t2);
+    const t = formatDimensionForLabel(dims.t);
+    const D = formatDimensionForLabel(dims.D || dims.diameter);
+
+    const addHShapeAliases = () => {
+        if (H && B) {
+            pushAlias(`H-${H}x${B}`);
+            pushAlias(`H${H}x${B}`);
+        }
+        if (H && B && t1 && t2) {
+            pushAlias(`H-${H}x${B}x${t1}x${t2}`);
+            pushAlias(`H${H}x${B}x${t1}x${t2}`);
+        }
+    };
+
+    if (typeKey.startsWith('hkatakou') || typeKey === 'ikatakou') {
+        addHShapeAliases();
+    } else if (typeKey === 'keiryouhkatakou' || typeKey === 'keiryourippuhkatakou') {
+        addHShapeAliases();
+    } else if (typeKey === 'seihoukei' || typeKey === 'tyouhoukei') {
+        if (H && B) {
+            pushAlias(`□-${H}x${B}`);
+            pushAlias(`square-${H}x${B}`);
+        }
+        if (H && B && t) {
+            pushAlias(`□-${H}x${B}x${t}`);
+        }
+    } else if (typeKey === 'koukan' || typeKey === 'pipe') {
+        if (D && t) {
+            pushAlias(`○-${D}x${t}`);
+            pushAlias(`pipe-${D}x${t}`);
+        }
+        if (D) {
+            pushAlias(`pipe-${D}`);
+        }
+    } else if (typeKey === '円形' || typeKey === 'circular' || typeKey === 'circle') {
+        if (D) {
+            pushAlias(`φ${D}`);
+            pushAlias(`round-${D}`);
+        }
+    }
+
+    if (Array.isArray(sectionInfo.legacyLabels)) {
+        sectionInfo.legacyLabels.forEach(pushAlias);
+    }
+
+    return Array.from(aliases).filter(Boolean);
+};
+
+const determineHSectionTypeInfo = (H, B) => {
+    if (!Number.isFinite(H) || H <= 0 || !Number.isFinite(B) || B <= 0) {
+        return H_SECTION_TYPE_TABLE[H_SECTION_TYPE_TABLE.length - 1];
+    }
+
+    const ratio = B / H;
+    for (const entry of H_SECTION_TYPE_TABLE) {
+        if (ratio >= entry.minRatio) {
+            return entry;
+        }
+    }
+
+    return H_SECTION_TYPE_TABLE[H_SECTION_TYPE_TABLE.length - 1];
+};
+
+const parseLegacyHSectionLabel = (label) => {
+    if (typeof label !== 'string') return null;
+
+    const normalized = normalizeLegacyLabel(label);
+    if (!normalized) return null;
+
+    const match = normalized.match(/^h-?(\d+(?:\.\d+)?)(?:x(\d+(?:\.\d+)?))(?:x(\d+(?:\.\d+)?))(?:x(\d+(?:\.\d+)?))?$/);
+    if (!match) return null;
+
+    const parseValue = (token) => {
+        if (token === undefined) return null;
+        const parsed = Number.parseFloat(token);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+    };
+
+    const H = parseValue(match[1]);
+    const B = parseValue(match[2]);
+    const t1 = parseValue(match[3]);
+    const t2 = parseValue(match[4]);
+
+    if (!H || !B) return null;
+
+    const { key: typeKey, label: typeLabel } = determineHSectionTypeInfo(H, B);
+
+    const dims = { H, B };
+    if (t1) dims.t1 = t1;
+    if (t2) dims.t2 = t2;
+
+    const designationParts = [H, B];
+    if (t1) designationParts.push(t1);
+    if (t2) designationParts.push(t2);
+
+    const designation = designationParts
+        .map(formatDimensionForLabel)
+        .filter(Boolean)
+        .join('×');
+
+    return {
+        typeKey,
+        typeLabel,
+        dims,
+        designation,
+        normalizedOriginal: normalized,
+        originalLabel: label
+    };
+};
+
+const createSectionInfoFromLegacyLabel = (label) => {
+    const parsed = parseLegacyHSectionLabel(label);
+    if (!parsed) return null;
+
+    const { typeKey, typeLabel, dims, designation, normalizedOriginal, originalLabel } = parsed;
+
+    const dimensionEntries = [
+        { key: 'H', label: 'H', value: formatDimensionValue(dims.H) },
+        { key: 'B', label: 'B', value: formatDimensionValue(dims.B) }
+    ];
+
+    if (dims.t1) {
+        dimensionEntries.push({ key: 't1', label: 't₁', value: formatDimensionValue(dims.t1) });
+    }
+    if (dims.t2) {
+        dimensionEntries.push({ key: 't2', label: 't₂', value: formatDimensionValue(dims.t2) });
+    }
+
+    const dimensionSummary = dimensionEntries.map(d => `${d.label}=${d.value}`).join(', ');
+
+    const sectionInfo = {
+        typeKey,
+        typeLabel,
+        designation,
+        label: designation ? `${typeLabel} ${designation}` : typeLabel,
+        dimensions: dimensionEntries,
+        dimensionSummary,
+        svgMarkup: generateSectionSvgMarkup(typeKey, dims),
+        imageUrl: PRESET_SECTION_IMAGE_URLS[typeKey] || PRESET_SECTION_IMAGE_URLS.hkatakou_hiro || '',
+        rawDims: { ...dims },
+        source: 'legacy-label',
+        axis: { ...STRONG_AXIS_INFO },
+        legacyLabels: originalLabel ? [originalLabel] : []
+    };
+
+    const aliases = buildLegacyLabelAliases(sectionInfo);
+    const aliasSet = new Set(aliases);
+    if (normalizedOriginal) aliasSet.add(normalizedOriginal);
+    sectionInfo.legacyLabels = Array.from(aliasSet);
+
+    return ensureSectionSvgMarkup(sectionInfo);
+};
+
 const ensureSectionSvgMarkup = (sectionInfo) => {
     if (!sectionInfo || typeof sectionInfo !== 'object') return sectionInfo;
     if (sectionInfo.svgMarkup && sectionInfo.svgMarkup.includes('<svg')) return sectionInfo;
@@ -10532,32 +10750,23 @@ const buildPresetSectionInfo = ({ typeKey, typeLabel, designation, dims }) => {
 
     const dimensionSummary = dimensionEntries.map(d => `${d.label}=${d.value}`).join(', ');
 
-    // 板厚まで含んだ詳細な名称を生成
-    let detailedLabel = typeLabel;
-    if (designation) {
-        // 基本寸法（高さ×幅）に加えて板厚情報を追加
-        if (dims.t1 !== undefined && dims.t2 !== undefined) {
-            detailedLabel = `${typeLabel} ${designation}×${dims.t1}×${dims.t2}`;
-        } else if (dims.t !== undefined) {
-            detailedLabel = `${typeLabel} ${designation}×${dims.t}`;
-        } else {
-            detailedLabel = `${typeLabel} ${designation}`;
-        }
-    }
+    const displayLabel = designation ? `${typeLabel} ${designation}`.trim() : typeLabel;
 
     const sectionInfo = {
         typeKey,
         typeLabel,
         designation,
-        label: detailedLabel.trim(),
+        label: displayLabel,
         dimensions: dimensionEntries,
         dimensionSummary,
-    svgMarkup: generateSectionSvgMarkup(typeKey, dims),
+        svgMarkup: generateSectionSvgMarkup(typeKey, dims),
         imageUrl: PRESET_SECTION_IMAGE_URLS[typeKey] || '',
         rawDims: { ...dims },
         source: 'library',
         axis
     };
+
+    sectionInfo.legacyLabels = buildLegacyLabelAliases(sectionInfo);
 
     return ensureSectionSvgMarkup(sectionInfo);
 };
@@ -10655,13 +10864,67 @@ const PRESET_SECTION_PROFILES = [
     }
 ];
 
+const findPresetSectionProfileByLabel = (label) => {
+    const normalized = normalizeLegacyLabel(label);
+    if (!normalized) return null;
+
+    for (const profile of PRESET_SECTION_PROFILES) {
+        const aliases = buildLegacyLabelAliases(profile.sectionInfo);
+        if (aliases.includes(normalized)) {
+            return profile;
+        }
+    }
+
+    return null;
+};
+
 const findPresetSectionProfile = (member) => {
     if (!member || typeof member !== 'object') return null;
-    return PRESET_SECTION_PROFILES.find(({ target }) =>
-        approxEqual(member.I, target.I) &&
-        approxEqual(member.A, target.A) &&
-        approxEqual(member.Z, target.Z)
-    ) || null;
+    const memberI = toFiniteNumber(member.I ?? member.Iz ?? member.Izz ?? member.IzStrong ?? member.IzzStrong);
+    const memberA = toFiniteNumber(member.A ?? member.area ?? member.Ai);
+    const memberZ = toFiniteNumber(member.Z ?? member.Zz ?? member.Zx ?? member.sectionModulus);
+
+    const propertyMatches = PRESET_SECTION_PROFILES.filter(({ target }) => {
+        const targetI = toFiniteNumber(target.I);
+        const targetA = toFiniteNumber(target.A);
+        const targetZ = toFiniteNumber(target.Z);
+
+        let comparisons = 0;
+
+        if (memberI !== null && targetI !== null) {
+            comparisons++;
+            if (!approxEqual(memberI, targetI)) return false;
+        }
+
+        if (memberA !== null && targetA !== null) {
+            comparisons++;
+            if (!approxEqual(memberA, targetA)) return false;
+        }
+
+        if (memberZ !== null && targetZ !== null) {
+            comparisons++;
+            if (!approxEqual(memberZ, targetZ)) return false;
+        }
+
+        return comparisons > 0;
+    });
+
+    if (propertyMatches.length === 1) {
+        return propertyMatches[0];
+    }
+
+    const labelMatch = findPresetSectionProfileByLabel(
+        member.sectionName || member.section || member.sectionLabel || member.sectionDesignation
+    );
+    if (labelMatch) {
+        return labelMatch;
+    }
+
+    if (propertyMatches.length > 1) {
+        return propertyMatches[0];
+    }
+
+    return null;
 };
 
 const parseSectionInfoFromMember = (member) => {
@@ -10670,6 +10933,25 @@ const parseSectionInfoFromMember = (member) => {
     if (member.sectionInfo && typeof member.sectionInfo === 'object' && !Array.isArray(member.sectionInfo)) {
         const info = cloneDeep(member.sectionInfo);
         return ensureSectionSvgMarkup(info);
+    }
+
+    // プリセットから直接sectionNameとaxisが指定されている場合
+    if (member.sectionName && typeof member.sectionName === 'string') {
+        const presetMatch = findPresetSectionProfileByLabel(member.sectionName);
+        if (presetMatch) {
+            return ensureSectionSvgMarkup(cloneDeep(presetMatch.sectionInfo));
+        }
+
+        const legacyInfo = createSectionInfoFromLegacyLabel(member.sectionName);
+        if (legacyInfo) {
+            return legacyInfo;
+        }
+
+        return {
+            label: member.sectionName,
+            type: 'H',  // デフォルトでH形鋼と仮定
+            axis: member.axis ? { label: member.axis } : null
+        };
     }
 
     const resolveCandidate = (raw) => {
@@ -10691,7 +10973,33 @@ const parseSectionInfoFromMember = (member) => {
         }
     };
 
-    return resolveCandidate(member.sectionInfo) || resolveCandidate(member.sectionInfoEncoded) || null;
+    const parsedInfo = resolveCandidate(member.sectionInfo) || resolveCandidate(member.sectionInfoEncoded);
+    if (parsedInfo) {
+        return parsedInfo;
+    }
+
+    if (member.section) {
+        const presetMatch = findPresetSectionProfileByLabel(member.section);
+        if (presetMatch) {
+            return ensureSectionSvgMarkup(cloneDeep(presetMatch.sectionInfo));
+        }
+
+        const legacyInfo = createSectionInfoFromLegacyLabel(member.section);
+        if (legacyInfo) {
+            return legacyInfo;
+        }
+    }
+
+    const legacyFallback = [
+        member.sectionLabel,
+        member.sectionDesignation
+    ].map(createSectionInfoFromLegacyLabel).find(Boolean);
+
+    if (legacyFallback) {
+        return legacyFallback;
+    }
+
+    return null;
 };
 
 const safeDecodeString = (value) => {
@@ -10704,6 +11012,60 @@ const safeDecodeString = (value) => {
     }
 };
 
+const sanitizeAxisLabel = (label) => {
+    if (typeof label !== 'string') return '';
+    const trimmed = label.trim();
+    if (!trimmed) return '';
+
+    const normalizedForMatch = trimmed
+        .replace(/[（）\s]/g, '')
+        .toLowerCase();
+
+    const genericLabels = new Set([
+        '強軸',
+        '弱軸',
+        '両軸',
+        'strong',
+        'weak',
+        'both',
+        'strongaxis',
+        'weakaxis',
+        'bothaxis'
+    ]);
+
+    if (genericLabels.has(normalizedForMatch)) {
+        return '';
+    }
+
+    return trimmed;
+};
+
+const deriveAxisOrientationFromLabel = (label) => {
+    if (typeof label !== 'string') return {};
+    const normalized = label
+        .trim()
+        .replace(/[（）()\s]/g, '')
+        .toLowerCase();
+
+    const containsAny = (target, ...candidates) => candidates.some(candidate => target.includes(candidate));
+
+    if (!normalized) return {};
+
+    if (containsAny(normalized, '両軸', 'both', 'xy', 'x=y')) {
+        return { key: 'both', mode: 'both' };
+    }
+
+    if (containsAny(normalized, '強軸', 'strong', 'x軸', 'xaxis', 'xdir')) {
+        return { key: 'x', mode: 'strong' };
+    }
+
+    if (containsAny(normalized, '弱軸', 'weak', 'y軸', 'yaxis', 'ydir')) {
+        return { key: 'y', mode: 'weak' };
+    }
+
+    return {};
+};
+
 const buildAxisInfo = (member, existingSectionInfo) => {
     if (!member || typeof member !== 'object') return null;
 
@@ -10711,18 +11073,25 @@ const buildAxisInfo = (member, existingSectionInfo) => {
         ? existingSectionInfo.axis
         : null;
 
-    const rawKey = member.sectionAxisKey || axisFromSection?.key;
-    const rawMode = member.sectionAxisMode || axisFromSection?.mode;
-    const rawLabelValue = typeof member.sectionAxisLabel === 'string'
-        ? safeDecodeString(member.sectionAxisLabel)
-        : axisFromSection?.label;
+    // プリセットから直接axisが指定されている場合も対応
+    const rawLabelValue = typeof member.axis === 'string'
+        ? member.axis
+        : (typeof member.sectionAxisLabel === 'string'
+            ? safeDecodeString(member.sectionAxisLabel)
+            : axisFromSection?.label);
 
-    if (!(rawKey || rawMode || rawLabelValue)) return null;
+    const derivedAxisFromLabel = deriveAxisOrientationFromLabel(rawLabelValue);
+    const rawKey = member.sectionAxisKey || axisFromSection?.key || derivedAxisFromLabel.key;
+    const rawMode = member.sectionAxisMode || axisFromSection?.mode || derivedAxisFromLabel.mode;
+
+    const sanitizedLabel = sanitizeAxisLabel(rawLabelValue);
+
+    if (!(rawKey || rawMode || sanitizedLabel)) return null;
 
     return normalizeAxisInfo({
         key: rawKey,
         mode: rawMode,
-        label: rawLabelValue
+        label: sanitizedLabel
     });
 };
 
@@ -10735,13 +11104,18 @@ const presets = [
             {x:0, y:0, z:4, s:'f'},{x:0, y:6, z:4, s:'f'},{x:8, y:0, z:4, s:'f'},{x:8, y:6, z:4, s:'f'}
         ],
         members: [
-            {i:1,j:5, E:UNIT_CONVERSION.E_STEEL, I:2.5e-4, A:1.2e-2, Z:1.5e-3},{i:2,j:6, E:UNIT_CONVERSION.E_STEEL, I:2.5e-4, A:1.2e-2, Z:1.5e-3},
-            {i:3,j:7, E:UNIT_CONVERSION.E_STEEL, I:2.5e-4, A:1.2e-2, Z:1.5e-3},{i:4,j:8, E:UNIT_CONVERSION.E_STEEL, I:2.5e-4, A:1.2e-2, Z:1.5e-3},
-            {i:5,j:7, E:UNIT_CONVERSION.E_STEEL, I:3.0e-4, A:1.5e-2, Z:2.0e-3},{i:6,j:8, E:UNIT_CONVERSION.E_STEEL, I:3.0e-4, A:1.5e-2, Z:2.0e-3},
-            {i:5,j:6, E:UNIT_CONVERSION.E_STEEL, I:1.5e-4, A:8.0e-3, Z:1.0e-3},{i:7,j:8, E:UNIT_CONVERSION.E_STEEL, I:1.5e-4, A:8.0e-3, Z:1.0e-3},
-            {i:1,j:2, E:UNIT_CONVERSION.E_STEEL, I:1.5e-4, A:8.0e-3, Z:1.0e-3},{i:3,j:4, E:UNIT_CONVERSION.E_STEEL, I:1.5e-4, A:8.0e-3, Z:1.0e-3}
+            {i:1,j:5, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:2.5e-4, Iy:8.3e-5, J:3.2e-5, A:1.2e-2, Zz:1.5e-3, Zy:5.0e-4, sectionName:'H-200x200x8x12', axis:'強軸'},
+            {i:2,j:6, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:2.5e-4, Iy:8.3e-5, J:3.2e-5, A:1.2e-2, Zz:1.5e-3, Zy:5.0e-4, sectionName:'H-200x200x8x12', axis:'強軸'},
+            {i:3,j:7, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:2.5e-4, Iy:8.3e-5, J:3.2e-5, A:1.2e-2, Zz:1.5e-3, Zy:5.0e-4, sectionName:'H-200x200x8x12', axis:'強軸'},
+            {i:4,j:8, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:2.5e-4, Iy:8.3e-5, J:3.2e-5, A:1.2e-2, Zz:1.5e-3, Zy:5.0e-4, sectionName:'H-200x200x8x12', axis:'強軸'},
+            {i:5,j:7, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:3.0e-4, Iy:1.0e-4, J:3.8e-5, A:1.5e-2, Zz:2.0e-3, Zy:6.7e-4, sectionName:'H-250x250x9x14', axis:'強軸'},
+            {i:6,j:8, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:3.0e-4, Iy:1.0e-4, J:3.8e-5, A:1.5e-2, Zz:2.0e-3, Zy:6.7e-4, sectionName:'H-250x250x9x14', axis:'強軸'},
+            {i:5,j:6, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.5e-4, Iy:5.0e-5, J:1.9e-5, A:8.0e-3, Zz:1.0e-3, Zy:3.3e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:7,j:8, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.5e-4, Iy:5.0e-5, J:1.9e-5, A:8.0e-3, Zz:1.0e-3, Zy:3.3e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:1,j:2, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.5e-4, Iy:5.0e-5, J:1.9e-5, A:8.0e-3, Zz:1.0e-3, Zy:3.3e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:3,j:4, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.5e-4, Iy:5.0e-5, J:1.9e-5, A:8.0e-3, Zz:1.0e-3, Zy:3.3e-4, sectionName:'H-150x150x7x10', axis:'強軸'}
         ],
-        nl:[{n:5, px:10, py:8},{n:6, px:10, py:-8}], ml:[]
+        nl:[{n:5, px:10, py:8},{n:6, px:10, py:-8}], ml:[{m:5, wy:-3},{m:6, wy:-3}]
     } },
 
     // 5A-2: 3次元タワー構造(4本柱) - 断面性能調整済み（検定比1.9程度）
@@ -10752,17 +11126,25 @@ const presets = [
             {x:0, y:0, z:12, s:'f'},{x:4, y:0, z:12, s:'f'},{x:4, y:4, z:12, s:'f'},{x:0, y:4, z:12, s:'f'}
         ],
         members: [
-            {i:1,j:5, E:UNIT_CONVERSION.E_STEEL, I:3.0e-4, A:1.5e-2, Z:1.8e-3},{i:2,j:6, E:UNIT_CONVERSION.E_STEEL, I:3.0e-4, A:1.5e-2, Z:1.8e-3},
-            {i:3,j:7, E:UNIT_CONVERSION.E_STEEL, I:3.0e-4, A:1.5e-2, Z:1.8e-3},{i:4,j:8, E:UNIT_CONVERSION.E_STEEL, I:3.0e-4, A:1.5e-2, Z:1.8e-3},
-            {i:5,j:9, E:UNIT_CONVERSION.E_STEEL, I:2.0e-4, A:1.0e-2, Z:1.2e-3},{i:6,j:10, E:UNIT_CONVERSION.E_STEEL, I:2.0e-4, A:1.0e-2, Z:1.2e-3},
-            {i:7,j:11, E:UNIT_CONVERSION.E_STEEL, I:2.0e-4, A:1.0e-2, Z:1.2e-3},{i:8,j:12, E:UNIT_CONVERSION.E_STEEL, I:2.0e-4, A:1.0e-2, Z:1.2e-3},
-            {i:5,j:6, E:UNIT_CONVERSION.E_STEEL, I:1.5e-4, A:8.0e-3, Z:1.0e-3},{i:6,j:7, E:UNIT_CONVERSION.E_STEEL, I:1.5e-4, A:8.0e-3, Z:1.0e-3},
-            {i:7,j:8, E:UNIT_CONVERSION.E_STEEL, I:1.5e-4, A:8.0e-3, Z:1.0e-3},{i:8,j:5, E:UNIT_CONVERSION.E_STEEL, I:1.5e-4, A:8.0e-3, Z:1.0e-3},
-            {i:9,j:10, E:UNIT_CONVERSION.E_STEEL, I:1.5e-4, A:8.0e-3, Z:1.0e-3},{i:10,j:11, E:UNIT_CONVERSION.E_STEEL, I:1.5e-4, A:8.0e-3, Z:1.0e-3},
-            {i:11,j:12, E:UNIT_CONVERSION.E_STEEL, I:1.5e-4, A:8.0e-3, Z:1.0e-3},{i:12,j:9, E:UNIT_CONVERSION.E_STEEL, I:1.5e-4, A:8.0e-3, Z:1.0e-3},
+            {i:1,j:5, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:3.0e-4, Iy:1.0e-4, J:3.8e-5, A:1.5e-2, Zz:1.8e-3, Zy:6.0e-4, sectionName:'H-250x250x9x14', axis:'強軸'},
+            {i:2,j:6, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:3.0e-4, Iy:1.0e-4, J:3.8e-5, A:1.5e-2, Zz:1.8e-3, Zy:6.0e-4, sectionName:'H-250x250x9x14', axis:'強軸'},
+            {i:3,j:7, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:3.0e-4, Iy:1.0e-4, J:3.8e-5, A:1.5e-2, Zz:1.8e-3, Zy:6.0e-4, sectionName:'H-250x250x9x14', axis:'強軸'},
+            {i:4,j:8, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:3.0e-4, Iy:1.0e-4, J:3.8e-5, A:1.5e-2, Zz:1.8e-3, Zy:6.0e-4, sectionName:'H-250x250x9x14', axis:'強軸'},
+            {i:5,j:9, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:2.0e-4, Iy:6.7e-5, J:2.6e-5, A:1.0e-2, Zz:1.2e-3, Zy:4.0e-4, sectionName:'H-175x175x7.5x11', axis:'強軸'},
+            {i:6,j:10, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:2.0e-4, Iy:6.7e-5, J:2.6e-5, A:1.0e-2, Zz:1.2e-3, Zy:4.0e-4, sectionName:'H-175x175x7.5x11', axis:'強軸'},
+            {i:7,j:11, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:2.0e-4, Iy:6.7e-5, J:2.6e-5, A:1.0e-2, Zz:1.2e-3, Zy:4.0e-4, sectionName:'H-175x175x7.5x11', axis:'強軸'},
+            {i:8,j:12, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:2.0e-4, Iy:6.7e-5, J:2.6e-5, A:1.0e-2, Zz:1.2e-3, Zy:4.0e-4, sectionName:'H-175x175x7.5x11', axis:'強軸'},
+            {i:5,j:6, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.5e-4, Iy:5.0e-5, J:1.9e-5, A:8.0e-3, Zz:1.0e-3, Zy:3.3e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:6,j:7, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.5e-4, Iy:5.0e-5, J:1.9e-5, A:8.0e-3, Zz:1.0e-3, Zy:3.3e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:7,j:8, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.5e-4, Iy:5.0e-5, J:1.9e-5, A:8.0e-3, Zz:1.0e-3, Zy:3.3e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:8,j:5, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.5e-4, Iy:5.0e-5, J:1.9e-5, A:8.0e-3, Zz:1.0e-3, Zy:3.3e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:9,j:10, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.5e-4, Iy:5.0e-5, J:1.9e-5, A:8.0e-3, Zz:1.0e-3, Zy:3.3e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:10,j:11, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.5e-4, Iy:5.0e-5, J:1.9e-5, A:8.0e-3, Zz:1.0e-3, Zy:3.3e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:11,j:12, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.5e-4, Iy:5.0e-5, J:1.9e-5, A:8.0e-3, Zz:1.0e-3, Zy:3.3e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:12,j:9, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.5e-4, Iy:5.0e-5, J:1.9e-5, A:8.0e-3, Zz:1.0e-3, Zy:3.3e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
             {i:5,j:7, ...p_truss, A:3.5e-3},{i:6,j:8, ...p_truss, A:3.5e-3},{i:9,j:11, ...p_truss, A:3.5e-3},{i:10,j:12, ...p_truss, A:3.5e-3}
         ],
-        nl:[{n:9, px:8, py:4},{n:10, px:8, py:-4},{n:11, px:-8, py:-4},{n:12, px:-8, py:4}], ml:[]
+        nl:[{n:9, px:8, py:4},{n:10, px:8, py:-4},{n:11, px:-8, py:-4},{n:12, px:-8, py:4}], ml:[{m:9, wy:-2},{m:10, wy:-2},{m:11, wy:-2},{m:12, wy:-2},{m:13, wy:-2},{m:14, wy:-2},{m:15, wy:-2},{m:16, wy:-2}]
     } },
 
     // 5A-3: 3次元グリッド構造 - 断面性能調整済み（検定比1.7程度）
@@ -10838,30 +11220,49 @@ const presets = [
         ],
         members: [
             // 柱
-            {i:1,j:7, E:UNIT_CONVERSION.E_STEEL, I:1.8e-4, A:9.0e-3, Z:1.1e-3},{i:2,j:8, E:UNIT_CONVERSION.E_STEEL, I:1.8e-4, A:9.0e-3, Z:1.1e-3},
-            {i:3,j:9, E:UNIT_CONVERSION.E_STEEL, I:1.8e-4, A:9.0e-3, Z:1.1e-3},{i:4,j:10, E:UNIT_CONVERSION.E_STEEL, I:1.8e-4, A:9.0e-3, Z:1.1e-3},
-            {i:5,j:11, E:UNIT_CONVERSION.E_STEEL, I:1.8e-4, A:9.0e-3, Z:1.1e-3},{i:6,j:12, E:UNIT_CONVERSION.E_STEEL, I:1.8e-4, A:9.0e-3, Z:1.1e-3},
-            {i:7,j:13, E:UNIT_CONVERSION.E_STEEL, I:1.8e-4, A:9.0e-3, Z:1.1e-3},{i:8,j:14, E:UNIT_CONVERSION.E_STEEL, I:1.8e-4, A:9.0e-3, Z:1.1e-3},
-            {i:9,j:15, E:UNIT_CONVERSION.E_STEEL, I:1.8e-4, A:9.0e-3, Z:1.1e-3},{i:10,j:16, E:UNIT_CONVERSION.E_STEEL, I:1.8e-4, A:9.0e-3, Z:1.1e-3},
-            {i:11,j:17, E:UNIT_CONVERSION.E_STEEL, I:1.8e-4, A:9.0e-3, Z:1.1e-3},{i:12,j:18, E:UNIT_CONVERSION.E_STEEL, I:1.8e-4, A:9.0e-3, Z:1.1e-3},
-            {i:13,j:19, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},{i:14,j:20, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},
-            {i:15,j:21, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},{i:16,j:22, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},
-            {i:17,j:23, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},{i:18,j:24, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},
+            {i:1,j:7, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.8e-4, Iy:6.0e-5, J:2.3e-5, A:9.0e-3, Zz:1.1e-3, Zy:3.7e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:2,j:8, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.8e-4, Iy:6.0e-5, J:2.3e-5, A:9.0e-3, Zz:1.1e-3, Zy:3.7e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:3,j:9, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.8e-4, Iy:6.0e-5, J:2.3e-5, A:9.0e-3, Zz:1.1e-3, Zy:3.7e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:4,j:10, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.8e-4, Iy:6.0e-5, J:2.3e-5, A:9.0e-3, Zz:1.1e-3, Zy:3.7e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:5,j:11, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.8e-4, Iy:6.0e-5, J:2.3e-5, A:9.0e-3, Zz:1.1e-3, Zy:3.7e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:6,j:12, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.8e-4, Iy:6.0e-5, J:2.3e-5, A:9.0e-3, Zz:1.1e-3, Zy:3.7e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:7,j:13, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.8e-4, Iy:6.0e-5, J:2.3e-5, A:9.0e-3, Zz:1.1e-3, Zy:3.7e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:8,j:14, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.8e-4, Iy:6.0e-5, J:2.3e-5, A:9.0e-3, Zz:1.1e-3, Zy:3.7e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:9,j:15, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.8e-4, Iy:6.0e-5, J:2.3e-5, A:9.0e-3, Zz:1.1e-3, Zy:3.7e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:10,j:16, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.8e-4, Iy:6.0e-5, J:2.3e-5, A:9.0e-3, Zz:1.1e-3, Zy:3.7e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:11,j:17, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.8e-4, Iy:6.0e-5, J:2.3e-5, A:9.0e-3, Zz:1.1e-3, Zy:3.7e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:12,j:18, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.8e-4, Iy:6.0e-5, J:2.3e-5, A:9.0e-3, Zz:1.1e-3, Zy:3.7e-4, sectionName:'H-150x150x7x10', axis:'強軸'},
+            {i:13,j:19, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:14,j:20, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:15,j:21, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:16,j:22, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:17,j:23, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:18,j:24, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
             // 梁(X方向)
-            {i:7,j:8, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},{i:8,j:9, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},
-            {i:10,j:11, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},{i:11,j:12, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},
-            {i:13,j:14, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},{i:14,j:15, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},
-            {i:16,j:17, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},{i:17,j:18, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},
-            {i:19,j:20, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},{i:20,j:21, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},
-            {i:22,j:23, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},{i:23,j:24, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},
+            {i:7,j:8, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:8,j:9, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:10,j:11, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:11,j:12, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:13,j:14, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:14,j:15, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:16,j:17, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:17,j:18, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:19,j:20, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:20,j:21, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:22,j:23, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:23,j:24, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
             // 梁(Y方向)
-            {i:7,j:10, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},{i:8,j:11, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},
-            {i:9,j:12, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},{i:13,j:16, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},
-            {i:14,j:17, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},{i:15,j:18, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},
-            {i:19,j:22, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},{i:20,j:23, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4},
-            {i:21,j:24, E:UNIT_CONVERSION.E_STEEL, I:1.0e-4, A:7.0e-3, Z:6.7e-4}
+            {i:7,j:10, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:8,j:11, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:9,j:12, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:13,j:16, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:14,j:17, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:15,j:18, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:19,j:22, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:20,j:23, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'},
+            {i:21,j:24, E:UNIT_CONVERSION.E_STEEL, F:235, Iz:1.0e-4, Iy:3.3e-5, J:1.3e-5, A:7.0e-3, Zz:6.7e-4, Zy:2.2e-4, sectionName:'H-125x125x6.5x9', axis:'強軸'}
         ],
-        nl:[{n:19, px:12},{n:20, py:10},{n:23, px:-10, py:8}], ml:[]
+        nl:[{n:19, px:12},{n:20, py:10},{n:23, px:-10, py:8}], ml:[{m:19, wz:-4},{m:20, wz:-4},{m:21, wz:-4},{m:22, wz:-4},{m:23, wz:-4},{m:24, wz:-4},{m:25, wz:-4},{m:26, wz:-4},{m:27, wz:-4},{m:28, wz:-4},{m:29, wz:-4},{m:30, wz:-4}]
     } },
 
     // 5C-2: 螺旋階段構造（検定比1.7程度に調整）
@@ -11242,7 +11643,7 @@ const presets = [
             {i:17,j:21, E:UNIT_CONVERSION.E_STEEL, I:2.0e-5, A:2.5e-3, Z:2.0e-4},{i:18,j:22, E:UNIT_CONVERSION.E_STEEL, I:2.0e-5, A:2.5e-3, Z:2.0e-4},
             {i:19,j:23, E:UNIT_CONVERSION.E_STEEL, I:2.0e-5, A:2.5e-3, Z:2.0e-4},{i:20,j:24, E:UNIT_CONVERSION.E_STEEL, I:2.0e-5, A:2.5e-3, Z:2.0e-4}
         ],
-        nl:[{n:17, px:15, py:10},{n:18, px:-15, py:10},{n:19, px:-15, py:-10},{n:20, px:15, py:-10}], ml:[]
+        nl:[{n:17, px:15, py:10},{n:18, px:-15, py:10},{n:19, px:-15, py:-10},{n:20, px:15, py:-10}], ml:[{m:9, wz:-5},{m:10, wz:-5},{m:11, wz:-5},{m:12, wz:-5},{m:17, wz:-5},{m:18, wz:-5},{m:19, wz:-5},{m:20, wz:-5},{m:25, wz:-3},{m:26, wz:-3},{m:27, wz:-3},{m:28, wz:-3},{m:29, wz:-3},{m:30, wz:-3},{m:31, wz:-3},{m:32, wz:-3}]
     } }
 ];
 const loadPreset = (index) => {
@@ -12352,26 +12753,45 @@ const loadPreset = (index) => {
                 }, 0);
             }
             // ========== ここまでが主要な修正点 ==========
-            
-            const inertiaInputEl = row.cells[5]?.querySelector('input[type="number"]');
-            const areaInputEl = row.cells[6]?.querySelector('input[type="number"]');
-            const modulusInputEl = row.cells[9]?.querySelector('input[type="number"]');
+
+            // 3D用の正しいセルインデックス
+            const ixInputEl = row.cells[5]?.querySelector('input[type="number"]');  // Ix
+            const iyInputEl = row.cells[6]?.querySelector('input[type="number"]');  // Iy
+            const jInputEl = row.cells[7]?.querySelector('input[type="number"]');   // J
+            const areaInputEl = row.cells[8]?.querySelector('input[type="number"]'); // A
+            const zxInputEl = row.cells[9]?.querySelector('input[type="number"]');  // Zx
+            const zyInputEl = row.cells[10]?.querySelector('input[type="number"]'); // Zy
 
             if (typeof memberIndex === 'number') {
-                if (inertiaInputEl && props.I !== undefined && props.I !== null) {
-                    inertiaInputEl.value = props.I;
+                // Ix または I の更新
+                if (ixInputEl && (props.Ix !== undefined || props.I !== undefined)) {
+                    ixInputEl.value = props.Ix ?? props.I;
                 }
+                // Iy の更新
+                if (iyInputEl && props.Iy !== undefined) {
+                    iyInputEl.value = props.Iy;
+                }
+                // J の更新
+                if (jInputEl && props.J !== undefined) {
+                    jInputEl.value = props.J;
+                }
+                // A の更新
                 if (areaInputEl && props.A !== undefined && props.A !== null) {
                     areaInputEl.value = props.A;
                 }
-                if (modulusInputEl && props.Z !== undefined && props.Z !== null) {
-                    modulusInputEl.value = props.Z;
+                // Zx または Z の更新
+                if (zxInputEl && (props.Zx !== undefined || props.Z !== undefined)) {
+                    zxInputEl.value = props.Zx ?? props.Z;
+                }
+                // Zy の更新
+                if (zyInputEl && props.Zy !== undefined) {
+                    zyInputEl.value = props.Zy;
                 }
 
                 // 断面名称と軸方向のセルを更新（密度列の有無を考慮）
                 const hasDensityColumn = row.querySelector('.density-cell') !== null;
-                const sectionNameCellIndex = hasDensityColumn ? 9 : 8;
-                const sectionAxisCellIndex = hasDensityColumn ? 10 : 9;
+                const sectionNameCellIndex = hasDensityColumn ? 12 : 11;
+                const sectionAxisCellIndex = hasDensityColumn ? 13 : 12;
 
                 const sectionNameCell = row.cells[sectionNameCellIndex];
                 const sectionAxisCell = row.cells[sectionAxisCellIndex];
@@ -12437,9 +12857,9 @@ const loadPreset = (index) => {
             } else if (props.sectionAxis) {
                 applySectionAxisDataset(row, props.sectionAxis);
             }
-            
+
             // 変更を計算に反映させるためにchangeイベントを発火
-            inertiaInputEl?.dispatchEvent(new Event('change', { bubbles: true }));
+            ixInputEl?.dispatchEvent(new Event('change', { bubbles: true }));
         } else {
             console.error(`無効な部材インデックス: ${memberIndex}`);
         }
