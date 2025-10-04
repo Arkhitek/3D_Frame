@@ -787,14 +787,19 @@ function detectMemberAtPosition(clientX, clientY) {
         const nodeNumber = getCellInteger(row.cells[0]);
         const x = getCellNumber(row.cells[1]);
         const y = getCellNumber(row.cells[2]);
-        
-        console.log(`📊 節点行${index}: number=${nodeNumber}, x=${x}, y=${y}`);
-        
+        const z = getCellNumber(row.cells[3]);
+
+        if (index <= 7) {
+            console.log(`📊 節点行${index}: number=${nodeNumber}, x=${x}, y=${y}, z=${z}`);
+        }
+
         if (!isNaN(nodeNumber) && !isNaN(x) && !isNaN(y)) {
-            nodesMap[nodeNumber] = { x, y };
-            console.log(`✅ 節点${nodeNumber}追加: (${x}, ${y})`);
+            nodesMap[nodeNumber] = { x, y, z: isNaN(z) ? 0 : z };
+            console.log(`✅ 節点${nodeNumber}追加: (${x}, ${y}, ${z})`);
         }
     });
+
+    console.log('📊 全nodesMap:', nodesMap);
     
     // 部材データを取得（ヘッダー行をスキップ）
     const members = [];
@@ -949,8 +954,14 @@ function detectMemberAtPosition(clientX, clientY) {
         const uniformLoad = uniformLoadMap.get(memberNumber) ?? null;
 
         console.log(`📊 部材行${index}: member=${memberNumber}, nodeI=${nodeI}, nodeJ=${nodeJ}`);
-        
-        if (!isNaN(memberNumber) && !isNaN(nodeI) && !isNaN(nodeJ) && 
+
+        if (index === 0) {
+            console.log('🔍 nodesMap内容:', nodesMap);
+            console.log('🔍 nodeI検索:', nodeI, '→', nodesMap[nodeI]);
+            console.log('🔍 nodeJ検索:', nodeJ, '→', nodesMap[nodeJ]);
+        }
+
+        if (!isNaN(memberNumber) && !isNaN(nodeI) && !isNaN(nodeJ) &&
             nodesMap[nodeI] && nodesMap[nodeJ]) {
             members.push({
                 number: memberNumber,
@@ -1052,41 +1063,102 @@ function detectMemberAtPosition(clientX, clientY) {
     const currentScale = currentDrawingContext?.scale || 1;
     const transformFn = currentDrawingContext?.transform;
 
+    // 投影モードと奥行き座標を取得
+    const projectionMode = document.getElementById('projection-mode')?.value || 'xy';
+    const hiddenAxisCoordSelect = document.getElementById('hidden-axis-coord');
+    const hiddenAxisCoord = hiddenAxisCoordSelect ? parseFloat(hiddenAxisCoordSelect.value) : 0;
+
     // 画面上の近接判定はピクセル単位で行い、閾値を一定に保つ
     const tolerancePixels = 12;
+    const depthTolerance = 0.01; // 奥行き方向の許容誤差 (m)
+
     console.log('📏 近接判定しきい値:', `${tolerancePixels}px`, '(スケール:', currentScale.toFixed(2), ')');
-    
+    console.log('🔧 transformFn存在:', !!transformFn, 'currentDrawingContext:', !!currentDrawingContext);
+    console.log('📐 投影モード:', projectionMode, '奥行き座標:', hiddenAxisCoord);
+
     let closestMember = null;
     let closestDistancePixels = Infinity;
     let memberDistances = []; // デバッグ用
-    
+
     members.forEach((member) => {
         const node1 = member.nodes.i;
         const node2 = member.nodes.j;
-        
+
+        // 3D座標を取得 (デフォルトは0)
+        const x1 = node1.x || 0;
+        const y1 = node1.y || 0;
+        const z1 = node1.z || 0;
+        const x2 = node2.x || 0;
+        const y2 = node2.y || 0;
+        const z2 = node2.z || 0;
+
+        // 投影面に応じた2D座標を取得（フィルタリングなし、全部材を投影）
+        let coord1_x, coord1_y, coord2_x, coord2_y;
+
+        switch(projectionMode) {
+            case 'xy':
+                // XY平面投影: X,Y座標を使用
+                coord1_x = x1;
+                coord1_y = y1;
+                coord2_x = x2;
+                coord2_y = y2;
+                break;
+            case 'xz':
+                // XZ平面投影: X,Z座標を使用
+                coord1_x = x1;
+                coord1_y = z1;
+                coord2_x = x2;
+                coord2_y = z2;
+                break;
+            case 'yz':
+                // YZ平面投影: Y,Z座標を使用
+                coord1_x = y1;
+                coord1_y = z1;
+                coord2_x = y2;
+                coord2_y = z2;
+                break;
+            case 'iso':
+            default:
+                // 等角投影: X,Y座標を使用
+                coord1_x = x1;
+                coord1_y = y1;
+                coord2_x = x2;
+                coord2_y = y2;
+                break;
+        }
+
         // ワールド座標と画面座標の両方で距離を計算
         const worldDistance = distanceFromPointToLine(
             worldX, worldY,
-            node1.x, node1.y,
-            node2.x, node2.y
+            coord1_x, coord1_y,
+            coord2_x, coord2_y
         );
 
         let screenDistance = Infinity;
-        if (transformFn) {
-            const screenNode1 = transformFn(node1.x, node1.y);
-            const screenNode2 = transformFn(node2.x, node2.y);
-            screenDistance = distanceFromPointToLine(
-                mouseX, mouseY,
-                screenNode1.x, screenNode1.y,
-                screenNode2.x, screenNode2.y
-            );
+        if (transformFn && typeof transformFn === 'function') {
+            try {
+                // 投影された2D座標でtransformFnを呼び出し
+                const screenNode1 = transformFn(coord1_x, coord1_y);
+                const screenNode2 = transformFn(coord2_x, coord2_y);
+                screenDistance = distanceFromPointToLine(
+                    mouseX, mouseY,
+                    screenNode1.x, screenNode1.y,
+                    screenNode2.x, screenNode2.y
+                );
+            } catch (e) {
+                console.warn('transformFn エラー:', e);
+            }
+        } else {
+            // transformFnがない場合は、ワールド距離をピクセル換算
+            screenDistance = worldDistance * currentScale;
         }
 
         memberDistances.push({
             部材: member.number,
             距離_mm: worldDistance.toFixed(2),
             画面距離_px: Number.isFinite(screenDistance) ? screenDistance.toFixed(2) : 'N/A',
-            座標: `(${node1.x},${node1.y})-(${node2.x},${node2.y})`
+            閾値内: screenDistance <= tolerancePixels ? '✓' : '✗',
+            座標: `(${x1.toFixed(1)},${y1.toFixed(1)},${z1.toFixed(1)})-(${x2.toFixed(1)},${y2.toFixed(1)},${z2.toFixed(1)})`
         });
         
         if (Number.isFinite(screenDistance) && screenDistance <= tolerancePixels && screenDistance < closestDistancePixels) {
@@ -1098,8 +1170,8 @@ function detectMemberAtPosition(clientX, clientY) {
         }
     });
     
-    // 最初の5個の部材の距離をログ出力
-    console.log('📊 部材距離 (最初の5個):', memberDistances.slice(0, 5));
+    // 全部材の距離をログ出力
+    console.table(memberDistances);
     console.log('🎯 検出結果:', closestMember ? `部材${closestMember.number} (画面距離: ${closestDistancePixels.toFixed(2)}px, ワールド距離: ${closestMember.distance.toFixed(2)})` : '部材なし');
     
     return closestMember;
