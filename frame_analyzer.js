@@ -52,6 +52,8 @@ const CONFIG = {
     }
 };
 
+const DEFAULT_PROJECTION_MODE = 'iso';
+
 const UNIT_CONVERSION = {
     CM4_TO_MM4: 1e4,
     CM3_TO_MM3: 1e3,
@@ -59,6 +61,10 @@ const UNIT_CONVERSION = {
     E_STEEL: CONFIG.materials.steelElasticModulus,
     G_STEEL: CONFIG.materials.steelShearModulus,
 };
+
+function getCurrentProjectionMode() {
+    return elements?.projectionMode?.value || DEFAULT_PROJECTION_MODE;
+}
 
 const utils = {
     formatNumber: (num, decimals = 2) => {
@@ -328,8 +334,8 @@ function highlightSelectedElements() {
     }
     
     try {
-        const { nodes, members } = window.parseInputs();
-        const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+    const { nodes, members } = window.parseInputs();
+    const projectionMode = getCurrentProjectionMode();
         const projectedNodes = nodes.map(node => project3DTo2D(node, projectionMode));
         const visibleNodeIndices = getVisibleNodeIndices(nodes);
 
@@ -880,6 +886,7 @@ function detectMemberAtPosition(clientX, clientY) {
                         numeric: parseOptionalFloat(inertiaInput?.value),
                         unit: 'cm⁴'
                     },
+
                     area: {
                         value: areaInput?.value || '',
                         numeric: areaNumeric,
@@ -951,7 +958,7 @@ function detectMemberAtPosition(clientX, clientY) {
     const transformFn = currentDrawingContext?.transform;
 
     // 投影モードと奥行き座標を取得
-    const projectionMode = document.getElementById('projection-mode')?.value || 'xy';
+    const projectionMode = document.getElementById('projection-mode')?.value || DEFAULT_PROJECTION_MODE;
     const hiddenAxisCoordSelect = document.getElementById('hidden-axis-coord');
     const rawHiddenAxisCoord = hiddenAxisCoordSelect ? parseFloat(hiddenAxisCoordSelect.value) : 0;
     const hiddenAxisCoord = Number.isFinite(rawHiddenAxisCoord) ? rawHiddenAxisCoord : null;
@@ -1615,6 +1622,13 @@ document.addEventListener('DOMContentLoaded', () => {
         hiddenAxisCoord: document.getElementById('hidden-axis-coord'),
         hiddenAxisLabel: document.getElementById('hidden-axis-label'),
     };
+
+    if (elements.projectionMode) {
+        const initialProjection = elements.projectionMode.value;
+        if (!initialProjection || initialProjection === 'xy') {
+            elements.projectionMode.value = DEFAULT_PROJECTION_MODE;
+        }
+    }
 
     let panZoomState = { scale: 1, offsetX: 0, offsetY: 0, isInitialized: false };
     let lastResults = null;
@@ -5646,7 +5660,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const isModelCanvas = canvas.id === 'model-canvas';
         
         // 投影モードを取得
-        const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+    const projectionMode = getCurrentProjectionMode();
         
         // 3D座標を2D投影
         const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode));
@@ -5820,7 +5834,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.lineWidth = 2;
 
         // 投影モードを取得
-        const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+    const projectionMode = getCurrentProjectionMode();
 
         // 座標軸を描画（必要な場合）
         if (showCoordinateAxes && drawingContext) {
@@ -5899,15 +5913,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     };
-    const drawConnections = (ctx, transform, nodes, members) => { ctx.fillStyle = 'white'; ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5; const offset = 6; const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy'; const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode)); const visibleNodeIndices = getVisibleNodeIndices(nodes); members.forEach(m => { if (!visibleNodeIndices.has(m.i) || !visibleNodeIndices.has(m.j)) return; const n_i = projectedNodes[m.i]; const p_i = transform(n_i.x, n_i.y); if (m.i_conn === 'pinned') { const p_i_offset = { x: p_i.x + offset * m.c, y: p_i.y - offset * m.s }; ctx.beginPath(); ctx.arc(p_i_offset.x, p_i_offset.y, 3, 0, 2 * Math.PI); ctx.fill(); ctx.stroke(); } if (m.j_conn === 'pinned') { const n_j = projectedNodes[m.j]; const p_j = transform(n_j.x, n_j.y); const p_j_offset = { x: p_j.x - offset * m.c, y: p_j.y + offset * m.s }; ctx.beginPath(); ctx.arc(p_j_offset.x, p_j_offset.y, 3, 0, 2 * Math.PI); ctx.fill(); ctx.stroke(); } }); };
-    const drawBoundaryConditions = (ctx, transform, nodes) => { const size = 10; const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy'; const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode)); const visibleNodeIndices = getVisibleNodeIndices(nodes); projectedNodes.forEach((projNode, idx) => { if (!visibleNodeIndices.has(idx)) return; if (nodes[idx].support === 'free') return; const pos = transform(projNode.x, projNode.y); ctx.strokeStyle = '#008000'; ctx.fillStyle = '#008000'; ctx.lineWidth = 1.5; ctx.beginPath(); if (nodes[idx].support === 'fixed') { ctx.moveTo(pos.x - size, pos.y + size); ctx.lineTo(pos.x + size, pos.y + size); for(let i=0; i < 5; i++){ ctx.moveTo(pos.x - size + i*size/2, pos.y + size); ctx.lineTo(pos.x - size + i*size/2 - size/2, pos.y + size + size/2); } } else if (nodes[idx].support === 'pinned') { ctx.moveTo(pos.x, pos.y); ctx.lineTo(pos.x - size, pos.y + size); ctx.lineTo(pos.x + size, pos.y + size); ctx.closePath(); ctx.stroke(); ctx.moveTo(pos.x - size*1.2, pos.y + size); ctx.lineTo(pos.x + size*1.2, pos.y + size); } else if (nodes[idx].support === 'roller') { ctx.moveTo(pos.x, pos.y); ctx.lineTo(pos.x - size, pos.y + size); ctx.lineTo(pos.x + size, pos.y + size); ctx.closePath(); ctx.stroke(); ctx.moveTo(pos.x - size, pos.y + size + 3); ctx.lineTo(pos.x + size, pos.y + size + 3); } ctx.stroke(); }); };
-    const drawDimensions = (ctx, transform, nodes, members, labelManager, obstacles) => { const offset = 15; ctx.strokeStyle = '#0000ff'; ctx.lineWidth = 1; const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy'; const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode)); const visibleNodeIndices = getVisibleNodeIndices(nodes); members.forEach(m => { if (!visibleNodeIndices.has(m.i) || !visibleNodeIndices.has(m.j)) return; const n1 = projectedNodes[m.i]; const n2 = projectedNodes[m.j]; const p1 = transform(n1.x, n1.y); const p2 = transform(n2.x, n2.y); const midX = (p1.x + p2.x) / 2; const midY = (p1.y + p2.y) / 2; const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x); const offsetX = offset * Math.sin(angle); const offsetY = -offset * Math.cos(angle); const labelTargetX = midX + offsetX; const labelTargetY = midY + offsetY; const labelText = `${m.length.toFixed(2)}m`; ctx.fillStyle = '#0000ff'; labelManager.draw(ctx, labelText, labelTargetX, labelTargetY, obstacles); }); };
-    const getProjectionModeValue = () => {
-        if (!elements || !elements.projectionMode) {
-            return 'xy';
-        }
-        return elements.projectionMode.value || 'xy';
-    };
+    const drawConnections = (ctx, transform, nodes, members) => { ctx.fillStyle = 'white'; ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5; const offset = 6; const projectionMode = getCurrentProjectionMode(); const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode)); const visibleNodeIndices = getVisibleNodeIndices(nodes); members.forEach(m => { if (!visibleNodeIndices.has(m.i) || !visibleNodeIndices.has(m.j)) return; const n_i = projectedNodes[m.i]; const p_i = transform(n_i.x, n_i.y); if (m.i_conn === 'pinned') { const p_i_offset = { x: p_i.x + offset * m.c, y: p_i.y - offset * m.s }; ctx.beginPath(); ctx.arc(p_i_offset.x, p_i_offset.y, 3, 0, 2 * Math.PI); ctx.fill(); ctx.stroke(); } if (m.j_conn === 'pinned') { const n_j = projectedNodes[m.j]; const p_j = transform(n_j.x, n_j.y); const p_j_offset = { x: p_j.x - offset * m.c, y: p_j.y + offset * m.s }; ctx.beginPath(); ctx.arc(p_j_offset.x, p_j_offset.y, 3, 0, 2 * Math.PI); ctx.fill(); ctx.stroke(); } }); };
+    const drawBoundaryConditions = (ctx, transform, nodes) => { const size = 10; const projectionMode = getCurrentProjectionMode(); const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode)); const visibleNodeIndices = getVisibleNodeIndices(nodes); projectedNodes.forEach((projNode, idx) => { if (!visibleNodeIndices.has(idx)) return; if (nodes[idx].support === 'free') return; const pos = transform(projNode.x, projNode.y); ctx.strokeStyle = '#008000'; ctx.fillStyle = '#008000'; ctx.lineWidth = 1.5; ctx.beginPath(); if (nodes[idx].support === 'fixed') { ctx.moveTo(pos.x - size, pos.y + size); ctx.lineTo(pos.x + size, pos.y + size); for(let i=0; i < 5; i++){ ctx.moveTo(pos.x - size + i*size/2, pos.y + size); ctx.lineTo(pos.x - size + i*size/2 - size/2, pos.y + size + size/2); } } else if (nodes[idx].support === 'pinned') { ctx.moveTo(pos.x, pos.y); ctx.lineTo(pos.x - size, pos.y + size); ctx.lineTo(pos.x + size, pos.y + size); ctx.closePath(); ctx.stroke(); ctx.moveTo(pos.x - size*1.2, pos.y + size); ctx.lineTo(pos.x + size*1.2, pos.y + size); } else if (nodes[idx].support === 'roller') { ctx.moveTo(pos.x, pos.y); ctx.lineTo(pos.x - size, pos.y + size); ctx.lineTo(pos.x + size, pos.y + size); ctx.closePath(); ctx.stroke(); ctx.moveTo(pos.x - size, pos.y + size + 3); ctx.lineTo(pos.x + size, pos.y + size + 3); } ctx.stroke(); }); };
+    const drawDimensions = (ctx, transform, nodes, members, labelManager, obstacles) => { const offset = 15; ctx.strokeStyle = '#0000ff'; ctx.lineWidth = 1; const projectionMode = getCurrentProjectionMode(); const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode)); const visibleNodeIndices = getVisibleNodeIndices(nodes); members.forEach(m => { if (!visibleNodeIndices.has(m.i) || !visibleNodeIndices.has(m.j)) return; const n1 = projectedNodes[m.i]; const n2 = projectedNodes[m.j]; const p1 = transform(n1.x, n1.y); const p2 = transform(n2.x, n2.y); const midX = (p1.x + p2.x) / 2; const midY = (p1.y + p2.y) / 2; const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x); const offsetX = offset * Math.sin(angle); const offsetY = -offset * Math.cos(angle); const labelTargetX = midX + offsetX; const labelTargetY = midY + offsetY; const labelText = `${m.length.toFixed(2)}m`; ctx.fillStyle = '#0000ff'; labelManager.draw(ctx, labelText, labelTargetX, labelTargetY, obstacles); }); };
+    const getProjectionModeValue = () => getCurrentProjectionMode();
 
     const buildConcentratedLoadRules = (projectionMode, is3DModeActive) => {
         const displayRules = {
@@ -6016,7 +6025,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const loadScale = 3;
 
         // 投影モードを取得してノードを投影
-    const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+    const projectionMode = elements.projectionMode ? elements.projectionMode.value : DEFAULT_PROJECTION_MODE;
         const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode));
     const is3DModeActive = window.is3DMode === true;
     const { displayRules } = buildConcentratedLoadRules(projectionMode, is3DModeActive);
@@ -6761,7 +6770,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     // 表示対象の節点インデックスを取得する関数
     function getVisibleNodeIndices(nodes) {
-        const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+    const projectionMode = getCurrentProjectionMode();
         const hiddenCoord = elements.hiddenAxisCoord ? parseFloat(elements.hiddenAxisCoord.value) : null;
         const tolerance = 0.01;
         const visibleNodeIndices = new Set();
@@ -7021,7 +7030,7 @@ document.addEventListener('DOMContentLoaded', () => {
             nodeSelfWeights = parsed.nodeSelfWeights || [];
             if (nodes.length > 0) {
                 // 投影モードを取得
-                const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+                const projectionMode = getCurrentProjectionMode();
                 const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode));
                 
                 const labelManager = LabelManager();
@@ -7059,7 +7068,7 @@ document.addEventListener('DOMContentLoaded', () => {
         drawSelectionRectangle(ctx);
 
         // 座標軸インジケーターを描画
-        const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+    const projectionMode = getCurrentProjectionMode();
         drawAxisIndicator(ctx, elements.modelCanvas.clientWidth, elements.modelCanvas.clientHeight, projectionMode);
 
         // 3Dビューアにモデルデータを送信
@@ -7081,9 +7090,9 @@ document.addEventListener('DOMContentLoaded', () => {
 const drawMomentDiagram = (nodes, members, forces, memberLoads) => { 
         const drawingCtx = getDrawingContext(elements.momentCanvas); 
         if (!drawingCtx) return; 
-        const { ctx, transform, scale } = drawingCtx; 
-        const labelManager = LabelManager(); 
-        const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+    const { ctx, transform, scale } = drawingCtx; 
+    const labelManager = LabelManager(); 
+    const projectionMode = getCurrentProjectionMode();
         
         // 部材番号も表示する
         drawStructure(ctx, transform, nodes, members, '#ccc', false, true); 
@@ -7170,9 +7179,9 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
     const drawAxialForceDiagram = (nodes, members, forces) => { 
         const drawingCtx = getDrawingContext(elements.axialCanvas); 
         if (!drawingCtx) return; 
-        const { ctx, transform, scale } = drawingCtx; 
-        const labelManager = LabelManager(); 
-        const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+    const { ctx, transform, scale } = drawingCtx; 
+    const labelManager = LabelManager(); 
+    const projectionMode = getCurrentProjectionMode();
         
         // 部材番号も表示する
         drawStructure(ctx, transform, nodes, members, '#ccc', false, true); 
@@ -7234,9 +7243,9 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
     const drawShearForceDiagram = (nodes, members, forces, memberLoads) => { 
         const drawingCtx = getDrawingContext(elements.shearCanvas); 
         if (!drawingCtx) return; 
-        const { ctx, transform, scale } = drawingCtx; 
-        const labelManager = LabelManager(); 
-        const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+    const { ctx, transform, scale } = drawingCtx; 
+    const labelManager = LabelManager(); 
+    const projectionMode = getCurrentProjectionMode();
         
         // 部材番号も表示する
         drawStructure(ctx, transform, nodes, members, '#ccc', false, true); 
@@ -8268,7 +8277,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         console.log('アニメーション開始:', { dispScale, nodesCount: nodes.length, membersCount: members.length });
 
         // 投影モードを取得
-        const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+    const projectionMode = getCurrentProjectionMode();
 
         // 2D/3D判定（自由度数から判定）
         const dofPerNode = D_global.length / nodes.length;
@@ -8441,7 +8450,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         if (!lastDrawingContext) return -1; 
         try { 
             const { nodes } = parseInputs(); 
-            const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+            const projectionMode = getCurrentProjectionMode();
             const visibleNodeIndices = getVisibleNodeIndices(nodes);
             console.log('getNodeAt nodes:', { nodeCount: nodes.length, projectionMode, visibleCount: visibleNodeIndices.size });
             const tolerance = 10; 
@@ -8463,7 +8472,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         if (!lastDrawingContext) return -1; 
         try { 
             const { nodes, members } = parseInputs(); 
-            const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+            const projectionMode = getCurrentProjectionMode();
             const visibleNodeIndices = getVisibleNodeIndices(nodes);
             console.log('getMemberAt data:', { nodeCount: nodes.length, memberCount: members.length, projectionMode, visibleCount: visibleNodeIndices.size });
             const tolerance = 5; 
@@ -9111,7 +9120,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 if (!finalCoords) { const dx = p2.x-p1.x, dy = p2.y-p1.y, lenSq = dx*dx+dy*dy, t = lenSq===0 ? 0 : ((modelCoords.x-p1.x)*dx + (modelCoords.y-p1.y)*dy)/lenSq; const clampedT=Math.max(0,Math.min(1,t)); finalCoords={x:p1.x+clampedT*dx,y:p1.y+clampedT*dy}; }
 
                 // 投影モードに応じて3D座標を設定
-                const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+                const projectionMode = getCurrentProjectionMode();
                 const hiddenCoord = elements.hiddenAxisCoord ? parseFloat(elements.hiddenAxisCoord.value) || 0 : 0;
                 let nodeX = 0, nodeY = 0, nodeZ = 0;
                 if (projectionMode === 'xy') {
@@ -9155,7 +9164,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 if (elements.gridToggle.checked && dist < snapTolerance) { modelCoords.x=snappedX; modelCoords.y=snappedY; }
 
                 // 投影モードに応じて3D座標を設定
-                const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+                const projectionMode = getCurrentProjectionMode();
                 const hiddenCoord = elements.hiddenAxisCoord ? parseFloat(elements.hiddenAxisCoord.value) || 0 : 0;
                 let nodeX = 0, nodeY = 0, nodeZ = 0;
                 if (projectionMode === 'xy') {
