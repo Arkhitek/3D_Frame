@@ -5913,7 +5913,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const displayRules = {
             px: { source: 'px', axis: 'x', show: true, directionMultiplier: 1, label: 'node-load-px' },
             py: { source: 'py', axis: 'y', show: true, directionMultiplier: 1, label: 'node-load-py' },
-            pz: { source: 'pz', axis: 'z', show: false, directionMultiplier: 1, label: 'node-load-pz' }
+            pz: { source: 'pz', axis: 'z', show: true, directionMultiplier: 1, label: 'node-load-pz' }
         };
 
         const calcRules = {
@@ -5928,38 +5928,30 @@ document.addEventListener('DOMContentLoaded', () => {
                     displayRules.py.directionMultiplier = -1;
                     displayRules.pz.show = false;
                     calcRules.px.multiplier = -1;
-                    calcRules.py.multiplier = -1;
                     break;
                 case 'xz':
                     displayRules.py.show = false;
-                    displayRules.pz.show = true;
+                    displayRules.pz.directionMultiplier = -1;
                     calcRules.px.multiplier = -1;
-                    calcRules.py.source = 'pz';
-                    calcRules.py.multiplier = 1;
-                    calcRules.pz.source = 'py';
-                    calcRules.pz.multiplier = 0;
                     break;
                 case 'yz':
-                    displayRules.px.show = false;
-                    displayRules.pz.show = true;
-                    calcRules.px.multiplier = 0;
+                    displayRules.pz.directionMultiplier = -1;
                     break;
                 case 'iso':
-                    displayRules.pz.show = true;
+                    displayRules.pz.directionMultiplier = -1;
                     calcRules.px.multiplier = -1;
-                    calcRules.pz.multiplier = -1;
                     break;
                 default:
-                    displayRules.pz.show = true;
                     break;
             }
         } else {
-            if (projectionMode === 'iso') {
-                displayRules.pz.show = true;
-                calcRules.px.multiplier = -1;
-                calcRules.pz.multiplier = -1;
-            } else {
-                displayRules.pz.show = true;
+            switch (projectionMode) {
+                case 'iso':
+                    displayRules.pz.directionMultiplier = -1;
+                    calcRules.px.multiplier = -1;
+                    break;
+                default:
+                    break;
             }
         }
 
@@ -5970,10 +5962,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const clone = { ...load };
         const applyAxis = (axisKey) => {
             const rule = calcRules[axisKey];
+            const fallbackValue = Number(load[axisKey]) || 0;
             if (!rule) {
-                return Number(load[axisKey]) || 0;
+                return fallbackValue;
             }
-            if (rule.multiplier === 0) {
+            const multiplier = rule.multiplier ?? 1;
+            if (Math.abs(multiplier) < 1e-9) {
                 return 0;
             }
             const sourceKey = rule.source || axisKey;
@@ -6345,7 +6339,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         return;
                     }
 
-                    const projectedDir = projectGlobalDirection(node3D, axisVector);
+                    let projectedDir = projectGlobalDirection(node3D, axisVector);
+                    if (!projectedDir && projectionMode === 'yz' && component.axis === 'x') {
+                        projectedDir = { x: 1, y: 0 };
+                    }
                     if (!projectedDir) {
                         return;
                     }
