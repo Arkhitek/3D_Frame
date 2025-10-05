@@ -6607,32 +6607,35 @@ document.addEventListener('DOMContentLoaded', () => {
         const originX = margin;
         const originY = height - margin;
 
-        // 投影モードに応じて軸の方向を設定
-        let axes = [];
+        const computeAxisDirection = (vector) => {
+            const projected = project3DTo2D(vector, projectionMode);
+            const screenDx = projected.x;
+            const screenDy = -projected.y;
+            const length = Math.hypot(screenDx, screenDy);
+            if (length < 1e-6) return null;
+            return { dx: screenDx / length, dy: screenDy / length };
+        };
+
+        const axes = [];
+        const addAxis = (label, vector, color) => {
+            const dir = computeAxisDirection(vector);
+            if (!dir) return;
+            axes.push({ label, color, ...dir });
+        };
+
         if (projectionMode === 'xy') {
-            axes = [
-                { label: 'X', dx: 1, dy: 0, color: '#ff0000' },
-                { label: 'Y', dx: 0, dy: -1, color: '#00ff00' }
-            ];
+            addAxis('X', { x: 1, y: 0, z: 0 }, '#ff0000');
+            addAxis('Y', { x: 0, y: 1, z: 0 }, '#00ff00');
         } else if (projectionMode === 'xz') {
-            axes = [
-                { label: 'X', dx: 1, dy: 0, color: '#ff0000' },
-                { label: 'Z', dx: 0, dy: -1, color: '#0000ff' }
-            ];
+            addAxis('X', { x: 1, y: 0, z: 0 }, '#ff0000');
+            addAxis('Z', { x: 0, y: 0, z: 1 }, '#0000ff');
         } else if (projectionMode === 'yz') {
-            axes = [
-                { label: 'Y', dx: 1, dy: 0, color: '#00ff00' },
-                { label: 'Z', dx: 0, dy: -1, color: '#0000ff' }
-            ];
+            addAxis('Y', { x: 0, y: 1, z: 0 }, '#00ff00');
+            addAxis('Z', { x: 0, y: 0, z: 1 }, '#0000ff');
         } else if (projectionMode === 'iso') {
-            // 等角投影: X(右下), Y(右上), Z(上)
-            const cos30 = Math.cos(Math.PI / 6);
-            const sin30 = Math.sin(Math.PI / 6);
-            axes = [
-                { label: 'X', dx: cos30, dy: sin30, color: '#ff0000' },
-                { label: 'Y', dx: -cos30, dy: sin30, color: '#00ff00' },
-                { label: 'Z', dx: 0, dy: -1, color: '#0000ff' }
-            ];
+            addAxis('X', { x: 1, y: 0, z: 0 }, '#ff0000');
+            addAxis('Y', { x: 0, y: 1, z: 0 }, '#00ff00');
+            addAxis('Z', { x: 0, y: 0, z: 1 }, '#0000ff');
         }
 
         // 各軸を描画
