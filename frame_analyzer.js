@@ -4432,6 +4432,16 @@ document.addEventListener('DOMContentLoaded', () => {
             let K_global = mat.create(dof, dof);
             let F_global = mat.create(dof, 1);
             const fixedEndForces = {};
+
+            const addForceWithSignFlip = (globalIndex, value) => {
+                if (!Number.isFinite(value) || Math.abs(value) < 1e-12) {
+                    return;
+                }
+                const dofMod = is2DFrame ? (globalIndex % 3) : (globalIndex % 6);
+                const shouldFlip = (dofMod === 0 || dofMod === 1);
+                const adjustedValue = shouldFlip ? -value : value;
+                F_global[globalIndex][0] += adjustedValue;
+            };
             
             // 同一部材の荷重を合計して重複を防ぐ (3D対応: wy, wz別々に管理)
             const memberLoadMap = new Map();
@@ -4515,11 +4525,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     const feg = mat.multiply(T_t, fel.map(v => [v]));
                     const i = member.i;
                     const j = member.j;
-                    F_global[i*3][0] -= feg[0][0];
-                    F_global[i*3+1][0] -= feg[1][0];
+                    addForceWithSignFlip(i*3, -feg[0][0]);
+                    addForceWithSignFlip(i*3+1, -feg[1][0]);
                     F_global[i*3+2][0] -= feg[2][0];
-                    F_global[j*3][0] -= feg[3][0];
-                    F_global[j*3+1][0] -= feg[4][0];
+                    addForceWithSignFlip(j*3, -feg[3][0]);
+                    addForceWithSignFlip(j*3+1, -feg[4][0]);
                     F_global[j*3+2][0] -= feg[5][0];
                     fixedEndForces[load.memberIndex] = fel;
                 } else {
@@ -4544,14 +4554,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     const feg = mat.multiply(T_t, fel.map(v => [v]));
                     const i = member.i;
                     const j = member.j;
-                    F_global[i*6][0] -= feg[0][0];
-                    F_global[i*6+1][0] -= feg[1][0];
+                    addForceWithSignFlip(i*6, -feg[0][0]);
+                    addForceWithSignFlip(i*6+1, -feg[1][0]);
                     F_global[i*6+2][0] -= feg[2][0];
                     F_global[i*6+3][0] -= feg[3][0];
                     F_global[i*6+4][0] -= feg[4][0];
                     F_global[i*6+5][0] -= feg[5][0];
-                    F_global[j*6][0] -= feg[6][0];
-                    F_global[j*6+1][0] -= feg[7][0];
+                    addForceWithSignFlip(j*6, -feg[6][0]);
+                    addForceWithSignFlip(j*6+1, -feg[7][0]);
                     F_global[j*6+2][0] -= feg[8][0];
                     F_global[j*6+3][0] -= feg[9][0];
                     F_global[j*6+4][0] -= feg[10][0];
@@ -4563,21 +4573,21 @@ document.addEventListener('DOMContentLoaded', () => {
             // 節点荷重を設定（2D/3Dで処理を分ける）
             if (is2DFrame) {
                 combinedNodeLoads.forEach(load => { 
-                    const i = load.nodeIndex * 3; 
-                    F_global[i][0] += load.px; 
-                    F_global[i+1][0] += load.py; 
-                    F_global[i+2][0] += load.mz; 
+                    const base = load.nodeIndex * 3; 
+                    addForceWithSignFlip(base, load.px || 0); 
+                    addForceWithSignFlip(base + 1, load.py || 0); 
+                    F_global[base + 2][0] += load.mz || 0; 
                 });
             } else {
                 // 3D: 6自由度
                 combinedNodeLoads.forEach(load => { 
-                    const i = load.nodeIndex * 6; 
-                    F_global[i][0] += load.px || 0; 
-                    F_global[i+1][0] += load.py || 0; 
-                    F_global[i+2][0] += load.pz || 0; 
-                    F_global[i+3][0] += load.mx || 0; 
-                    F_global[i+4][0] += load.my || 0; 
-                    F_global[i+5][0] += load.mz || 0; 
+                    const base = load.nodeIndex * 6; 
+                    addForceWithSignFlip(base, load.px || 0); 
+                    addForceWithSignFlip(base + 1, load.py || 0); 
+                    F_global[base + 2][0] += load.pz || 0; 
+                    F_global[base + 3][0] += load.mx || 0; 
+                    F_global[base + 4][0] += load.my || 0; 
+                    F_global[base + 5][0] += load.mz || 0; 
                 });
             }
             
@@ -5894,6 +5904,21 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        // memberSelfWeightsをmemberLoadsに統合（自重をグローバルZ方向の等分布荷重として扱う）
+        const allMemberLoads = [...memberLoads];
+        if (memberSelfWeights && memberSelfWeights.length > 0) {
+            memberSelfWeights.forEach(selfWeight => {
+                // 自重のwプロパティをwz（グローバルZ方向）に変換して追加
+                allMemberLoads.push({
+                    memberIndex: selfWeight.memberIndex,
+                    wx: 0,
+                    wy: 0,
+                    wz: selfWeight.w,  // 負の値（下向き）
+                    isFromSelfWeight: true
+                });
+            });
+        }
+
     ctx.strokeStyle = '#ff4500';
     ctx.fillStyle = '#ff4500';
         ctx.lineWidth = 1.5;
@@ -5985,19 +6010,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 z: point3D.z + (vector3D.z || 0)
             };
             const offsetProj = project3DTo2D(offsetPoint, projectionMode);
+            
             const baseScreen = transform(baseProj.x, baseProj.y);
             const offsetScreen = transform(offsetProj.x, offsetProj.y);
             const dx = offsetScreen.x - baseScreen.x;
             const dy = offsetScreen.y - baseScreen.y;
+            
             const len = Math.hypot(dx, dy);
             if (len < 1e-6) {
                 return null;
             }
-            return { x: dx / len, y: dy / len };
+            let result = { x: dx / len, y: dy / len };
+
+            const is3DModeActive = window.is3DMode === true;
+            if (!is3DModeActive) {
+                const EPS = 1e-9;
+                const isPureZAxis = Math.abs(vector3D.z || 0) > EPS &&
+                    Math.abs(vector3D.x || 0) < EPS &&
+                    Math.abs(vector3D.y || 0) < EPS;
+                if (isPureZAxis) {
+                    result = { x: result.x, y: -result.y };
+                }
+            }
+
+            return result;
         };
 
         // まず分布荷重を描画して、そのテキスト領域と矢印領域を障害物に追加
-        memberLoads.forEach(load => {
+        allMemberLoads.forEach(load => {
             const isSelfWeightLoad = !!load.isFromSelfWeight;
             if (isSelfWeightLoad) {
                 if (!showSelfWeight) return;
@@ -6005,7 +6045,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const considerSelfWeightCheckbox = document.getElementById('consider-self-weight');
+            const considerSelfWeightCheckbox = document.getElementById('consider-self-weight-checkbox');
             const isSelfWeightChecked = considerSelfWeightCheckbox && considerSelfWeightCheckbox.checked;
             if (isSelfWeightLoad && !isSelfWeightChecked) {
                 return;
@@ -6751,7 +6791,8 @@ document.addEventListener('DOMContentLoaded', () => {
         lastDrawingContext = drawingCtx;
         window.lastDrawingContext = drawingCtx;
         const { ctx, transform } = drawingCtx;
-        let nodes, members;
+        let nodes = [], members = [];
+        let nodeLoads = [], memberLoads = [], memberSelfWeights = [], nodeSelfWeights = [];
         try {
             if (elements.gridToggle.checked) {
                 drawGrid(ctx, transform, elements.modelCanvas.clientWidth, elements.modelCanvas.clientHeight);
@@ -6759,7 +6800,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const parsed = parseInputs();
             nodes = parsed.nodes;
             members = parsed.members;
-            const { nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights } = parsed;
+            nodeLoads = parsed.nodeLoads || [];
+            memberLoads = parsed.memberLoads || [];
+            memberSelfWeights = parsed.memberSelfWeights || [];
+            nodeSelfWeights = parsed.nodeSelfWeights || [];
             if (nodes.length > 0) {
                 // 投影モードを取得
                 const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';

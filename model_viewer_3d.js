@@ -657,8 +657,10 @@ function updateModel3DView(nodes, members, loadData = {}) {
     memberLoads.forEach(load => {
         distributedLoads.push({
             memberIndex: load.memberIndex,
-            wy: load.wy !== undefined ? load.wy : (load.w !== undefined ? load.w : 0),
+            wx: load.wx || 0,
+            wy: load.wy || 0,
             wz: load.wz || 0,
+            w: load.w || 0,  // 従来のw（後方互換）
             isFromSelfWeight: !!load.isFromSelfWeight
         });
     });
@@ -666,10 +668,13 @@ function updateModel3DView(nodes, members, loadData = {}) {
     memberSelfWeights.forEach(load => {
         if (!includeSelfWeightLoads) return;
         if (load.loadType === 'distributed' || (load.loadType === 'mixed' && load.w)) {
+            // 自重はグローバルZ方向（鉛直下向き）の等分布荷重
             distributedLoads.push({
                 memberIndex: load.memberIndex,
-                wy: load.w || 0,
-                wz: 0,
+                wx: 0,
+                wy: 0,
+                wz: load.w || 0,  // 負の値（下向き）
+                w: 0,
                 isFromSelfWeight: true
             });
         }
@@ -696,55 +701,56 @@ function updateModel3DView(nodes, members, loadData = {}) {
             const p1 = startPos.clone();
             const p2 = endPos.clone();
             const color = isSelfWeight ? COLORS.selfWeight : COLORS.externalDistributed;
-            const wy = load.wy || 0;
-            const wz = load.wz || 0;
+            
+            // グローバル座標系の荷重成分を取得（構造解析座標系）
+            const wx = load.wx || 0;      // 構造解析のX方向
+            const wy = load.wy || 0;      // 構造解析のY方向
+            const wz = load.wz || 0;      // 構造解析のZ方向（鉛直）
+            const legacyW = load.w || 0;  // 後方互換性のため
 
-            if (wy === 0 && wz === 0) return;
+            // 荷重が0の場合はスキップ
+            if (wx === 0 && wy === 0 && wz === 0 && legacyW === 0) return;
 
-            // 部材軸方向ベクトル
-            const memberAxis = new THREE.Vector3().subVectors(p2, p1).normalize();
-
-            // 部材のローカル座標系を計算
-            // wy方向（部材ローカルy軸）: 部材軸と直交する方向
-            // wz方向（部材ローカルz軸）: 鉛直方向
-            let localY, localZ;
-
-            // 部材が垂直かどうか判定
-            const isVertical = Math.abs(memberAxis.y) > 0.95;
-
-            if (isVertical) {
-                // 垂直部材の場合: localYはグローバルZ方向（手前方向）
-                localY = new THREE.Vector3(0, 0, 1);
-                localZ = new THREE.Vector3(1, 0, 0); // グローバルX方向
-            } else {
-                // 水平または斜め部材の場合
-                // localZ = グローバルY軸（上方向）
-                localZ = new THREE.Vector3(0, 1, 0);
-                // localY = 部材軸 × localZ（外積で部材軸と直交する方向）
-                localY = new THREE.Vector3().crossVectors(memberAxis, localZ).normalize();
-
-                // 外積結果が0ベクトルになる場合の対策
-                if (localY.lengthSq() < 0.001) {
-                    localY = new THREE.Vector3(0, 0, 1);
-                }
-            }
+            // グローバル座標系の単位ベクトル（Three.js座標系に変換）
+            // 構造解析: (X, Y, Z) → Three.js: (X, Z, -Y)
+            const globalX = new THREE.Vector3(1, 0, 0);    // 構造解析X → Three.js X
+            const globalY = new THREE.Vector3(0, 0, 1);    // 構造解析Y → Three.js Z
+            const globalZ = new THREE.Vector3(0, -1, 0);   // 構造解析Z（鉛直上向き） → Three.js Y（下向き）
 
             for (let i = 0; i <= numArrows; i++) {
                 const t = i / numArrows;
                 const position = new THREE.Vector3().lerpVectors(p1, p2, t);
 
-                if (wy !== 0) {
-                    // 部材ローカルy方向（部材軸と直交）
-                    const baseDir = localY.clone().multiplyScalar(Math.sign(wy));
+                // グローバルX方向の荷重（構造解析X）
+                if (wx !== 0) {
+                    const baseDir = globalX.clone().multiplyScalar(Math.sign(wx));
                     const arrowDir = baseDir.clone().multiplyScalar(-1);
                     const arrowOrigin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
                     const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
                     loadGroup.add(arrow);
                 }
 
+                // グローバルY方向の荷重（構造解析Y）
+                if (wy !== 0) {
+                    const baseDir = globalY.clone().multiplyScalar(Math.sign(wy));
+                    const arrowDir = baseDir.clone().multiplyScalar(-1);
+                    const arrowOrigin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
+                    const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
+                    loadGroup.add(arrow);
+                }
+
+                // グローバルZ方向の荷重（構造解析Z = 鉛直方向）
                 if (wz !== 0) {
-                    // 部材ローカルz方向（鉛直方向）
-                    const baseDir = localZ.clone().multiplyScalar(Math.sign(wz));
+                    const baseDir = globalZ.clone().multiplyScalar(Math.sign(wz));
+                    const arrowDir = baseDir.clone().multiplyScalar(-1);
+                    const arrowOrigin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
+                    const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
+                    loadGroup.add(arrow);
+                }
+
+                // 後方互換性: 従来のwプロパティ（構造解析Z方向=鉛直と想定）
+                if (legacyW !== 0 && wz === 0) {
+                    const baseDir = globalZ.clone().multiplyScalar(Math.sign(legacyW));
                     const arrowDir = baseDir.clone().multiplyScalar(-1);
                     const arrowOrigin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
                     const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
@@ -752,16 +758,23 @@ function updateModel3DView(nodes, members, loadData = {}) {
                 }
             }
 
+            // ラベル作成
             const labelParts = [];
-            if (wy !== 0) labelParts.push(`wy=${formatLoadValue(wy)}kN/m`);
-            if (wz !== 0) labelParts.push(`wz=${formatLoadValue(wz)}kN/m`);
-            const loadText = labelParts.join(' ');
+            if (wx !== 0) labelParts.push(`Wx=${formatLoadValue(wx)}kN/m`);
+            if (wy !== 0) labelParts.push(`Wy=${formatLoadValue(wy)}kN/m`);
+            if (wz !== 0) labelParts.push(`Wz=${formatLoadValue(wz)}kN/m`);
+            if (legacyW !== 0 && wz === 0) labelParts.push(`W=${formatLoadValue(legacyW)}kN/m`);
+            
+            const prefix = isSelfWeight ? '自重 ' : '';
+            const loadText = prefix + labelParts.join(' ');
 
-            if (loadText) {
+            if (loadText.trim()) {
                 const midpoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
                 const labelOffset = new THREE.Vector3();
-                if (wy !== 0) labelOffset.add(localY.clone().multiplyScalar(Math.sign(wy) * 0.6));
-                if (wz !== 0) labelOffset.add(localZ.clone().multiplyScalar(Math.sign(wz) * 0.6));
+                if (wx !== 0) labelOffset.add(globalX.clone().multiplyScalar(Math.sign(wx) * 0.6));
+                if (wy !== 0) labelOffset.add(globalY.clone().multiplyScalar(Math.sign(wy) * 0.6));
+                if (wz !== 0) labelOffset.add(globalZ.clone().multiplyScalar(Math.sign(wz) * 0.6));
+                if (legacyW !== 0 && wz === 0) labelOffset.add(globalZ.clone().multiplyScalar(Math.sign(legacyW) * 0.6));
                 if (labelOffset.lengthSq() === 0) labelOffset.y = 0.6;
 
                 const labelPosition = midpoint.clone().add(labelOffset);
