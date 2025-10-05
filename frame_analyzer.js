@@ -3884,6 +3884,15 @@ document.addEventListener('DOMContentLoaded', () => {
             elements.errorMessage.style.display = 'none';
             clearResults(); 
             const { nodes, members, nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights } = parseInputs();
+            const projectionModeForCalc = getProjectionModeValue();
+            const is3DModeActive = window.is3DMode === true;
+            const { calcRules } = buildConcentratedLoadRules(projectionModeForCalc, is3DModeActive);
+            const adjustedNodeLoads = nodeLoads.map(load => applyCalcRulesToLoad(load, calcRules));
+            const loadCalcMultipliers = {
+                x: calcRules.px?.multiplier ?? 1,
+                y: calcRules.py?.multiplier ?? 1,
+                z: calcRules.pz?.multiplier ?? 1
+            };
             
             // 2次元フレームの自動検出（全ての節点のY座標が同じ値の場合）
             const is2DFrame = nodes.length > 0 && nodes.every(node => Math.abs(node.y - nodes[0].y) < 1e-6);
@@ -3988,7 +3997,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             // 解析用に自重荷重を部材・節点荷重へ統合（常にグローバル-Z方向）
-            const combinedNodeLoads = [...nodeLoads];
+            const combinedNodeLoads = [...adjustedNodeLoads];
 
             const EPS = 1e-9;
             const dot3 = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
@@ -4433,14 +4442,21 @@ document.addEventListener('DOMContentLoaded', () => {
             let F_global = mat.create(dof, 1);
             const fixedEndForces = {};
 
+            const axisKeyMap2D = ['x', 'y', 'rz'];
+            const axisKeyMap3D = ['x', 'y', 'z', 'rx', 'ry', 'rz'];
             const addForceWithSignFlip = (globalIndex, value) => {
                 if (!Number.isFinite(value) || Math.abs(value) < 1e-12) {
                     return;
                 }
-                const dofMod = is2DFrame ? (globalIndex % 3) : (globalIndex % 6);
-                const shouldFlip = (dofMod === 0 || dofMod === 1);
-                const adjustedValue = shouldFlip ? -value : value;
-                F_global[globalIndex][0] += adjustedValue;
+                const axisKey = is2DFrame ? axisKeyMap2D[globalIndex % 3] : axisKeyMap3D[globalIndex % 6];
+                let multiplier = 1;
+                if (axisKey === 'x' || axisKey === 'y' || axisKey === 'z') {
+                    multiplier = loadCalcMultipliers[axisKey] ?? 1;
+                }
+                if (multiplier === 0) {
+                    return;
+                }
+                F_global[globalIndex][0] += value * multiplier;
             };
             
             // 同一部材の荷重を合計して重複を防ぐ (3D対応: wy, wz別々に管理)
@@ -4584,7 +4600,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     const base = load.nodeIndex * 6; 
                     addForceWithSignFlip(base, load.px || 0); 
                     addForceWithSignFlip(base + 1, load.py || 0); 
-                    F_global[base + 2][0] += load.pz || 0; 
+                    const pzContribution = (load.pz || 0) * (loadCalcMultipliers.z ?? 1);
+                    F_global[base + 2][0] += pzContribution; 
                     F_global[base + 3][0] += load.mx || 0; 
                     F_global[base + 4][0] += load.my || 0; 
                     F_global[base + 5][0] += load.mz || 0; 
@@ -5620,6 +5637,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // window変数として登録（クロススコープアクセス用）
     window.lastDrawingContext = null;
+    window.lastConcentratedLoadArrows = window.lastConcentratedLoadArrows || [];
     const getDrawingContext = (canvas) => {
         let nodes;
         try { nodes = parseInputs().nodes; } catch (e) { nodes = []; }
@@ -5884,13 +5902,130 @@ document.addEventListener('DOMContentLoaded', () => {
     const drawConnections = (ctx, transform, nodes, members) => { ctx.fillStyle = 'white'; ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5; const offset = 6; const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy'; const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode)); const visibleNodeIndices = getVisibleNodeIndices(nodes); members.forEach(m => { if (!visibleNodeIndices.has(m.i) || !visibleNodeIndices.has(m.j)) return; const n_i = projectedNodes[m.i]; const p_i = transform(n_i.x, n_i.y); if (m.i_conn === 'pinned') { const p_i_offset = { x: p_i.x + offset * m.c, y: p_i.y - offset * m.s }; ctx.beginPath(); ctx.arc(p_i_offset.x, p_i_offset.y, 3, 0, 2 * Math.PI); ctx.fill(); ctx.stroke(); } if (m.j_conn === 'pinned') { const n_j = projectedNodes[m.j]; const p_j = transform(n_j.x, n_j.y); const p_j_offset = { x: p_j.x - offset * m.c, y: p_j.y + offset * m.s }; ctx.beginPath(); ctx.arc(p_j_offset.x, p_j_offset.y, 3, 0, 2 * Math.PI); ctx.fill(); ctx.stroke(); } }); };
     const drawBoundaryConditions = (ctx, transform, nodes) => { const size = 10; const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy'; const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode)); const visibleNodeIndices = getVisibleNodeIndices(nodes); projectedNodes.forEach((projNode, idx) => { if (!visibleNodeIndices.has(idx)) return; if (nodes[idx].support === 'free') return; const pos = transform(projNode.x, projNode.y); ctx.strokeStyle = '#008000'; ctx.fillStyle = '#008000'; ctx.lineWidth = 1.5; ctx.beginPath(); if (nodes[idx].support === 'fixed') { ctx.moveTo(pos.x - size, pos.y + size); ctx.lineTo(pos.x + size, pos.y + size); for(let i=0; i < 5; i++){ ctx.moveTo(pos.x - size + i*size/2, pos.y + size); ctx.lineTo(pos.x - size + i*size/2 - size/2, pos.y + size + size/2); } } else if (nodes[idx].support === 'pinned') { ctx.moveTo(pos.x, pos.y); ctx.lineTo(pos.x - size, pos.y + size); ctx.lineTo(pos.x + size, pos.y + size); ctx.closePath(); ctx.stroke(); ctx.moveTo(pos.x - size*1.2, pos.y + size); ctx.lineTo(pos.x + size*1.2, pos.y + size); } else if (nodes[idx].support === 'roller') { ctx.moveTo(pos.x, pos.y); ctx.lineTo(pos.x - size, pos.y + size); ctx.lineTo(pos.x + size, pos.y + size); ctx.closePath(); ctx.stroke(); ctx.moveTo(pos.x - size, pos.y + size + 3); ctx.lineTo(pos.x + size, pos.y + size + 3); } ctx.stroke(); }); };
     const drawDimensions = (ctx, transform, nodes, members, labelManager, obstacles) => { const offset = 15; ctx.strokeStyle = '#0000ff'; ctx.lineWidth = 1; const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy'; const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode)); const visibleNodeIndices = getVisibleNodeIndices(nodes); members.forEach(m => { if (!visibleNodeIndices.has(m.i) || !visibleNodeIndices.has(m.j)) return; const n1 = projectedNodes[m.i]; const n2 = projectedNodes[m.j]; const p1 = transform(n1.x, n1.y); const p2 = transform(n2.x, n2.y); const midX = (p1.x + p2.x) / 2; const midY = (p1.y + p2.y) / 2; const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x); const offsetX = offset * Math.sin(angle); const offsetY = -offset * Math.cos(angle); const labelTargetX = midX + offsetX; const labelTargetY = midY + offsetY; const labelText = `${m.length.toFixed(2)}m`; ctx.fillStyle = '#0000ff'; labelManager.draw(ctx, labelText, labelTargetX, labelTargetY, obstacles); }); };
+    const getProjectionModeValue = () => {
+        if (!elements || !elements.projectionMode) {
+            return 'xy';
+        }
+        return elements.projectionMode.value || 'xy';
+    };
+
+    const buildConcentratedLoadRules = (projectionMode, is3DModeActive) => {
+        const displayRules = {
+            px: { source: 'px', axis: 'x', show: true, directionMultiplier: 1, label: 'node-load-px' },
+            py: { source: 'py', axis: 'y', show: true, directionMultiplier: 1, label: 'node-load-py' },
+            pz: { source: 'pz', axis: 'z', show: false, directionMultiplier: 1, label: 'node-load-pz' }
+        };
+
+        const calcRules = {
+            px: { source: 'px', multiplier: 1 },
+            py: { source: 'py', multiplier: 1 },
+            pz: { source: 'pz', multiplier: 1 }
+        };
+
+        if (!is3DModeActive) {
+            switch (projectionMode) {
+                case 'xy':
+                    displayRules.py.directionMultiplier = -1;
+                    displayRules.pz.show = false;
+                    calcRules.px.multiplier = -1;
+                    calcRules.py.multiplier = -1;
+                    break;
+                case 'xz':
+                    displayRules.py.show = false;
+                    displayRules.pz.show = true;
+                    calcRules.px.multiplier = -1;
+                    calcRules.py.source = 'pz';
+                    calcRules.py.multiplier = 1;
+                    calcRules.pz.source = 'py';
+                    calcRules.pz.multiplier = 0;
+                    break;
+                case 'yz':
+                    displayRules.px.show = false;
+                    displayRules.pz.show = true;
+                    calcRules.px.multiplier = 0;
+                    break;
+                case 'iso':
+                    displayRules.pz.show = true;
+                    calcRules.px.multiplier = -1;
+                    calcRules.pz.multiplier = -1;
+                    break;
+                default:
+                    displayRules.pz.show = true;
+                    break;
+            }
+        } else {
+            if (projectionMode === 'iso') {
+                displayRules.pz.show = true;
+                calcRules.px.multiplier = -1;
+                calcRules.pz.multiplier = -1;
+            } else {
+                displayRules.pz.show = true;
+            }
+        }
+
+        return { displayRules, calcRules };
+    };
+
+    const applyCalcRulesToLoad = (load, calcRules) => {
+        const clone = { ...load };
+        const applyAxis = (axisKey) => {
+            const rule = calcRules[axisKey];
+            if (!rule) {
+                return Number(load[axisKey]) || 0;
+            }
+            if (rule.multiplier === 0) {
+                return 0;
+            }
+            const sourceKey = rule.source || axisKey;
+            return Number(load[sourceKey]) || 0;
+        };
+
+        clone.px = applyAxis('px');
+        clone.py = applyAxis('py');
+        clone.pz = applyAxis('pz');
+        return clone;
+    };
+
+    const createDisplayComponents = (load, displayRules) => {
+        const components = [];
+        const EPS = 1e-9;
+        Object.entries(displayRules).forEach(([key, rule]) => {
+            if (!rule || rule.show === false) {
+                return;
+            }
+            const sourceKey = rule.source || key;
+            const rawValue = Number(load[sourceKey]) || 0;
+            if (Math.abs(rawValue) <= EPS) {
+                return;
+            }
+            const axis = rule.axis || key.replace(/^p/, '');
+            components.push({
+                axis,
+                value: rawValue,
+                directionMultiplier: rule.directionMultiplier ?? 1,
+                labelType: rule.label || `node-load-${sourceKey}`,
+                sourceKey
+            });
+        });
+        return components;
+    };
+
+    const AXIS_VECTORS = Object.freeze({
+        x: { x: 1, y: 0, z: 0 },
+        y: { x: 0, y: 1, z: 0 },
+        z: { x: 0, y: 0, z: 1 }
+    });
+
     const drawExternalLoads = (ctx, transform, nodes, members, nodeLoads, memberLoads, memberSelfWeights, nodeSelfWeights, labelManager, obstacles) => {
         const arrowSize = 10;
         const loadScale = 3;
 
         // 投影モードを取得してノードを投影
-        const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
+    const projectionMode = elements.projectionMode ? elements.projectionMode.value : 'xy';
         const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode));
+    const is3DModeActive = window.is3DMode === true;
+    const { displayRules } = buildConcentratedLoadRules(projectionMode, is3DModeActive);
+    const concentratedArrowRecords = [];
 
         // 表示対象の節点インデックスを取得
         const visibleNodeIndices = getVisibleNodeIndices(nodes);
@@ -6194,62 +6329,106 @@ document.addEventListener('DOMContentLoaded', () => {
         // 次に集中荷重を描画
         if (showExternalLoads) {
             nodeLoads.forEach(load => {
-                if (load.px === 0 && load.py === 0 && load.mz === 0) return;
-                // 節点が表示対象でない場合はスキップ
                 if (!visibleNodeIndices.has(load.nodeIndex)) return;
-                const node = projectedNodes[load.nodeIndex];
-                const pos = transform(node.x, node.y); 
-                
-                // 外部集中荷重は青色で描画
+                const displayComponents = createDisplayComponents(load, displayRules);
+                const nodeProjected = projectedNodes[load.nodeIndex];
+                const node3D = nodes[load.nodeIndex];
+                const pos = transform(nodeProjected.x, nodeProjected.y);
+
                 const concentratedColor = '#1e90ff';
                 ctx.strokeStyle = concentratedColor;
                 ctx.fillStyle = concentratedColor;
-            
-            if(load.px !== 0){ 
-                const dir = Math.sign(load.px); 
-                const tailX = pos.x - arrowSize * loadScale * dir;
-                ctx.beginPath(); 
-                ctx.moveTo(tailX, pos.y); 
-                ctx.lineTo(pos.x, pos.y); 
-                ctx.lineTo(pos.x - arrowSize * dir, pos.y - arrowSize/2); 
-                ctx.moveTo(pos.x, pos.y); 
-                ctx.lineTo(pos.x - arrowSize * dir, pos.y + arrowSize/2); 
-                ctx.stroke(); 
-                
-                // 荷重値のテキスト表示を矢印の矢尻付近に配置
-                const textX = pos.x - (arrowSize * loadScale * 0.3) * dir;
-                const textY = pos.y;
-                ctx.fillStyle = concentratedColor;
-                labelManager.draw(ctx, `${load.px}kN`, textX, textY, loadObstacles, {
-                    type: 'node-load-px',
-                    index: load.nodeIndex,
-                    value: load.px
+
+                displayComponents.forEach(component => {
+                    const axisVector = AXIS_VECTORS[component.axis];
+                    if (!axisVector) {
+                        return;
+                    }
+
+                    const projectedDir = projectGlobalDirection(node3D, axisVector);
+                    if (!projectedDir) {
+                        return;
+                    }
+
+                    const dirNorm = normalizeVec2(projectedDir);
+                    if (!dirNorm) {
+                        return;
+                    }
+
+                    const orientationMultiplier = component.directionMultiplier ?? 1;
+                    const sign = component.value >= 0 ? 1 : -1;
+                    const direction = {
+                        x: dirNorm.x * orientationMultiplier * sign,
+                        y: dirNorm.y * orientationMultiplier * sign
+                    };
+
+                    const arrowLength = arrowSize * loadScale;
+                    const tailX = pos.x - direction.x * arrowLength;
+                    const tailY = pos.y - direction.y * arrowLength;
+
+                    ctx.beginPath();
+                    ctx.moveTo(tailX, tailY);
+                    ctx.lineTo(pos.x, pos.y);
+                    ctx.stroke();
+
+                    const headAngle = Math.atan2(pos.y - tailY, pos.x - tailX);
+                    ctx.beginPath();
+                    ctx.moveTo(pos.x, pos.y);
+                    ctx.lineTo(
+                        pos.x - arrowSize * Math.cos(headAngle - Math.PI / 6),
+                        pos.y - arrowSize * Math.sin(headAngle - Math.PI / 6)
+                    );
+                    ctx.moveTo(pos.x, pos.y);
+                    ctx.lineTo(
+                        pos.x - arrowSize * Math.cos(headAngle + Math.PI / 6),
+                        pos.y - arrowSize * Math.sin(headAngle + Math.PI / 6)
+                    );
+                    ctx.stroke();
+
+                    const textOffset = arrowLength * 0.3;
+                    const textX = pos.x - direction.x * textOffset;
+                    const textY = pos.y - direction.y * textOffset;
+                    const valueText = `${component.value}kN`;
+                    labelManager.draw(ctx, valueText, textX, textY, loadObstacles, {
+                        type: component.labelType,
+                        index: load.nodeIndex,
+                        value: component.value
+                    });
+
+                    const textMetrics = ctx.measureText(valueText);
+                    const textWidth = textMetrics.width;
+                    const textHeight = 12;
+                    const padding = 6;
+                    loadObstacles.push({
+                        x1: textX - textWidth / 2 - padding,
+                        y1: textY - textHeight - padding,
+                        x2: textX + textWidth / 2 + padding,
+                        y2: textY + padding
+                    });
+
+                    const arrowMinX = Math.min(tailX, pos.x);
+                    const arrowMaxX = Math.max(tailX, pos.x);
+                    const arrowMinY = Math.min(tailY, pos.y);
+                    const arrowMaxY = Math.max(tailY, pos.y);
+                    const arrowPadding = 5;
+                    loadObstacles.push({
+                        x1: arrowMinX - arrowPadding,
+                        y1: arrowMinY - arrowPadding,
+                        x2: arrowMaxX + arrowPadding,
+                        y2: arrowMaxY + arrowPadding
+                    });
+
+                    concentratedArrowRecords.push({
+                        nodeIndex: load.nodeIndex,
+                        axis: component.axis,
+                        sourceKey: component.sourceKey,
+                        tail: { x: tailX, y: tailY },
+                        head: { x: pos.x, y: pos.y },
+                        value: component.value
+                    });
                 });
-            } 
-            
-            if(load.py !== 0){ 
-                const dir = Math.sign(load.py); 
-                const tailY = pos.y - arrowSize * loadScale * dir;
-                ctx.beginPath(); 
-                ctx.moveTo(pos.x, tailY); 
-                ctx.lineTo(pos.x, pos.y); 
-                ctx.lineTo(pos.x - arrowSize/2, pos.y - arrowSize * dir); 
-                ctx.moveTo(pos.x, pos.y); 
-                ctx.lineTo(pos.x + arrowSize/2, pos.y - arrowSize * dir); 
-                ctx.stroke(); 
-                
-                // 荷重値のテキスト表示を矢印の矢尻付近に配置
-                const textX = pos.x;
-                const textY = pos.y - (arrowSize * loadScale * 0.3) * dir;
-                ctx.fillStyle = concentratedColor;
-                labelManager.draw(ctx, `${load.py}kN`, textX, textY, loadObstacles, {
-                    type: 'node-load-py',
-                    index: load.nodeIndex,
-                    value: load.py
-                });
-            } 
-            
-            if(load.mz !== 0){ 
+
+                if (load.mz !== 0) {
                 const dir = -Math.sign(load.mz); 
                 const r = arrowSize * 1.5; 
                 const arrowHeadSize = 5; 
@@ -6280,12 +6459,25 @@ document.addEventListener('DOMContentLoaded', () => {
                     index: load.nodeIndex,
                     value: load.mz
                 });
+
+                concentratedArrowRecords.push({
+                    nodeIndex: load.nodeIndex,
+                    axis: 'mz',
+                    arc: {
+                        x: pos.x,
+                        y: pos.y,
+                        radius: r
+                    },
+                    value: load.mz
+                });
             } 
             });
         }
+
+        window.lastConcentratedLoadArrows = concentratedArrowRecords;
         
         // 自重による集中荷重を緑色で描画
-        if (showSelfWeight) {
+    if (showSelfWeight) {
             // 1. 個別の矢印描画
             nodeSelfWeights.forEach(load => {
                 if ((load.pz === undefined || load.pz === 0) && (load.mz === 0 || load.mz === undefined)) return;
@@ -8996,7 +9188,48 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         } 
     });
 
-    const getNodeLoadAt = (canvasX, canvasY) => { if (!lastDrawingContext) return -1; try { const { nodes, nodeLoads } = parseInputs(); const arrowSize = 10, loadScale = 3, tolerance = 5; for (const load of nodeLoads) { if (load.px===0&&load.py===0&&load.mz===0) continue; const node=nodes[load.nodeIndex], pos=lastDrawingContext.transform(node.x, node.y); if (load.px!==0) { const dir=Math.sign(load.px), x1=pos.x, x2=pos.x-arrowSize*loadScale*dir; const rect={left:Math.min(x1,x2)-tolerance,right:Math.max(x1,x2)+tolerance,top:pos.y-(arrowSize/2)-tolerance,bottom:pos.y+(arrowSize/2)+tolerance}; if (canvasX>=rect.left&&canvasX<=rect.right&&canvasY>=rect.top&&canvasY<=rect.bottom) return load.nodeIndex; } if (load.py!==0) { const dir=Math.sign(load.py), y1=pos.y, y2=pos.y+arrowSize*loadScale*dir; const rect={top:Math.min(y1,y2)-tolerance,bottom:Math.max(y1,y2)+tolerance,left:pos.x-(arrowSize/2)-tolerance,right:pos.x+(arrowSize/2)+tolerance}; if (canvasX>=rect.left&&canvasX<=rect.right&&canvasY>=rect.top&&canvasY<=rect.bottom) return load.nodeIndex; } if (load.mz!==0) { const radius=arrowSize*1.5, dist=Math.sqrt((canvasX-pos.x)**2+(canvasY-pos.y)**2); if (dist>=radius-tolerance&&dist<=radius+tolerance) return load.nodeIndex; } } } catch (e) {} return -1; };
+    const getNodeLoadAt = (canvasX, canvasY) => {
+        if (!lastDrawingContext) return -1;
+
+        const arrows = Array.isArray(window.lastConcentratedLoadArrows)
+            ? window.lastConcentratedLoadArrows
+            : [];
+
+        const tolerance = 6;
+        const distanceToSegment = (px, py, ax, ay, bx, by) => {
+            const vx = bx - ax;
+            const vy = by - ay;
+            const wx = px - ax;
+            const wy = py - ay;
+            const c1 = vx * wx + vy * wy;
+            const c2 = vx * vx + vy * vy;
+            let b = c2 > 0 ? c1 / c2 : 0;
+            if (b < 0) b = 0;
+            if (b > 1) b = 1;
+            const closestX = ax + b * vx;
+            const closestY = ay + b * vy;
+            return Math.hypot(px - closestX, py - closestY);
+        };
+
+        for (const record of arrows) {
+            if (record.axis === 'mz' && record.arc) {
+                const dist = Math.hypot(canvasX - record.arc.x, canvasY - record.arc.y);
+                if (dist >= record.arc.radius - tolerance && dist <= record.arc.radius + tolerance) {
+                    return record.nodeIndex;
+                }
+                continue;
+            }
+
+            if (record.tail && record.head) {
+                const dist = distanceToSegment(canvasX, canvasY, record.tail.x, record.tail.y, record.head.x, record.head.y);
+                if (dist <= tolerance) {
+                    return record.nodeIndex;
+                }
+            }
+        }
+
+        return -1;
+    };
 
     elements.modelCanvas.addEventListener('contextmenu', (e) => {
         e.preventDefault();
