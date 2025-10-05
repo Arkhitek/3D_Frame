@@ -8922,7 +8922,22 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                         const A_m2 = parseFloat(newMemberDefaults.A)*1e-4;
                         const Zz_m3 = parseFloat(newMemberDefaults.Zz || newMemberDefaults.Z || 1230)*1e-6;
                         const Zy_m3 = parseFloat(newMemberDefaults.Zy || 410)*1e-6;
-                        const sectionName = newMemberDefaults.sectionName || '';
+                        
+                        // 断面情報から寸法付き名称を生成
+                        let sectionName = newMemberDefaults.sectionName || '';
+                        if (newMemberDefaults.sectionInfo && newMemberDefaults.sectionInfo.rawDims) {
+                            const info = newMemberDefaults.sectionInfo;
+                            const dims = info.rawDims;
+                            const parts = [info.typeLabel || ''];
+                            if (dims.H != null) parts.push(dims.H);
+                            if (dims.B != null) parts.push(dims.B);
+                            if (dims.t1 != null) parts.push(dims.t1);
+                            if (dims.t2 != null) parts.push(dims.t2);
+                            if (parts.length > 1) {
+                                sectionName = parts.join('×');
+                            }
+                        }
+                        
                         const sectionAxis = newMemberDefaults.sectionAxis || '';
                         console.log('🔍 部材追加: newMemberDefaults:', { sectionName, sectionAxis, Iz: newMemberDefaults.Iz, Iy: newMemberDefaults.Iy, J: newMemberDefaults.J, A: newMemberDefaults.A, Zz: newMemberDefaults.Zz, Zy: newMemberDefaults.Zy });
                         addRow(elements.membersTable, [`#`, ...memberRowHTML(firstMemberNode+1, clickedNodeIndex+1, newMemberDefaults.E, newMemberDefaults.F, Iz_m4, Iy_m4, J_m4, A_m2, Zz_m3, Zy_m3, newMemberDefaults.i_conn, newMemberDefaults.j_conn, sectionName, sectionAxis)]);
@@ -12291,8 +12306,19 @@ const loadPreset = (index) => {
             const sectionInfoFromPreset = presetProfile ? cloneDeep(presetProfile.sectionInfo) : parseSectionInfoFromMember(m);
             const axisInfo = buildAxisInfo(m, sectionInfoFromPreset);
 
-            // 断面名称と軸方向を取得
-            const sectionName = sectionInfoFromPreset?.label || '';
+            // 断面名称と軸方向を取得（寸法付き名称を生成）
+            let sectionName = sectionInfoFromPreset?.label || '';
+            if (sectionInfoFromPreset && sectionInfoFromPreset.rawDims) {
+                const dims = sectionInfoFromPreset.rawDims;
+                const parts = [sectionInfoFromPreset.typeLabel || ''];
+                if (dims.H != null) parts.push(dims.H);
+                if (dims.B != null) parts.push(dims.B);
+                if (dims.t1 != null) parts.push(dims.t1);
+                if (dims.t2 != null) parts.push(dims.t2);
+                if (parts.length > 1) {
+                    sectionName = parts.join('×');
+                }
+            }
             const sectionAxis = axisInfo?.label || '';
 
             const rowCells = memberRowHTML(m.i, m.j, E_N_mm2, F_N_mm2, Iz_m4, Iy_m4, J_m4, A_m2, Zz_m3, Zy_m3, m.i_conn || m.ic, m.j_conn || m.jc, sectionName, sectionAxis);
@@ -13269,7 +13295,37 @@ const loadPreset = (index) => {
             if (sectionNameCell) {
                 const nameSpan = sectionNameCell.querySelector('.section-name-cell');
                 if (nameSpan) {
-                    nameSpan.textContent = enrichedInfo.label || '-';
+                    // 断面名称を板厚まで含んだ形式で表示
+                    // 例: H形鋼（広幅） 200×200×8×12
+                    let displayName = enrichedInfo.label || '-';
+                    
+                    // デバッグ情報
+                    if (!window.sectionNameDebugLogged) {
+                        console.log('=== 断面名称表示デバッグ ===');
+                        console.log('enrichedInfo:', enrichedInfo);
+                        console.log('label:', enrichedInfo.label);
+                        console.log('typeLabel:', enrichedInfo.typeLabel);
+                        console.log('designation:', enrichedInfo.designation);
+                        console.log('rawDims:', enrichedInfo.rawDims);
+                        window.sectionNameDebugLogged = true;
+                    }
+                    
+                    if (enrichedInfo.rawDims) {
+                        const dims = enrichedInfo.rawDims;
+                        // 寸法文字列を生成（H×B×t1×t2形式）
+                        const dimParts = [];
+                        if (dims.H !== undefined) dimParts.push(dims.H);
+                        if (dims.B !== undefined) dimParts.push(dims.B);
+                        if (dims.t1 !== undefined) dimParts.push(dims.t1);
+                        if (dims.t2 !== undefined) dimParts.push(dims.t2);
+                        
+                        if (dimParts.length > 0) {
+                            // 型式名 + 寸法の形式で表示
+                            const baseName = enrichedInfo.typeLabel || enrichedInfo.label.split(' ')[0];
+                            displayName = `${baseName} ${dimParts.join('×')}`;
+                        }
+                    }
+                    nameSpan.textContent = displayName;
                 }
             }
 
@@ -13401,8 +13457,21 @@ const loadPreset = (index) => {
                 const sectionNameCell = row.cells[sectionNameCellIndex];
                 const sectionAxisCell = row.cells[sectionAxisCellIndex];
 
-                // sectionNameまたはsectionLabelを取得
-                const displaySectionName = props.sectionName || props.sectionLabel || '';
+                // 断面名称を生成（寸法付き）
+                let displaySectionName = props.sectionName || props.sectionLabel || '';
+                if (props.sectionInfo && props.sectionInfo.rawDims) {
+                    const info = props.sectionInfo;
+                    const dims = info.rawDims;
+                    const parts = [info.typeLabel || ''];
+                    if (dims.H != null) parts.push(dims.H);
+                    if (dims.B != null) parts.push(dims.B);
+                    if (dims.t1 != null) parts.push(dims.t1);
+                    if (dims.t2 != null) parts.push(dims.t2);
+                    if (parts.length > 1) {
+                        displaySectionName = parts.join('×');
+                    }
+                }
+                
                 // axisまたはsectionAxisLabelを取得
                 const displayAxisLabel = props.sectionAxisLabel || (props.sectionAxis ? props.sectionAxis.label : null) || props.axis || '';
 
@@ -13501,6 +13570,7 @@ const loadPreset = (index) => {
                         const axisLabel = props.selectedAxis || props.sectionAxisLabel || (props.sectionAxis ? props.sectionAxis.label : null) || '-';
 
                         if (sectionName) {
+                            newMemberDefaults.sectionInfo = props.sectionInfo; // 断面情報オブジェクト全体を保存
                             newMemberDefaults.sectionName = sectionName;
                             newMemberDefaults.sectionAxis = axisLabel;
 
