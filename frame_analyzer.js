@@ -44,46 +44,27 @@ const CONFIG = {
         steelShearModulus: 7.7e4,
         defaultSteelStrength: 235
     },
-    // 3D解析設定
     analysis3D: {
-        enabled: true,  // 3D解析モードを有効化
-        dofsPerNode: 6, // 各節点の自由度数（3移動+3回転）
-        defaultTorsionalConstant: 100, // デフォルトねじり定数 (cm⁴)
-        visualizationDepth: 10 // 3D可視化の奥行き (m)
+        enabled: true,
+        dofsPerNode: 6,
+        defaultTorsionalConstant: 100,
+        visualizationDepth: 10
     }
 };
 
-// 単位変換定数
 const UNIT_CONVERSION = {
-    // 断面性能の単位変換係数（cm → mm）
-    CM4_TO_MM4: 1e4,    // 断面二次モーメント（cm⁴ → mm⁴）
-    CM3_TO_MM3: 1e3,    // 断面係数（cm³ → mm³）
-    CM2_TO_MM2: 1e2,    // 断面積（cm² → mm²）
-    
-    // 材料特性の基準値（N/mm²）
+    CM4_TO_MM4: 1e4,
+    CM3_TO_MM3: 1e3,
+    CM2_TO_MM2: 1e2,
     E_STEEL: CONFIG.materials.steelElasticModulus,
     G_STEEL: CONFIG.materials.steelShearModulus,
 };
 
-// ユーティリティ関数
 const utils = {
-    /**
-     * 数値を指定した小数点以下桁数でフォーマット
-     * @param {number} num - フォーマットする数値
-     * @param {number} decimals - 小数点以下桁数
-     * @returns {string} フォーマットされた文字列
-     */
-        formatNumber: (num, decimals = 2) => {
+    formatNumber: (num, decimals = 2) => {
         if (typeof num !== 'number' || isNaN(num)) return '0';
-            return Number(num.toFixed(decimals)).toLocaleString();
+        return Number(num.toFixed(decimals)).toLocaleString();
     },
-
-    /**
-     * ユーザーフレンドリーなメッセージ表示
-     * @param {string} message - 表示するメッセージ
-     * @param {string} type - メッセージタイプ ('info', 'warning', 'error', 'success')
-     * @param {number} duration - 表示時間（ミリ秒）
-     */
     showMessage: (message, type = 'info', duration = CONFIG.ui.errorDisplayTime) => {
         const messageElement = document.createElement('div');
         messageElement.style.cssText = `
@@ -99,31 +80,21 @@ const utils = {
             word-wrap: break-word;
             box-shadow: 0 4px 12px rgba(0,0,0,0.15);
         `;
-        
         const colors = {
             info: '#007bff',
-            warning: '#ffc107', 
+            warning: '#ffc107',
             error: '#dc3545',
             success: '#28a745'
         };
-        
         messageElement.style.backgroundColor = colors[type] || colors.info;
         messageElement.textContent = message;
         document.body.appendChild(messageElement);
-        
         setTimeout(() => {
             if (messageElement.parentNode) {
                 messageElement.parentNode.removeChild(messageElement);
             }
         }, duration);
     },
-
-    /**
-     * 包括的エラーハンドリング
-     * @param {Function} operation - 実行する処理
-     * @param {object} context - エラー発生時のコンテキスト情報
-     * @param {string} userMessage - ユーザー向けエラーメッセージ
-     */
     executeWithErrorHandling: (operation, context = {}, userMessage = 'エラーが発生しました') => {
         try {
             const result = operation();
@@ -141,12 +112,6 @@ const utils = {
             throw error;
         }
     },
-
-    /**
-     * 詳細なエラーログ出力
-     * @param {Error} error - エラーオブジェクト
-     * @param {object} context - コンテキスト情報
-     */
     logError: (error, context = {}) => {
         const errorInfo = {
             message: error.message,
@@ -158,42 +123,25 @@ const utils = {
         };
         console.error('詳細エラー情報:', errorInfo);
     },
-
-    /**
-     * 入力値の検証
-     * @param {any} value - 検証する値
-     * @param {object} rules - 検証ルール
-     * @returns {object} 検証結果 { isValid: boolean, error: string }
-     */
     validateInput: (value, rules = {}) => {
         const result = { isValid: true, error: '' };
-        
         if (rules.required && (value === null || value === undefined || value === '')) {
             return { isValid: false, error: '必須項目です' };
         }
-        
         if (rules.type === 'number') {
             const numValue = parseFloat(value);
             if (isNaN(numValue)) {
                 return { isValid: false, error: '数値を入力してください' };
             }
-            
             if (rules.min !== undefined && numValue < rules.min) {
                 return { isValid: false, error: `${rules.min}以上の値を入力してください` };
             }
-            
             if (rules.max !== undefined && numValue > rules.max) {
                 return { isValid: false, error: `${rules.max}以下の値を入力してください` };
             }
         }
-        
         return result;
     },
-
-    /**
-     * メモリリークを防ぐクリーンアップユーティリティ
-     * @param {Array} cleanupCallbacks - クリーンアップコールバック関数の配列
-     */
     cleanup: (cleanupCallbacks = []) => {
         cleanupCallbacks.forEach(callback => {
             try {
@@ -207,127 +155,125 @@ const utils = {
     }
 };
 
-// 自重計算関数
 const calculateSelfWeight = {
-    /**
-     * 部材の自重を計算する
-     * @param {number} density - 密度 (kg/m³)
-     * @param {number} area - 断面積 (cm²)
-     * @param {number} length - 部材長さ (m)
-     * @returns {number} 自重による分布荷重 (kN/m)
-     */
-        getMemberSelfWeight: (density, area, length) => {
+    getMemberSelfWeight: (density, area, length) => {
         if (!density || !area || !length || density <= 0 || area <= 0 || length <= 0) {
             return 0;
         }
-        
-        // 単位変換を考慮した計算
-        // 密度: kg/m³, 断面積: cm² -> m², 重力加速度: 9.807 m/s²
-        // 結果: kN/m
-            const areaInM2 = area * 1e-4; // cm² → m²
-        const weightPerMeter = density * areaInM2 * 9.807 / 1000; // N/m → kN/m
-        
+        const areaInM2 = area * 1e-4;
+        const weightPerMeter = density * areaInM2 * 9.807 / 1000;
         return weightPerMeter;
     },
-    
-    /**
-     * 全部材の自重荷重を計算し、節点荷重として分散
-     * @param {Array} nodes - 節点配列
-     * @param {Array} members - 部材配列
-     * @param {HTMLElement} considerSelfWeightCheckbox - 自重考慮チェックボックス要素
-     * @param {HTMLElement} membersTableBody - 部材テーブルのtbody要素
-     * @returns {Object} {memberSelfWeights: 表示用部材自重配列, nodeSelfWeights: 解析用節点自重配列}
-     */
+
     calculateAllSelfWeights: (nodes, members, considerSelfWeightCheckbox, membersTableBody) => {
-        const memberSelfWeights = []; // 表示用
-        const nodeSelfWeights = [];   // 解析用節点荷重
-        
+        const memberSelfWeights = [];
+        const nodeSelfWeights = [];
+
         if (!considerSelfWeightCheckbox || !considerSelfWeightCheckbox.checked) {
+            // 自重計算がOFFの場合、すべての密度欄の表示をクリア
+            for (let index = 0; index < members.length; index++) {
+                const memberRow = membersTableBody.rows[index];
+                if (!memberRow) continue;
+                const densityCell = memberRow.querySelector('.density-cell');
+                if (!densityCell) continue;
+                const selfWeightDisplay = densityCell.querySelector('.self-weight-display');
+                if (selfWeightDisplay) {
+                    selfWeightDisplay.textContent = '';
+                }
+            }
             return { memberSelfWeights, nodeSelfWeights };
         }
-        
-        // 節点ごとの自重荷重を集計するマップ
-        const nodeWeightMap = new Map();
-        
+
         members.forEach((member, index) => {
-            // 部材長さを計算
             const node1 = nodes[member.i];
             const node2 = nodes[member.j];
-            const dz1 = node1.z !== undefined ? node1.z : 0;
-            const dz2 = node2.z !== undefined ? node2.z : 0;
+            
+            // 3D座標を考慮した部材長計算
             const dx = node2.x - node1.x;
             const dy = node2.y - node1.y;
-            const dz = dz2 - dz1;
+            const dz = (node2.z ?? 0) - (node1.z ?? 0);
             const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            
-            // 部材行から密度を取得
+
             const memberRow = membersTableBody.rows[index];
             if (!memberRow) return;
-            
+
             const densityCell = memberRow.querySelector('.density-cell');
             if (!densityCell) return;
-            
+
             const densityInput = densityCell.querySelector('input');
             const density = densityInput ? parseFloat(densityInput.value) : 0;
 
-            const memberData = members[index];
-            const areaFromMember = memberData && typeof memberData.A === 'number' ? memberData.A : 0;
-            let areaInM2 = areaFromMember;
-
-            if (areaInM2 <= 0) {
-                const areaInput = memberRow.cells[6]?.querySelector('input');
-                const areaRaw = areaInput ? parseFloat(areaInput.value) : 0;
-                areaInM2 = areaRaw * 1e-4; // cm² → m²
+            // 断面積Aのセルをtitle属性で確実に特定
+            let areaInput = null;
+            for (let i = 0; i < memberRow.cells.length; i++) {
+                const input = memberRow.cells[i].querySelector('input[title*="断面積 A"]');
+                if (input) {
+                    areaInput = input;
+                    break;
+                }
             }
-            
-            // 部材全体の自重を計算 (kN)
-            if (density > 0 && areaInM2 > 0 && length > 0) {
-                const totalWeight = density * areaInM2 * length * 9.807 / 1000; // kN
-                const weightPerMeter = totalWeight / length; // kN/m (表示用)
-                
-                // デバッグ用：計算詳細をログ出力（最初の1回のみ）
+            const area = areaInput ? parseFloat(areaInput.value) : 0;
+
+            if (density > 0 && area > 0 && length > 0) {
+                const areaInM2 = area * 1e-4;
+                // 単位重量（kN/m）: 密度 × 断面積 × 重力加速度
+                const weightPerMeter = density * areaInM2 * 9.807 / 1000;
+                // 総重量（kN）: 単位重量 × 部材長
+                const totalWeight = weightPerMeter * length;
+
                 if (!window.selfWeightCalcLogCount) window.selfWeightCalcLogCount = 0;
                 if (window.selfWeightCalcLogCount === 0) {
                     console.log(`部材${index + 1}自重計算詳細:`);
                     console.log(`  密度: ${density} kg/m³`);
-                    console.log(`  断面積: ${(areaInM2 * 1e4).toFixed(4)} cm² (${areaInM2.toFixed(6)} m²)`);
+                    console.log(`  断面積: ${area} cm²（入力値）`);
+                    console.log(`  断面積: ${areaInM2.toFixed(6)} m²（変換後）`);
                     console.log(`  部材長: ${length.toFixed(3)} m`);
+                    console.log(`  計算式: ${density} × ${areaInM2.toFixed(6)} × 9.807 / 1000`);
+                    console.log(`  単位重量: ${weightPerMeter.toFixed(6)} kN/m`);
                     console.log(`  総重量: ${totalWeight.toFixed(4)} kN`);
-                    console.log(`  単位重量: ${weightPerMeter.toFixed(4)} kN/m`);
                     window.selfWeightCalcLogCount = 1;
                 }
-                
-                // 自重は常にグローバル座標系の-Z方向（鉛直下向き）に作用
-                // 全ての部材に対して等分布荷重として処理
-                const selfWeightValue = weightPerMeter; // 正の値=下向き（システム規約）
 
+                // 密度セルに自重の算出値を表示
+                let selfWeightDisplay = densityCell.querySelector('.self-weight-display');
+                if (!selfWeightDisplay) {
+                    selfWeightDisplay = document.createElement('div');
+                    selfWeightDisplay.className = 'self-weight-display';
+                    selfWeightDisplay.style.fontSize = '10px';
+                    selfWeightDisplay.style.color = '#00aa00';
+                    selfWeightDisplay.style.marginTop = '2px';
+                    densityCell.appendChild(selfWeightDisplay);
+                }
+                selfWeightDisplay.textContent = `自重: ${weightPerMeter.toFixed(3)} kN/m (総: ${totalWeight.toFixed(2)} kN)`;
+
+                // すべての部材に対して分布荷重として自重を設定（グローバルZ軸方向）
+                // 実際の処理はcalculate関数内で行われる
+                // 注意: wは符号付きで格納（負の値=下向き）
                 memberSelfWeights.push({
                     memberIndex: index,
                     member: index + 1,
-                    w: selfWeightValue,
+                    w: -weightPerMeter,  // 負の値で格納（下向き荷重）
                     totalWeight: totalWeight,
                     isFromSelfWeight: true,
-                    loadType: 'distributed',
-                    length: length,
-                    direction: { x: 0, y: 0, z: -1 }
+                    loadType: 'distributed'
                 });
 
-                // デバッグログ（最初の5回のみ）
                 if (!window.memberTypeLogCount) window.memberTypeLogCount = 0;
                 if (window.memberTypeLogCount < 5) {
-                    console.log(`部材${index + 1}: 自重=${selfWeightValue.toFixed(4)}kN/m (鉛直下向き), 総重量=${totalWeight.toFixed(2)}kN, 長さ=${length.toFixed(2)}m`);
+                    console.log(`部材${index + 1}: 自重=${-weightPerMeter}kN/m (グローバル-Z方向), 総重量=${totalWeight.toFixed(2)}kN, 長さ=${length.toFixed(2)}m`);
                     window.memberTypeLogCount++;
+                }
+            } else {
+                // 自重が計算できない場合は表示をクリア
+                const selfWeightDisplay = densityCell.querySelector('.self-weight-display');
+                if (selfWeightDisplay) {
+                    selfWeightDisplay.textContent = '';
                 }
             }
         });
 
-        // デバッグ用ログ
-        console.log('📊 自重計算結果:');
-        console.log('  部材自重数:', memberSelfWeights.length);
-        console.log('  全て鉛直下向きの等分布荷重として処理');
-
-        // 節点自重荷重は使用しない（全て等分布荷重として処理）
-        return { memberSelfWeights, nodeSelfWeights: [] };
+        // nodeSelfWeightsは空のまま（すべて分布荷重として処理）
+        return { memberSelfWeights, nodeSelfWeights };
     }
 };
 
@@ -740,11 +686,23 @@ function detectMemberAtPosition(clientX, clientY) {
     if (memberLoadsTable && memberLoadsTable.rows) {
         Array.from(memberLoadsTable.rows).forEach((loadRow) => {
             const memberInput = loadRow.cells?.[0]?.querySelector('input');
-            const loadInput = loadRow.cells?.[1]?.querySelector('input');
             const memberId = parseInt(memberInput?.value, 10);
-            const loadValue = parseOptionalFloat(loadInput?.value);
-            if (Number.isFinite(memberId)) {
-                uniformLoadMap.set(memberId, loadValue);
+            if (!Number.isFinite(memberId)) {
+                return;
+            }
+
+            const wxInput = loadRow.cells?.[1]?.querySelector('input');
+            const wyInput = loadRow.cells?.[2]?.querySelector('input');
+            const wzInput = loadRow.cells?.[3]?.querySelector('input');
+
+            const wxValue = parseOptionalFloat(wxInput?.value) || 0;
+            const wyValue = parseOptionalFloat(wyInput?.value) || 0;
+            const wzValue = parseOptionalFloat(wzInput?.value) || 0;
+
+            if (wxValue !== 0 || wyValue !== 0 || wzValue !== 0) {
+                uniformLoadMap.set(memberId, { wx: wxValue, wy: wyValue, wz: wzValue });
+            } else {
+                uniformLoadMap.set(memberId, { wx: 0, wy: 0, wz: 0 });
             }
         });
     }
@@ -1345,11 +1303,29 @@ function showMemberTooltip(memberData, mouseX, mouseY) {
         : '';
 
     const loadChips = [];
-    const uniformLoadNumeric = asNumeric(loads.uniform);
-    if (uniformLoadNumeric !== null) {
-        loadChips.push(createChip({ label: 'w', numeric: uniformLoadNumeric, unit: 'kN/m', digits: 2 }));
-    } else if (loads.uniform !== null && loads.uniform !== undefined && String(loads.uniform).trim() !== '') {
-        loadChips.push(createChip({ label: 'w', raw: String(loads.uniform).trim(), unit: 'kN/m' }));
+    const uniformLoad = loads.uniform;
+    if (uniformLoad && typeof uniformLoad === 'object') {
+        const componentLabels = [
+            { key: 'wx', label: 'Wx' },
+            { key: 'wy', label: 'Wy' },
+            { key: 'wz', label: 'Wz' }
+        ];
+        componentLabels.forEach(({ key, label }) => {
+            const value = Number(uniformLoad[key]);
+            if (Number.isFinite(value) && Math.abs(value) > 1e-9) {
+                loadChips.push(createChip({ label, numeric: value, unit: 'kN/m', digits: 2 }));
+            }
+        });
+        if (loadChips.length === 0) {
+            loadChips.push(createChip({ label: 'W', raw: '0', unit: 'kN/m' }));
+        }
+    } else {
+        const uniformLoadNumeric = asNumeric(uniformLoad);
+        if (uniformLoadNumeric !== null) {
+            loadChips.push(createChip({ label: 'W', numeric: uniformLoadNumeric, unit: 'kN/m', digits: 2 }));
+        } else if (uniformLoad !== null && uniformLoad !== undefined && String(uniformLoad).trim() !== '') {
+            loadChips.push(createChip({ label: 'W', raw: String(uniformLoad).trim(), unit: 'kN/m' }));
+        }
     }
     if (selfWeightPerLength !== null && selfWeightPerLength !== undefined) {
         loadChips.push(createChip({ label: '自重', numeric: selfWeightPerLength, unit: 'kN/m', digits: 3 }));
@@ -2868,15 +2844,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 
                 if (existingLoadRow) {
-                    // 既存の荷重を更新（部材座標系y方向のw値）
-                    existingLoadRow.cells[1].querySelector('input').value = updates.memberLoad.w;
+                    const { wx = 0, wy = updates.memberLoad.w ?? 0, wz = 0 } = updates.memberLoad;
+                    const safeValues = {
+                        wx: Number.isFinite(wx) ? wx : 0,
+                        wy: Number.isFinite(wy) ? wy : 0,
+                        wz: Number.isFinite(wz) ? wz : 0
+                    };
+                    existingLoadRow.cells[1].querySelector('input').value = safeValues.wx;
+                    existingLoadRow.cells[2].querySelector('input').value = safeValues.wy;
+                    existingLoadRow.cells[3].querySelector('input').value = safeValues.wz;
                 } else {
                     // 新しい部材荷重を追加
-                    if (updates.memberLoad.w !== 0) {
+                    const { wx = 0, wy = updates.memberLoad.w ?? 0, wz = 0 } = updates.memberLoad;
+                    if (wx !== 0 || wy !== 0 || wz !== 0) {
                         const newLoadRow = elements.memberLoadsTable.insertRow();
                         newLoadRow.innerHTML = `
                             <td><input type="number" value="${memberIndex + 1}" min="1"></td>
-                            <td><input type="number" value="${updates.memberLoad.w}" step="0.01"></td>
+                            <td><input type="number" value="${wx}" step="0.01"></td>
+                            <td><input type="number" value="${wy}" step="0.01"></td>
+                            <td><input type="number" value="${wz}" step="0.01"></td>
                             <td><button class="delete-row-btn">×</button></td>
                         `;
                         
@@ -3328,8 +3314,9 @@ document.addEventListener('DOMContentLoaded', () => {
         Array.from(elements.memberLoadsTable.rows).forEach(row => {
             state.memberLoads.push({ 
                 member: row.cells[0]?.querySelector('input')?.value || 1, 
-                wy: row.cells[1]?.querySelector('input')?.value || 0,
-                wz: row.cells[2]?.querySelector('input')?.value || 0
+                wx: row.cells[1]?.querySelector('input')?.value || 0,
+                wy: row.cells[2]?.querySelector('input')?.value || 0,
+                wz: row.cells[3]?.querySelector('input')?.value || 0
             });
         });
         return state;
@@ -3573,6 +3560,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // 部材荷重復元
             state.memberLoads.forEach(l => addRow(elements.memberLoadsTable, [
                 `<input type="number" value="${getNumberValue(l.member ?? l.m, 1)}">`,
+                `<input type="number" value="${getNumberValue(l.wx, 0)}">`,
                 `<input type="number" value="${getNumberValue(l.wy ?? l.w, 0)}">`,
                 `<input type="number" value="${getNumberValue(l.wz, 0)}">`
             ], false));
@@ -4000,28 +3988,172 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             // 解析用に自重荷重を部材・節点荷重へ統合（常にグローバル-Z方向）
-            const combinedMemberLoads = [...memberLoads];
             const combinedNodeLoads = [...nodeLoads];
+
+            const EPS = 1e-9;
+            const dot3 = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+            const cross3 = (a, b) => ({
+                x: a.y * b.z - a.z * b.y,
+                y: a.z * b.x - a.x * b.z,
+                z: a.x * b.y - a.y * b.x
+            });
+            const magnitude3 = (v) => Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+            const normalize3 = (v) => {
+                const len = magnitude3(v);
+                if (!isFinite(len) || len <= EPS) {
+                    return { x: 0, y: 0, z: 0 };
+                }
+                return { x: v.x / len, y: v.y / len, z: v.z / len };
+            };
+            const scale3 = (v, s) => ({ x: v.x * s, y: v.y * s, z: v.z * s });
+            const subtract3 = (a, b) => ({
+                x: (a?.x ?? 0) - (b?.x ?? 0),
+                y: (a?.y ?? 0) - (b?.y ?? 0),
+                z: (a?.z ?? 0) - (b?.z ?? 0)
+            });
+
+            const ensureCombinedNodeLoad = (nodeIndex) => {
+                let target = combinedNodeLoads.find(load => load.nodeIndex === nodeIndex);
+                if (!target) {
+                    target = {
+                        nodeIndex,
+                        px: 0,
+                        py: 0,
+                        pz: 0,
+                        mx: 0,
+                        my: 0,
+                        mz: 0
+                    };
+                    combinedNodeLoads.push(target);
+                }
+                return target;
+            };
+
+            const getMemberBasis = (member) => {
+                const nodeI = nodes[member.i];
+                const nodeJ = nodes[member.j];
+                if (!nodeI || !nodeJ) {
+                    return null;
+                }
+
+                const dx = (nodeJ.x ?? 0) - (nodeI.x ?? 0);
+                const dy = (nodeJ.y ?? 0) - (nodeI.y ?? 0);
+                const dz = is2DFrame ? 0 : ((nodeJ.z ?? 0) - (nodeI.z ?? 0));
+                const axisVector = { x: dx, y: dy, z: dz };
+                const length = magnitude3(axisVector);
+                if (!(length > EPS)) {
+                    return null;
+                }
+
+                const localX = { x: axisVector.x / length, y: axisVector.y / length, z: axisVector.z / length };
+                let localY;
+                let localZ;
+
+                if (is2DFrame) {
+                    localZ = { x: 0, y: 0, z: 1 };
+                    localY = { x: -localX.y, y: localX.x, z: 0 };
+                    const localYLength = magnitude3(localY);
+                    if (!(localYLength > EPS)) {
+                        localY = { x: 0, y: 1, z: 0 };
+                    } else {
+                        localY = normalize3(localY);
+                    }
+                } else {
+                    if (Math.abs(localX.z) < 0.9) {
+                        const temp = Math.sqrt(localX.x * localX.x + localX.y * localX.y);
+                        localZ = normalize3({
+                            x: -localX.z * localX.x / temp,
+                            y: -localX.z * localX.y / temp,
+                            z: temp
+                        });
+                        localY = normalize3(cross3(localZ, localX));
+                    } else {
+                        localY = { x: 0, y: 1, z: 0 };
+                        localZ = normalize3(cross3(localX, localY));
+                        localY = normalize3(cross3(localZ, localX));
+                    }
+                }
+
+                return { localX, localY, localZ, length };
+            };
+
+            const combinedMemberLoads = [];
+
+            memberLoads.forEach(load => {
+                const memberIndex = load.memberIndex;
+                const member = members[memberIndex];
+                if (!member) {
+                    return;
+                }
+
+                const basis = getMemberBasis(member);
+                if (!basis) {
+                    return;
+                }
+
+                const wxInput = Number(load.wx);
+                const wyInput = Number(load.wy);
+                const wzInput = Number(load.wz);
+                const legacyW = Number(load.w);
+
+                const originalGlobal = {
+                    x: Number.isFinite(wxInput) ? wxInput : 0,
+                    y: Number.isFinite(wyInput) ? wyInput : 0,
+                    z: Number.isFinite(wzInput) ? wzInput : (Number.isFinite(legacyW) ? legacyW : 0)
+                };
+
+                if (Math.abs(originalGlobal.x) < EPS && Math.abs(originalGlobal.y) < EPS && Math.abs(originalGlobal.z) < EPS) {
+                    return;
+                }
+
+                const analysisGlobal = is2DFrame
+                    ? { x: originalGlobal.x, y: originalGlobal.z, z: originalGlobal.y }
+                    : { ...originalGlobal };
+
+                const localComponents = {
+                    wx: dot3(analysisGlobal, basis.localX),
+                    wy: dot3(analysisGlobal, basis.localY),
+                    wz: dot3(analysisGlobal, basis.localZ)
+                };
+
+                if (Math.abs(localComponents.wx) > EPS && basis.length > EPS) {
+                    const halfAxial = (localComponents.wx * basis.length) / 2;
+                    if (Math.abs(halfAxial) > EPS) {
+                        const axialVector = scale3(basis.localX, halfAxial);
+                        const loadI = ensureCombinedNodeLoad(member.i);
+                        const loadJ = ensureCombinedNodeLoad(member.j);
+                        loadI.px = (loadI.px || 0) + axialVector.x;
+                        loadI.py = (loadI.py || 0) + axialVector.y;
+                        loadI.pz = (loadI.pz || 0) + axialVector.z;
+                        loadJ.px = (loadJ.px || 0) + axialVector.x;
+                        loadJ.py = (loadJ.py || 0) + axialVector.y;
+                        loadJ.pz = (loadJ.pz || 0) + axialVector.z;
+                    }
+                }
+
+                const hasTransverse = Math.abs(localComponents.wy) > EPS || (!is2DFrame && Math.abs(localComponents.wz) > EPS);
+                if (!hasTransverse) {
+                    return;
+                }
+
+                combinedMemberLoads.push({
+                    memberIndex,
+                    wy: localComponents.wy,
+                    wz: is2DFrame ? 0 : localComponents.wz,
+                    w: localComponents.wy,
+                    global: {
+                        wx: analysisGlobal.x,
+                        wy: analysisGlobal.y,
+                        wz: analysisGlobal.z
+                    },
+                    isFromUserInput: true
+                });
+            });
 
             if (memberSelfWeights && memberSelfWeights.length > 0) {
                 console.log('🔧 自重荷重を解析に追加（全てグローバル座標系の−Z方向）:');
 
-                const EPS = 1e-9;
                 const downwardUnit = is2DFrame ? { x: 0, y: -1, z: 0 } : { x: 0, y: 0, z: -1 };
-
-                const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
-                const cross = (a, b) => ({
-                    x: a.y * b.z - a.z * b.y,
-                    y: a.z * b.x - a.x * b.z,
-                    z: a.x * b.y - a.y * b.x
-                });
-                const magnitude = (v) => Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-                const normalize = (v) => {
-                    const len = magnitude(v);
-                    if (len <= EPS) return { x: 0, y: 0, z: 0 };
-                    return { x: v.x / len, y: v.y / len, z: v.z / len };
-                };
-                const scale = (v, s) => ({ x: v.x * s, y: v.y * s, z: v.z * s });
 
                 const selfWeightNodeMap = new Map();
                 const ensureNodeLoad = (nodeIndex) => {
@@ -4054,41 +4186,58 @@ document.addEventListener('DOMContentLoaded', () => {
                     const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
                     if (!(length > EPS)) return;
 
-                    const localX = normalize({ x: dx, y: dy, z: dz });
+                    const weightPerMeter = selfWeightLoad.w || 0;
+                    if (Math.abs(weightPerMeter) < EPS) return;
+
+                    // 自重は常にグローバル鉛直方向（下向き）に作用
+                    // weightPerMeterは既に負の値で格納されている
+                    // 2Dフレーム: -Y方向, 3Dフレーム: -Z方向
+                    const globalLoadVector = is2DFrame ? {
+                        wx: 0,
+                        wy: weightPerMeter,  // 2D: 負の値（Y軸下向き）
+                        wz: 0
+                    } : {
+                        wx: 0,
+                        wy: 0,
+                        wz: weightPerMeter  // 3D: 負の値（Z軸下向き）
+                    };
+
+                    // 部材の局所座標系を計算（解析用）
+                    const localX = normalize3({ x: dx, y: dy, z: dz });
                     let localY;
                     let localZ;
 
                     if (is2DFrame) {
                         const globalZAxis = { x: 0, y: 0, z: 1 };
-                        localY = normalize(cross(globalZAxis, localX));
+                        localY = normalize3(cross3(globalZAxis, localX));
                         localZ = globalZAxis;
-                        if (magnitude(localY) <= EPS) {
+                        if (magnitude3(localY) <= EPS) {
                             localY = { x: 0, y: 1, z: 0 };
                         }
                     } else {
                         if (Math.abs(localX.z) < 0.9) {
                             const temp = Math.sqrt(localX.x * localX.x + localX.y * localX.y);
-                            localZ = normalize({
+                            localZ = normalize3({
                                 x: -localX.z * localX.x / temp,
                                 y: -localX.z * localX.y / temp,
                                 z: temp
                             });
-                            localY = normalize(cross(localZ, localX));
+                            localY = normalize3(cross3(localZ, localX));
                         } else {
                             localY = { x: 0, y: 1, z: 0 };
-                            localZ = normalize(cross(localX, localY));
-                            localY = normalize(cross(localZ, localX));
+                            localZ = normalize3(cross3(localX, localY));
+                            localY = normalize3(cross3(localZ, localX));
                         }
                     }
 
-                    const weightPerMeter = selfWeightLoad.w || 0;
-                    if (Math.abs(weightPerMeter) < EPS) return;
+                    // グローバル荷重ベクトルを局所座標系に変換（解析用）
+                    const loadVectorGlobal = is2DFrame ? 
+                        { x: 0, y: weightPerMeter, z: 0 } :
+                        { x: 0, y: 0, z: weightPerMeter };
+                    const wyComponent = dot3(loadVectorGlobal, localY);
+                    const wzComponent = is2DFrame ? 0 : dot3(loadVectorGlobal, localZ);
 
-                    const loadVector = scale(downwardUnit, weightPerMeter);
-                    const axialComponent = dot(loadVector, localX);
-                    const wyComponent = dot(loadVector, localY);
-                    const wzComponent = is2DFrame ? 0 : dot(loadVector, localZ);
-
+                    // 解析用に局所成分の分布荷重を追加
                     const hasTransverse = Math.abs(wyComponent) > EPS || Math.abs(wzComponent) > EPS;
                     if (hasTransverse) {
                         const distributedLoad = {
@@ -4096,34 +4245,20 @@ document.addEventListener('DOMContentLoaded', () => {
                             wy: Math.abs(wyComponent) > EPS ? wyComponent : 0,
                             wz: is2DFrame ? 0 : (Math.abs(wzComponent) > EPS ? wzComponent : 0),
                             w: weightPerMeter,
-                            isFromSelfWeight: true
+                            isFromSelfWeight: true,
+                            global: globalLoadVector  // グローバル成分を保存（描画用）
                         };
-                        console.log(`  部材${selfWeightLoad.memberIndex + 1}: wy=${distributedLoad.wy.toFixed(4)}kN/m, wz=${(distributedLoad.wz || 0).toFixed(4)}kN/m`);
+                        console.log(`  部材${selfWeightLoad.memberIndex + 1}: wy=${distributedLoad.wy.toFixed(4)}kN/m, wz=${(distributedLoad.wz || 0).toFixed(4)}kN/m (グローバル${is2DFrame ? 'Y' : 'Z'}軸下向き)`);
                         combinedMemberLoads.push(distributedLoad);
                     } else {
                         console.log(`  部材${selfWeightLoad.memberIndex + 1}: 分布荷重成分なし（軸方向のみ）`);
-                    }
-
-                    const axialMagnitude = Math.abs(axialComponent);
-                    if (axialMagnitude > EPS) {
-                        const totalAxialLoad = axialMagnitude * length;
-                        const sharedLoad = -totalAxialLoad / 2;
-                        const loadI = ensureNodeLoad(member.i);
-                        const loadJ = ensureNodeLoad(member.j);
-                        if (is2DFrame) {
-                            loadI.py += sharedLoad;
-                            loadJ.py += sharedLoad;
-                        } else {
-                            loadI.pz += sharedLoad;
-                            loadJ.pz += sharedLoad;
-                        }
-                        console.log(`    ↳ 節点${member.i + 1}/${member.j + 1}: 各${sharedLoad.toFixed(4)}kN (集中)`);
                     }
                 });
 
                 // 軸方向成分を節点荷重に加算
                 if (selfWeightNodeMap.size > 0) {
                     let totalVertical = 0;
+                    const totalVector = { x: 0, y: 0, z: 0 };
                     selfWeightNodeMap.forEach(load => {
                         const existing = combinedNodeLoads.find(item => item.nodeIndex === load.nodeIndex);
                         if (existing) {
@@ -4137,11 +4272,19 @@ document.addEventListener('DOMContentLoaded', () => {
                         } else {
                             combinedNodeLoads.push(load);
                         }
-                        const verticalComponent = is2DFrame ? (load.py || 0) : (load.pz || 0);
-                        totalVertical += verticalComponent;
-                        console.log(`  節点${load.nodeIndex + 1}: ${is2DFrame ? 'Py' : 'Pz'}=${verticalComponent.toFixed(4)}kN (自重軸成分)`);
+                        if (is2DFrame) {
+                            totalVertical += load.py || 0;
+                        } else {
+                            totalVertical += load.pz || 0;
+                        }
+
+                        totalVector.x += load.px || 0;
+                        totalVector.y += load.py || 0;
+                        totalVector.z += load.pz || 0;
+
+                        console.log(`  節点${load.nodeIndex + 1}: (Px, Py, Pz)=(${(load.px||0).toFixed(4)}, ${(load.py||0).toFixed(4)}, ${(load.pz||0).toFixed(4)})kN (自重軸成分)`);
                     });
-                    console.log(`  ▶ 節点自重合計: ${is2DFrame ? 'Py' : 'Pz'}=${totalVertical.toFixed(4)}kN`);
+                    console.log(`  ▶ 節点自重合計: ${is2DFrame ? 'Py' : 'Pz'}=${totalVertical.toFixed(4)}kN, ベクトル合計=(${totalVector.x.toFixed(4)}, ${totalVector.y.toFixed(4)}, ${totalVector.z.toFixed(4)})kN`);
                 }
             }
 
@@ -4295,18 +4438,37 @@ document.addEventListener('DOMContentLoaded', () => {
             combinedMemberLoads.forEach(load => {
                 const memberIndex = load.memberIndex;
                 if (memberLoadMap.has(memberIndex)) {
-                    // 既存荷重に加算
                     const existing = memberLoadMap.get(memberIndex);
                     existing.wy = (existing.wy || 0) + (load.wy || 0);
                     existing.wz = (existing.wz || 0) + (load.wz || 0);
                     existing.w = (existing.w || 0) + (load.w || 0);
+                    if (load.global) {
+                        if (!existing.global) {
+                            existing.global = { wx: 0, wy: 0, wz: 0 };
+                        }
+                        existing.global.wx += load.global.wx || 0;
+                        existing.global.wy += load.global.wy || 0;
+                        existing.global.wz += load.global.wz || 0;
+                    }
+                    if (load.isFromSelfWeight) {
+                        existing.isFromSelfWeight = true;
+                    }
+                    if (load.isFromUserInput) {
+                        existing.isFromUserInput = true;
+                    }
                 } else {
-                    // 新規追加
-                    memberLoadMap.set(memberIndex, { 
-                        memberIndex, 
+                    memberLoadMap.set(memberIndex, {
+                        memberIndex,
                         wy: load.wy || 0,
                         wz: load.wz || 0,
-                        w: load.w || 0 
+                        w: load.w || 0,
+                        global: load.global ? {
+                            wx: load.global.wx || 0,
+                            wy: load.global.wy || 0,
+                            wz: load.global.wz || 0
+                        } : null,
+                        isFromSelfWeight: !!load.isFromSelfWeight,
+                        isFromUserInput: !!load.isFromUserInput
                     });
                 }
             });
@@ -4334,17 +4496,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (is2DFrame) {
                     // 2D: 6要素の固定端力ベクトル (3自由度×2節点)
+                    // 注意: 固定端力は荷重と逆向き（下向き荷重→上向き拘束力）
+                    // しかし、等価節点荷重として扱うため、さらに符号反転が必要
+                    // 結果として、wyと同じ符号の固定端力を使用
                     if (member.i_conn === 'rigid' && member.j_conn === 'rigid') {
-                        fel = [0, wy*L/2, wy*L**2/12, 0, wy*L/2, -wy*L**2/12];
+                        fel = [0, -wy*L/2, -wy*L**2/12, 0, -wy*L/2, wy*L**2/12];
                     }
                     else if (member.i_conn === 'pinned' && member.j_conn === 'rigid') {
-                        fel = [0, 3*wy*L/8, 0, 0, 5*wy*L/8, -wy*L**2/8];
+                        fel = [0, -3*wy*L/8, 0, 0, -5*wy*L/8, wy*L**2/8];
                     }
                     else if (member.i_conn === 'rigid' && member.j_conn === 'pinned') {
-                        fel = [0, 5*wy*L/8, wy*L**2/8, 0, 3*wy*L/8, 0];
+                        fel = [0, -5*wy*L/8, -wy*L**2/8, 0, -3*wy*L/8, 0];
                     }
                     else {
-                        fel = [0, wy*L/2, 0, 0, wy*L/2, 0];
+                        fel = [0, -wy*L/2, 0, 0, -wy*L/2, 0];
                     }
                     const T_t = mat.transpose(member.T);
                     const feg = mat.multiply(T_t, fel.map(v => [v]));
@@ -4360,17 +4525,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     // 3D: 12要素の固定端力ベクトル (6自由度×2節点)
                     // fel = [Fx_i, Fy_i, Fz_i, Mx_i, My_i, Mz_i, Fx_j, Fy_j, Fz_j, Mx_j, My_j, Mz_j]
+                    // 注意: 固定端力は荷重と逆向き（下向き荷重→上向き拘束力）
+                    // しかし、等価節点荷重として扱うため、さらに符号反転が必要
+                    // 結果として、wy/wzと逆符号の固定端力を使用
                     if (member.i_conn === 'rigid' && member.j_conn === 'rigid') {
-                        fel = [0, wy*L/2, wz*L/2, 0, -wz*L**2/12, wy*L**2/12, 0, wy*L/2, wz*L/2, 0, wz*L**2/12, -wy*L**2/12];
+                        fel = [0, -wy*L/2, -wz*L/2, 0, wz*L**2/12, -wy*L**2/12, 0, -wy*L/2, -wz*L/2, 0, -wz*L**2/12, wy*L**2/12];
                     }
                     else if (member.i_conn === 'pinned' && member.j_conn === 'rigid') {
-                        fel = [0, 3*wy*L/8, 3*wz*L/8, 0, 0, 0, 0, 5*wy*L/8, 5*wz*L/8, 0, -wz*L**2/8, -wy*L**2/8];
+                        fel = [0, -3*wy*L/8, -3*wz*L/8, 0, 0, 0, 0, -5*wy*L/8, -5*wz*L/8, 0, wz*L**2/8, wy*L**2/8];
                     }
                     else if (member.i_conn === 'rigid' && member.j_conn === 'pinned') {
-                        fel = [0, 5*wy*L/8, 5*wz*L/8, 0, -wz*L**2/8, wy*L**2/8, 0, 3*wy*L/8, 3*wz*L/8, 0, 0, 0];
+                        fel = [0, -5*wy*L/8, -5*wz*L/8, 0, wz*L**2/8, -wy*L**2/8, 0, -3*wy*L/8, -3*wz*L/8, 0, 0, 0];
                     }
                     else {
-                        fel = [0, wy*L/2, wz*L/2, 0, 0, 0, 0, wy*L/2, wz*L/2, 0, 0, 0];
+                        fel = [0, -wy*L/2, -wz*L/2, 0, 0, 0, 0, -wy*L/2, -wz*L/2, 0, 0, 0];
                     }
                     const T_t = mat.transpose(member.T3D);
                     const feg = mat.multiply(T_t, fel.map(v => [v]));
@@ -5133,8 +5301,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (m < 0 || m >= members.length) throw new Error(`部材荷重 ${i+1} の部材番号が不正です。`); 
             return { 
                 memberIndex:m, 
-                wy:parseFloat(r.cells[1].querySelector('input').value)||0,
-                wz:parseFloat(r.cells[2].querySelector('input').value)||0
+                wx:parseFloat(r.cells[1].querySelector('input').value)||0,
+                wy:parseFloat(r.cells[2].querySelector('input').value)||0,
+                wz:parseFloat(r.cells[3].querySelector('input').value)||0
             }; 
         });
         
@@ -5829,54 +5998,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // まず分布荷重を描画して、そのテキスト領域と矢印領域を障害物に追加
         memberLoads.forEach(load => {
-            // 3D用のmemberLoads形式（wy, wzを持つ）に対応
-            // 投影モードに応じて適切な荷重値を選択
-            let w = 0;
-            const hasLegacyW = typeof load.w === 'number';
-            const wyComponent = typeof load.wy === 'number' ? load.wy : (hasLegacyW ? load.w : 0);
-            const wzComponent = typeof load.wz === 'number' ? load.wz : 0;
-
-            if (projectionMode === 'xy' || projectionMode === 'yz') {
-                w = wyComponent;
-            } else if (projectionMode === 'xz') {
-                w = wzComponent;
-            } else if (projectionMode === 'iso') {
-                // 平面図と同じルールで表示するため、まず垂直成分を優先
-                if (wyComponent !== 0) {
-                    w = wyComponent;
-                } else if (wzComponent !== 0) {
-                    w = wzComponent;
-                } else if (hasLegacyW) {
-                    w = load.w;
-                }
-            } else if (hasLegacyW) {
-                w = load.w;
-            }
-
-            if (w === 0) return;
-
-            // 荷重タイプに応じた表示制御
-            if (load.isFromSelfWeight) {
-                // 自重荷重の場合
+            const isSelfWeightLoad = !!load.isFromSelfWeight;
+            if (isSelfWeightLoad) {
                 if (!showSelfWeight) return;
-            } else {
-                // 外部荷重の場合
-                if (!showExternalLoads) return;
+            } else if (!showExternalLoads) {
+                return;
             }
 
-            // 旧来のself-weightチェックボックスとの互換性を保持
             const considerSelfWeightCheckbox = document.getElementById('consider-self-weight');
             const isSelfWeightChecked = considerSelfWeightCheckbox && considerSelfWeightCheckbox.checked;
-
-            // 自重荷重でチェックボックスがOFFの場合はスキップ
-            if (load.isFromSelfWeight && !isSelfWeightChecked) {
+            if (isSelfWeightLoad && !isSelfWeightChecked) {
                 return;
             }
 
             const member = members[load.memberIndex];
+            if (!member) return;
 
-            // 部材の両端節点が表示対象でない場合はスキップ
-            if (!visibleNodeIndices.has(member.i) || !visibleNodeIndices.has(member.j)) return; 
+            if (!visibleNodeIndices.has(member.i) || !visibleNodeIndices.has(member.j)) return;
+            const nodeI = nodes[member.i];
+            const nodeJ = nodes[member.j];
+            if (!nodeI || !nodeJ) return;
+
+            const midPoint = {
+                x: ((nodeI.x ?? 0) + (nodeJ.x ?? 0)) / 2,
+                y: ((nodeI.y ?? 0) + (nodeJ.y ?? 0)) / 2,
+                z: ((nodeI.z ?? 0) + (nodeJ.z ?? 0)) / 2
+            };
+
             const p1 = transform(projectedNodes[member.i].x, projectedNodes[member.i].y);
             const p2 = transform(projectedNodes[member.j].x, projectedNodes[member.j].y);
             const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
@@ -5886,39 +6034,51 @@ document.addEventListener('DOMContentLoaded', () => {
             const defaultDirection2D = { x: Math.sin(angle), y: -Math.cos(angle) };
             const defaultDirectionNorm = normalizeVec2(defaultDirection2D) || { x: 0, y: -1 };
 
-            const components = [];
+            const EPS = 1e-9;
+            // グローバル成分を取得（load.globalが優先、なければload.wx/wy/wz）
+            const wxValue = load.global ? (Number(load.global.wx) || 0) : (Number(load.wx) || 0);
+            const wyValue = load.global ? (Number(load.global.wy) || 0) : (Number(load.wy) || 0);
+            const wzValue = load.global ? (Number(load.global.wz) || 0) : (Number(load.wz) || 0);
+            const legacyValue = Number(load.w);
+            const hasLegacyW = Number.isFinite(legacyValue) && Math.abs(legacyValue) > EPS;
 
-            if (projectionMode === 'iso') {
-                if (wyComponent !== 0) {
-                    const localYDir = getProjectedLocalDirection(load.memberIndex, 'localY');
-                    if (localYDir) {
-                        components.push({ w: wyComponent, direction: { x: -localYDir.x, y: -localYDir.y }, label: 'wy' });
-                    }
+            const components = [];
+            const axisDefinitions = [
+                { value: wxValue, label: 'Wx', vector: { x: 1, y: 0, z: 0 } },
+                { value: wyValue, label: 'Wy', vector: { x: 0, y: 1, z: 0 } },
+                { value: wzValue, label: 'Wz', vector: { x: 0, y: 0, z: 1 } }
+            ];
+
+            axisDefinitions.forEach(axis => {
+                if (!Number.isFinite(axis.value) || Math.abs(axis.value) <= EPS) {
+                    return;
                 }
-                if (wzComponent !== 0) {
-                    const localZDir = getProjectedLocalDirection(load.memberIndex, 'localZ');
-                    if (localZDir) {
-                        components.push({ w: wzComponent, direction: localZDir, label: 'wz' });
-                    }
+                const projectedDir = projectGlobalDirection(midPoint, axis.vector);
+                if (!projectedDir) {
+                    return;
                 }
-                if (components.length === 0 && hasLegacyW && load.w !== 0) {
-                    components.push({ w: load.w, direction: defaultDirection2D, label: null });
-                }
-            } else {
-                let selectedW = 0;
-                if (projectionMode === 'xy' || projectionMode === 'yz') {
-                    selectedW = wyComponent;
-                } else if (projectionMode === 'xz') {
-                    selectedW = wzComponent;
-                } else if (hasLegacyW) {
-                    selectedW = load.w;
-                }
-                if (selectedW !== 0) {
-                    components.push({ w: selectedW, direction: defaultDirection2D, label: null });
+                components.push({ w: axis.value, direction: projectedDir, label: axis.label });
+            });
+
+            if (components.length === 0 && hasLegacyW) {
+                const projectedDir = projectGlobalDirection(midPoint, { x: 0, y: 0, z: 1 });
+                if (projectedDir) {
+                    components.push({ w: legacyValue, direction: projectedDir, label: 'W' });
                 }
             }
 
-            if (components.length === 0) return;
+            if (components.length === 0) {
+                return;
+            }
+
+            // 自重と外部荷重で色を変える
+            if (isSelfWeightLoad) {
+                ctx.strokeStyle = '#00aa00';  // 自重は緑色
+                ctx.fillStyle = '#00aa00';
+            } else {
+                ctx.strokeStyle = '#ff4500';  // 外部荷重は赤色
+                ctx.fillStyle = '#ff4500';
+            }
 
             components.forEach(component => {
                 const dir = Math.sign(component.w) || 1;
@@ -5966,10 +6126,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 const textOffset = arrowLength + 10;
                 const textX = (p1.x + p2.x) / 2 + dir * textOffset * dirNorm.x;
                 const textY = (p1.y + p2.y) / 2 + dir * textOffset * dirNorm.y;
-                ctx.fillStyle = '#ff4500';
 
                 const labelPrefix = component.label ? `${component.label}=` : '';
-                const loadText = `${labelPrefix}${Math.abs(component.w).toFixed(2)}kN/m`;
+                const selfWeightPrefix = isSelfWeightLoad ? '自重 ' : '';
+                const loadText = `${selfWeightPrefix}${labelPrefix}${Math.abs(component.w).toFixed(2)}kN/m`;
                 labelManager.draw(ctx, loadText, textX, textY, [...obstacles, arrowObstacle], {
                     type: 'member-load-w',
                     index: load.memberIndex,
@@ -5991,112 +6151,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }); 
         
         // 等分布荷重描画後に色をリセット
-        ctx.strokeStyle = '#ff4500';
-        ctx.fillStyle = '#ff4500';
-        
-        // 自重荷重を独立して描画（表示制御チェックボックスがONの場合のみ）
-    const isSelfWeightChecked = document.getElementById('consider-self-weight-checkbox')?.checked;
-    if (showSelfWeight && isSelfWeightChecked && memberSelfWeights && memberSelfWeights.length > 0) {
-            ctx.strokeStyle = '#00aa00'; // 自重は緑色で表示
-            ctx.fillStyle = '#00aa00';
-
-            memberSelfWeights.forEach(load => {
-                const member = members[load.memberIndex];
-        if (!member) return;
-
-        // 投影面に表示される部材のみを対象とする
-        if (!visibleNodeIndices.has(member.i) || !visibleNodeIndices.has(member.j)) return;
-
-        const n1 = nodes[member.i], n2 = nodes[member.j];
-        if (!n1 || !n2) return;
-
-        const proj1 = project3DTo2D(n1, projectionMode);
-        const proj2 = project3DTo2D(n2, projectionMode);
-        const p1 = transform(proj1.x, proj1.y);
-        const p2 = transform(proj2.x, proj2.y);
-                const memberNumber = load.memberIndex + 1;
-                
-                // 自重は常にグローバル-Z方向（鉛直下向き）に作用
-                if (load.w === 0) return;
-
-                const midPoint = {
-                    x: (n1.x + n2.x) / 2,
-                    y: (n1.y + n2.y) / 2,
-                    z: (n1.z + n2.z) / 2
-                };
-
-                const globalDown = { x: 0, y: 0, z: -1 };
-                const projectedDown = projectGlobalDirection(midPoint, globalDown);
-                const hasProjectedDown = projectedDown && Math.hypot(projectedDown.x, projectedDown.y) > 1e-6;
-                if (!hasProjectedDown) {
-                    console.warn(`部材${memberNumber}: 自重方向が投影面で得られませんでした。描画をスキップします。`);
-                    return;
-                }
-
-                const downDir = normalizeVec2(projectedDown);
-                if (!downDir) {
-                    console.warn(`部材${memberNumber}: 自重方向ベクトルが正規化できないため描画をスキップします。`, projectedDown);
-                    return;
-                }
-                const perpDir = normalizeVec2({ x: -downDir.y, y: downDir.x });
-                if (!perpDir || !isFinite(perpDir.x) || !isFinite(perpDir.y)) {
-                    console.warn(`部材${memberNumber}: 自重矢印の直交方向が無効のため描画をスキップします。`, perpDir);
-                    return;
-                }
-
-                const screenDistance = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-                const arrowSpacing = 20;
-                const numArrows = Math.max(2, Math.floor(screenDistance / arrowSpacing));
-                const arrowLength = 18;
-                const tailOffset = arrowLength;
-                const headLength = 6;
-                const headWidth = 4;
-
-                for (let i = 0; i <= numArrows; i++) {
-                    const t = i / numArrows;
-                    const headX = p1.x + t * (p2.x - p1.x);
-                    const headY = p1.y + t * (p2.y - p1.y);
-                    const tailX = headX - downDir.x * tailOffset;
-                    const tailY = headY - downDir.y * tailOffset;
-
-                    ctx.beginPath();
-                    ctx.moveTo(tailX, tailY);
-                    ctx.lineTo(headX, headY);
-                    ctx.stroke();
-
-                    const leftX = headX - downDir.x * headLength + perpDir.x * headWidth;
-                    const leftY = headY - downDir.y * headLength + perpDir.y * headWidth;
-                    const rightX = headX - downDir.x * headLength - perpDir.x * headWidth;
-                    const rightY = headY - downDir.y * headLength - perpDir.y * headWidth;
-
-                    ctx.beginPath();
-                    ctx.moveTo(headX, headY);
-                    ctx.lineTo(leftX, leftY);
-                    ctx.moveTo(headX, headY);
-                    ctx.lineTo(rightX, rightY);
-                    ctx.stroke();
-                }
-
-                const textOffset = tailOffset + 12;
-                const textX = (p1.x + p2.x) / 2 - downDir.x * textOffset;
-                const textY = (p1.y + p2.y) / 2 - downDir.y * textOffset;
-                const loadText = `部材${memberNumber}自重：${Math.abs(load.w).toFixed(2)}kN/m (−Z)`;
-                labelManager.draw(ctx, loadText, textX, textY, loadObstacles);
-
-                const metrics = ctx.measureText(loadText);
-                const w = metrics.width;
-                const h = 12;
-                const padding = 6;
-                loadObstacles.push({
-                    x1: textX - w / 2 - padding,
-                    y1: textY - h - padding,
-                    x2: textX + w / 2 + padding,
-                    y2: textY + padding
-                });
-            });
-        }
-        
-        // 次に外部荷重による集中荷重を赤色で描画
+        // 次に集中荷重を描画
         if (showExternalLoads) {
             nodeLoads.forEach(load => {
                 if (load.px === 0 && load.py === 0 && load.mz === 0) return;
@@ -6205,17 +6260,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 ctx.fillStyle = '#32CD32';
             
             if (load.pz && load.pz !== 0) {
-                const projectedDown = projectGlobalDirection(node3D, { x: 0, y: 0, z: -1 });
-                const hasProjectedDown = projectedDown && Math.hypot(projectedDown.x, projectedDown.y) > 1e-6;
+                const directionSign = load.pz > 0 ? 1 : -1;
+                const projectedDir = projectGlobalDirection(node3D, { x: 0, y: 0, z: directionSign });
+                const hasProjectedDir = projectedDir && Math.hypot(projectedDir.x, projectedDir.y) > 1e-6;
 
-                if (hasProjectedDown) {
-                    const downDir = projectedDown;
-                    const perpDir = normalizeVec2({ x: -downDir.y, y: downDir.x }) || { x: 1, y: 0 };
+                if (hasProjectedDir) {
+                    const direction2D = normalizeVec2(projectedDir);
+                    if (!direction2D) {
+                        console.warn(`節点${load.nodeIndex + 1}: 自重方向が正規化できず描画をスキップします。`, projectedDir);
+                        return;
+                    }
+                    const perpDir = normalizeVec2({ x: -direction2D.y, y: direction2D.x }) || { x: 1, y: 0 };
                     const arrowLen = arrowSize * loadScale;
                     const headX = pos.x;
                     const headY = pos.y;
-                    const tailX = headX - downDir.x * arrowLen;
-                    const tailY = headY - downDir.y * arrowLen;
+                    const tailX = headX - direction2D.x * arrowLen;
+                    const tailY = headY - direction2D.y * arrowLen;
 
                     ctx.beginPath();
                     ctx.moveTo(tailX, tailY);
@@ -6224,10 +6284,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     const headLength = arrowSize * 0.9;
                     const headWidth = arrowSize * 0.6;
-                    const leftX = headX - downDir.x * headLength + perpDir.x * headWidth;
-                    const leftY = headY - downDir.y * headLength + perpDir.y * headWidth;
-                    const rightX = headX - downDir.x * headLength - perpDir.x * headWidth;
-                    const rightY = headY - downDir.y * headLength - perpDir.y * headWidth;
+                    const leftX = headX - direction2D.x * headLength + perpDir.x * headWidth;
+                    const leftY = headY - direction2D.y * headLength + perpDir.y * headWidth;
+                    const rightX = headX - direction2D.x * headLength - perpDir.x * headWidth;
+                    const rightY = headY - direction2D.y * headLength - perpDir.y * headWidth;
 
                     ctx.beginPath();
                     ctx.moveTo(headX, headY);
@@ -6321,9 +6381,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const maxMz = Math.abs(totalLoad.mz);
             
             if (totalForce >= maxMz && totalLoad.pz !== 0) {
-                const downDir = projectGlobalDirection(nodes[nodeIndex], { x: 0, y: 0, z: -1 }) || { x: 0, y: 1 };
-                textX = pos.x - downDir.x * (arrowSize * loadScale * 1.1);
-                textY = pos.y - downDir.y * (arrowSize * loadScale * 1.1);
+                const forceDirection = totalLoad.pz > 0 ? 1 : -1;
+                const projected = projectGlobalDirection(nodes[nodeIndex], { x: 0, y: 0, z: forceDirection }) || { x: 0, y: forceDirection > 0 ? -1 : 1 };
+                const dir2D = normalizeVec2(projected) || { x: 0, y: forceDirection > 0 ? -1 : 1 };
+                textX = pos.x - dir2D.x * (arrowSize * loadScale * 1.1);
+                textY = pos.y - dir2D.y * (arrowSize * loadScale * 1.1);
             } else if (totalLoad.mz !== 0) {
                 // モーメント荷重がある場合
                 const r = arrowSize * 1.5;
@@ -6340,13 +6402,15 @@ document.addEventListener('DOMContentLoaded', () => {
             let labelText;
             if (hasMoment && totalForce > 0.001) {
                 // 力とモーメントの両方がある場合
-                labelText = `節点${nodeNumber}自重：Pz=${totalLoad.pz.toFixed(2)}kN, Mz=${Math.abs(totalLoad.mz).toFixed(2)}kN·m`;
+                const directionLabel = totalLoad.pz > 0 ? '+Z (上向き)' : '-Z (下向き)';
+                labelText = `節点${nodeNumber}自重：Pz=${totalLoad.pz.toFixed(2)}kN ${directionLabel}, Mz=${Math.abs(totalLoad.mz).toFixed(2)}kN·m`;
             } else if (hasMoment) {
                 // モーメントのみの場合
                 labelText = `節点${nodeNumber}自重：Mz=${Math.abs(totalLoad.mz).toFixed(2)}kN·m`;
             } else {
                 // 力のみの場合
-                labelText = `節点${nodeNumber}自重：Pz=${totalLoad.pz.toFixed(2)}kN`;
+                const directionLabel = totalLoad.pz > 0 ? '+Z (上向き)' : '-Z (下向き)';
+                labelText = `節点${nodeNumber}自重：Pz=${totalLoad.pz.toFixed(2)}kN ${directionLabel}`;
             }
             
             console.log(`  節点${nodeNumber}: "${labelText}" を位置 (${textX.toFixed(1)}, ${textY.toFixed(1)}) に表示`);
@@ -7787,52 +7851,41 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             // 部材上の候補位置を生成
             const candidates = [];
             const numCandidates = 7;
-            
-                for (let i = 0; i <= numArrows; i++) {
-                    const t = i / numArrows;
-                    const headX = p1.x + t * (p2.x - p1.x);
-                    const headY = p1.y + t * (p2.y - p1.y);
 
-                    if (downDir) {
-                        const tailX = headX - downDir.x * tailOffset;
-                        const tailY = headY - downDir.y * tailOffset;
+            for (let i = 0; i < numCandidates; i++) {
+                const t = i / (numCandidates - 1);
+                const x = start_pos.x + (end_pos.x - start_pos.x) * t;
+                const y = start_pos.y + (end_pos.y - start_pos.y) * t;
 
-                        ctx.beginPath();
-                        ctx.moveTo(tailX, tailY);
-                        ctx.lineTo(headX, headY);
-                        ctx.stroke();
+                candidates.push({ x, y, t });
+            }
 
-                        const headLength = arrowSize * 0.9;
-                        const headWidth = arrowSize * 0.6;
-                        const leftX = headX - downDir.x * headLength + perpDir.x * headWidth;
-                        const leftY = headY - downDir.y * headLength + perpDir.y * headWidth;
-                        const rightX = headX - downDir.x * headLength - perpDir.x * headWidth;
-                        const rightY = headY - downDir.y * headLength - perpDir.y * headWidth;
+            // 最適な位置を選択
+            let bestPosition = candidates[Math.floor(numCandidates / 2)];
+            let minOverlap = Infinity;
 
-                        ctx.beginPath();
-                        ctx.moveTo(headX, headY);
-                        ctx.lineTo(leftX, leftY);
-                        ctx.moveTo(headX, headY);
-                        ctx.lineTo(rightX, rightY);
-                        ctx.stroke();
-                    } else {
-                        const radius = arrowSize * 0.6;
-                        ctx.beginPath();
-                        ctx.arc(headX, headY, radius, 0, Math.PI * 2);
-                        ctx.stroke();
-                        ctx.beginPath();
-                        ctx.arc(headX, headY, radius * 0.4, 0, Math.PI * 2);
-                        ctx.fill();
-                    }
+            for (const candidate of candidates) {
+                const candidateBox = {
+                    x: candidate.x - boxWidth / 2,
+                    y: candidate.y - boxHeight / 2,
+                    width: boxWidth,
+                    height: boxHeight
+                };
+
+                let overlapCount = 0;
+                let totalOverlapArea = 0;
+
+                for (const existing of ratioLabelPositions) {
+                    if (boxesOverlap(candidateBox, existing)) {
                         overlapCount++;
                         totalOverlapArea += calculateOverlapArea(candidateBox, existing);
-                const textOffset = tailOffset + 12;
-                const textX = downDir ? (p1.x + p2.x) / 2 - downDir.x * textOffset : (p1.x + p2.x) / 2;
-                const textY = downDir ? (p1.y + p2.y) / 2 - downDir.y * textOffset : (p1.y + p2.y) / 2 - (arrowSize * 2.0);
-                const loadText = `部材${memberNumber}自重：${Math.abs(load.w).toFixed(2)}kN/m (−Z)`;
+                    }
+                }
+
+                // 中心寄りを優遇
                 const centerBias = Math.abs(candidate.t - 0.5) * 200;
                 const overlapScore = overlapCount * 1000 + totalOverlapArea + centerBias;
-                
+
                 if (overlapScore < minOverlap) {
                     minOverlap = overlapScore;
                     bestPosition = candidate;
@@ -9690,7 +9743,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             if (memberLoadRow) {
                 memberLoadRow.cells[1].querySelector('input').value = wValue;
             } else {
-                addRow(elements.memberLoadsTable, [`<input type="number" value="${selectedMemberIndex + 1}">`, `<input type="number" value="${wValue}">`]);
+                addRow(elements.memberLoadsTable, [`<input type="number" value="${selectedMemberIndex + 1}">`, '<input type="number" value="0">', `<input type="number" value="${wValue}">`, '<input type="number" value="0">']);
             }
         } else if (memberLoadRow) {
             memberLoadRow.querySelector('.delete-row-btn').click();
@@ -12301,6 +12354,7 @@ const loadPreset = (index) => {
         ], false));
         p.ml.forEach(l => addRow(elements.memberLoadsTable, [
             `<input type="number" value="${l.m || l.member}">`, 
+            `<input type="number" value="${l.wx||0}">`, 
             `<input type="number" value="${l.wy||l.w||0}">`, 
             `<input type="number" value="${l.wz||0}">`
         ], false));
@@ -12390,7 +12444,7 @@ const loadPreset = (index) => {
         alert('接続可能なすべての節点ペアは既に接続されています。');
     };
     elements.addNodeLoadBtn.onclick = () => { addRow(elements.nodeLoadsTable, ['<input type="number" value="1">', '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">']); };
-    elements.addMemberLoadBtn.onclick = () => { addRow(elements.memberLoadsTable, ['<input type="number" value="1">', '<input type="number" value="0">', '<input type="number" value="0">']); };
+    elements.addMemberLoadBtn.onclick = () => { addRow(elements.memberLoadsTable, ['<input type="number" value="1">', '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">']); };
     
     const saveInputData = () => {
         try {
@@ -14290,10 +14344,11 @@ const loadPreset = (index) => {
             case 'member-load-w': {
                 let loadRow = Array.from(elements.memberLoadsTable.rows).find(r => parseInt(r.cells[0].querySelector('input').value) - 1 === index);
                 if (!loadRow) {
-                    addRow(elements.memberLoadsTable, [`<input type="number" value="${index + 1}">`, '<input type="number" value="0">']);
+                    addRow(elements.memberLoadsTable, [`<input type="number" value="${index + 1}">`, '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">']);
                     loadRow = elements.memberLoadsTable.rows[elements.memberLoadsTable.rows.length - 1];
                 }
-                loadRow.cells[1].querySelector('input').value = newValue;
+                const targetCellIndex = labelInfo.component === 'wx' ? 1 : labelInfo.component === 'wz' ? 3 : 2;
+                loadRow.cells[targetCellIndex].querySelector('input').value = newValue;
                 break;
             }
         }
