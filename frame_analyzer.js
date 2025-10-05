@@ -5925,21 +5925,22 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!is3DModeActive) {
             switch (projectionMode) {
                 case 'xy':
-                    displayRules.py.directionMultiplier = -1;
+                    displayRules.py.directionMultiplier = 1;
                     displayRules.pz.show = false;
-                    calcRules.px.multiplier = -1;
+                    calcRules.px.multiplier = 1;
                     break;
                 case 'xz':
                     displayRules.py.show = false;
                     displayRules.pz.directionMultiplier = -1;
-                    calcRules.px.multiplier = -1;
+                    calcRules.px.multiplier = 1;
                     break;
                 case 'yz':
+                    displayRules.px.show = false;
                     displayRules.pz.directionMultiplier = -1;
                     break;
                 case 'iso':
                     displayRules.pz.directionMultiplier = -1;
-                    calcRules.px.multiplier = -1;
+                    calcRules.px.multiplier = 1;
                     break;
                 default:
                     break;

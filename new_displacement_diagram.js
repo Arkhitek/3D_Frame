@@ -218,6 +218,26 @@ const project3DTo2D = (node, projectionMode) => {
     }
 };
 
+const getDisplacementOrientation = () => ({ x: 1, y: 1, z: 1 });
+
+const applyOrientationToPoint = (originalPoint, displacedPoint, orientation) => {
+    if (!originalPoint || !displacedPoint || !orientation) {
+        return displacedPoint;
+    }
+
+    const adjusted = { ...displacedPoint };
+    if (typeof originalPoint.x === 'number' && typeof displacedPoint.x === 'number') {
+        adjusted.x = originalPoint.x + (displacedPoint.x - originalPoint.x) * (orientation.x ?? 1);
+    }
+    if (typeof originalPoint.y === 'number' && typeof displacedPoint.y === 'number') {
+        adjusted.y = originalPoint.y + (displacedPoint.y - originalPoint.y) * (orientation.y ?? 1);
+    }
+    if (typeof originalPoint.z === 'number' && typeof displacedPoint.z === 'number') {
+        adjusted.z = originalPoint.z + (displacedPoint.z - originalPoint.z) * (orientation.z ?? 1);
+    }
+    return adjusted;
+};
+
 // 各投影面の全ての座標値を取得する関数
 const getAllFrameCoordinates = (nodes, projectionMode) => {
     const uniqueCoords = new Set();
@@ -466,8 +486,9 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
         const minAllowedY = margin;
         const maxAllowedY = frameHeight - margin;
 
-        const numDivisions = 20;
-        let frameLimit = Infinity;
+    const numDivisions = 20;
+    let frameLimit = Infinity;
+    const orientation = getDisplacementOrientation(geometry.frame.mode);
 
         for (const memberIdx of geometry.visibleMemberIndices) {
             const member = members[memberIdx];
@@ -476,7 +497,8 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
             for (let k = 0; k <= numDivisions; k++) {
                 const xi = k / numDivisions;
                 const originalPoint = calculateMemberDeformation(member, nodes, D_global, memberForce, xi, 0);
-                const deformedUnit = calculateMemberDeformation(member, nodes, D_global, memberForce, xi, 1);
+        const deformedUnitRaw = calculateMemberDeformation(member, nodes, D_global, memberForce, xi, 1);
+        const deformedUnit = applyOrientationToPoint(originalPoint, deformedUnitRaw, orientation);
                 if (!originalPoint || !deformedUnit) continue;
 
                 const originalProjected = project3DTo2D(originalPoint, geometry.frame.mode);
@@ -567,6 +589,7 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
             x: x + frameWidth / 2 + (px - geometry.centerX) * geometry.scale,
             y: y + frameHeight / 2 - (py - geometry.centerY) * geometry.scale
         });
+        const orientation = getDisplacementOrientation(frame.mode);
 
         // 元の構造を描画（グレー）
         ctx.strokeStyle = '#ccc';
@@ -594,7 +617,15 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
             const numDivisions = 20;
             for (let k = 0; k <= numDivisions; k++) {
                 const xi = k / numDivisions;
-                const deformed = calculateMemberDeformation(
+                const originalPoint = calculateMemberDeformation(
+                    member,
+                    nodes,
+                    D_global,
+                    memberForce,
+                    xi,
+                    0
+                );
+                const deformedRaw = calculateMemberDeformation(
                     member,
                     nodes,
                     D_global,
@@ -602,6 +633,7 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
                     xi,
                     dispScale
                 );
+                const deformed = applyOrientationToPoint(originalPoint, deformedRaw, orientation);
 
                 if (deformed) {
                     const projected = project3DTo2D(deformed, frame.mode);
