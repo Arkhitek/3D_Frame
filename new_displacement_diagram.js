@@ -342,6 +342,41 @@ const drawCircleNumberLabel = (ctx, text, baseX, baseY, obstacles, options = {})
     ctx.restore();
 };
 
+const drawTextWithPlacement = (ctx, text, baseX, baseY, obstacles, options = {}) => {
+    const offsets = options.offsets || LABEL_CANDIDATE_OFFSETS;
+    const metrics = measureTextDimensions(ctx, text);
+    const padding = options.padding ?? 10;
+    const size = Math.max(metrics.width, metrics.height) + padding;
+    const placement = findLabelPlacement(baseX, baseY, size, obstacles, offsets);
+
+    const prevStroke = ctx.strokeStyle;
+    const prevFill = ctx.fillStyle;
+
+    if (options.strokeStyle) ctx.strokeStyle = options.strokeStyle;
+    if (options.fillStyle) ctx.fillStyle = options.fillStyle;
+
+    const doStroke = options.strokeStyle && options.stroke !== false;
+    const doFill = options.fill !== false;
+
+    if (doStroke) {
+        ctx.strokeText(text, placement.cx, placement.cy);
+    }
+    if (doFill) {
+        ctx.fillText(text, placement.cx, placement.cy);
+    }
+
+    ctx.strokeStyle = prevStroke;
+    ctx.fillStyle = prevFill;
+
+    registerTextObstacle(obstacles, ctx, text, placement.cx, placement.cy, {
+        padding: options.textPadding ?? 4,
+        align: options.align,
+        baseline: options.baseline
+    });
+
+    return placement;
+};
+
 const registerTextObstacle = (obstacles, ctx, text, x, y, options = {}) => {
     const { width, ascent, descent, height } = measureTextDimensions(ctx, text);
     const padding = options.padding ?? 4;
@@ -1110,9 +1145,11 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
             registerCircleObstacle(labelObstacles, pos.x, pos.y, 4);
         });
 
-        // 実際の描画範囲を事前計算して、枠をはみ出さないようにスケールを調整
-        let maxOffsetFromFrame = 0;
+        // 枠外にはみ出さないよう、許容スケール上限を算出
+        const EPS = 1e-9;
+        let scaleLimit = Infinity;
         visibleMembers.forEach(m => {
+            if (scaleLimit <= EPS) return;
             const memberIndex = members.findIndex(mem => mem.i === m.i && mem.j === m.j);
             if (memberIndex === -1 || !memberForces[memberIndex]) return;
 
@@ -1122,54 +1159,60 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
             const pi = project3DTo2D(ni, frame.mode);
             const pj = project3DTo2D(nj, frame.mode);
 
-            // 部材の長さを計算
             const L = Math.sqrt(
                 Math.pow(nj.x - ni.x, 2) +
                 Math.pow((nj.y || 0) - (ni.y || 0), 2) +
                 Math.pow((nj.z || 0) - (ni.z || 0), 2)
             );
+            if (!isFinite(L) || L < EPS) return;
 
-            const w = m.w || 0;
             let axis = 'y';
             if (frame.mode === 'xy') axis = 'z';
             else if (frame.mode === 'xz') axis = 'y';
             else if (frame.mode === 'yz') axis = 'x';
 
-            // 部材上の各点での応力値を計算
-            for (let k = 0; k <= 20; k++) {
-                const xi = k / 20;
+            const distributedLoad = forces.w || 0;
+            const numDivisions = 20;
+
+            for (let k = 0; k <= numDivisions; k++) {
+                const xi = k / numDivisions;
                 let stressValue = 0;
 
                 if (stressType === 'moment') {
-                    stressValue = calculateMemberMoment(forces, L, xi, axis, w);
+                    stressValue = calculateMemberMoment(forces, L, xi, axis, distributedLoad);
                 } else if (stressType === 'axial') {
                     stressValue = forces.N_i || 0;
                 } else if (stressType === 'shear') {
-                    stressValue = calculateMemberShear(forces, L, xi, axis, w);
+                    stressValue = calculateMemberShear(forces, L, xi, axis, distributedLoad);
                 }
 
-                const offset = Math.abs(stressValue * stressScale);
+                const absStress = Math.abs(stressValue);
+                if (absStress < EPS) continue;
+
                 const pos_x = pi.x + (pj.x - pi.x) * xi;
                 const pos_y = pi.y + (pj.y - pi.y) * xi;
                 const p = transform(pos_x, pos_y);
 
-                // 枠からのはみ出しをチェック
                 const distToLeft = p.x - x;
                 const distToRight = (x + frameWidth) - p.x;
                 const distToTop = p.y - y;
                 const distToBottom = (y + frameHeight) - p.y;
-
                 const minDist = Math.min(distToLeft, distToRight, distToTop, distToBottom);
-                if (offset > minDist) {
-                    maxOffsetFromFrame = Math.max(maxOffsetFromFrame, offset - minDist);
+
+                if (minDist <= EPS) {
+                    scaleLimit = 0;
+                    return;
+                }
+
+                const candidateScale = minDist / absStress;
+                if (candidateScale < scaleLimit) {
+                    scaleLimit = candidateScale;
                 }
             }
         });
 
-        // はみ出しがある場合はスケールを縮小
-        if (maxOffsetFromFrame > 0) {
-            const reductionFactor = maxStressPixels / (maxStressPixels + maxOffsetFromFrame);
-            stressScale *= reductionFactor * 0.95; // 安全のため5%余裕を持たせる
+        if (scaleLimit < Infinity) {
+            stressScale = Math.min(stressScale, scaleLimit * 0.95);
         }
 
         // 元の構造を描画（グレー）
@@ -1322,29 +1365,25 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
             ctx.lineWidth = 5;
             
             if (Math.abs(p1.value) > 0.01) {
-                // 白い縁取り
-                ctx.strokeStyle = 'white';
-                ctx.strokeText(p1.value.toFixed(2), p1.x + perpX * p1.offset, p1.y - perpY * p1.offset - 8);
-                // 黒いテキスト
-                ctx.fillStyle = '#000';
-                const startValueX = p1.x + perpX * p1.offset;
-                const startValueY = p1.y - perpY * p1.offset - 8;
                 const startValueText = p1.value.toFixed(2);
-                ctx.fillText(startValueText, startValueX, startValueY);
-                registerTextObstacle(labelObstacles, ctx, startValueText, startValueX, startValueY);
+                const baseX = p1.x + perpX * p1.offset;
+                const baseY = p1.y - perpY * p1.offset - 8;
+                drawTextWithPlacement(ctx, startValueText, baseX, baseY, labelObstacles, {
+                    strokeStyle: 'white',
+                    fillStyle: '#000',
+                    padding: 14
+                });
             }
             
             if (Math.abs(pN.value) > 0.01) {
-                // 白い縁取り
-                ctx.strokeStyle = 'white';
-                ctx.strokeText(pN.value.toFixed(2), pN.x + perpX * pN.offset, pN.y - perpY * pN.offset - 8);
-                // 黒いテキスト
-                ctx.fillStyle = '#000';
-                const endValueX = pN.x + perpX * pN.offset;
-                const endValueY = pN.y - perpY * pN.offset - 8;
                 const endValueText = pN.value.toFixed(2);
-                ctx.fillText(endValueText, endValueX, endValueY);
-                registerTextObstacle(labelObstacles, ctx, endValueText, endValueX, endValueY);
+                const baseX = pN.x + perpX * pN.offset;
+                const baseY = pN.y - perpY * pN.offset - 8;
+                drawTextWithPlacement(ctx, endValueText, baseX, baseY, labelObstacles, {
+                    strokeStyle: 'white',
+                    fillStyle: '#000',
+                    padding: 14
+                });
             }
             
             // 最大応力値の位置にマーカーと値を表示（端点以外の場合のみ）
@@ -1367,10 +1406,12 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
                 ctx.lineWidth = 4;
                 ctx.strokeStyle = 'white';
                 const maxText = `Max: ${pMax.value.toFixed(2)}`;
-                ctx.strokeText(maxText, maxX, maxY - 12);
-                ctx.fillStyle = pMax.value >= 0 ? '#cc0000' : '#0000cc';
-                ctx.fillText(maxText, maxX, maxY - 12);
-                registerTextObstacle(labelObstacles, ctx, maxText, maxX, maxY - 12);
+                const fillColor = pMax.value >= 0 ? '#cc0000' : '#0000cc';
+                drawTextWithPlacement(ctx, maxText, maxX, maxY - 12, labelObstacles, {
+                    strokeStyle: 'white',
+                    fillStyle: fillColor,
+                    padding: 16
+                });
             }
         });
 
