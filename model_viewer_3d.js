@@ -720,41 +720,35 @@ function updateModel3DView(nodes, members, loadData = {}) {
             for (let i = 0; i <= numArrows; i++) {
                 const t = i / numArrows;
                 const position = new THREE.Vector3().lerpVectors(p1, p2, t);
+                const drawDistributedArrow = (value, axisKey, baseVector) => {
+                    if (!value) return;
+                    const sign = Math.sign(value) || 1;
+                    const baseDir = baseVector.clone().multiplyScalar(sign);
+                    const shouldFlipDirection = axisKey === 'wx' || axisKey === 'wy';
+                    let arrowOrigin;
+                    let arrowDir;
+
+                    if (shouldFlipDirection) {
+                        arrowOrigin = position.clone().sub(baseDir.clone().multiplyScalar(arrowLength));
+                        arrowDir = baseDir.clone();
+                    } else {
+                        arrowOrigin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
+                        arrowDir = baseDir.clone().multiplyScalar(-1);
+                    }
+
+                    const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
+                    loadGroup.add(arrow);
+                };
 
                 // グローバルX方向の荷重（構造解析X）
-                if (wx !== 0) {
-                    const baseDir = globalX.clone().multiplyScalar(Math.sign(wx));
-                    const arrowDir = baseDir.clone().multiplyScalar(-1);
-                    const arrowOrigin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
-                    const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
-                    loadGroup.add(arrow);
-                }
-
+                drawDistributedArrow(wx, 'wx', globalX);
                 // グローバルY方向の荷重（構造解析Y）
-                if (wy !== 0) {
-                    const baseDir = globalY.clone().multiplyScalar(Math.sign(wy));
-                    const arrowDir = baseDir.clone().multiplyScalar(-1);
-                    const arrowOrigin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
-                    const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
-                    loadGroup.add(arrow);
-                }
-
+                drawDistributedArrow(wy, 'wy', globalY);
                 // グローバルZ方向の荷重（構造解析Z = 鉛直方向）
-                if (wz !== 0) {
-                    const baseDir = globalZ.clone().multiplyScalar(Math.sign(wz));
-                    const arrowDir = baseDir.clone().multiplyScalar(-1);
-                    const arrowOrigin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
-                    const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
-                    loadGroup.add(arrow);
-                }
-
+                drawDistributedArrow(wz, 'wz', globalZ);
                 // 後方互換性: 従来のwプロパティ（構造解析Z方向=鉛直と想定）
                 if (legacyW !== 0 && wz === 0) {
-                    const baseDir = globalZ.clone().multiplyScalar(Math.sign(legacyW));
-                    const arrowDir = baseDir.clone().multiplyScalar(-1);
-                    const arrowOrigin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
-                    const arrow = new THREE.ArrowHelper(arrowDir, arrowOrigin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
-                    loadGroup.add(arrow);
+                    drawDistributedArrow(legacyW, 'legacyW', globalZ);
                 }
             }
 

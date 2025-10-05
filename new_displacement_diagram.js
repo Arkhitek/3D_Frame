@@ -238,6 +238,150 @@ const applyOrientationToPoint = (originalPoint, displacedPoint, orientation) => 
     return adjusted;
 };
 
+const LABEL_CANDIDATE_OFFSETS = Object.freeze([
+    { x: 0, y: -26 },
+    { x: 26, y: 0 },
+    { x: 0, y: 26 },
+    { x: -26, y: 0 },
+    { x: 20, y: -20 },
+    { x: -20, y: -20 },
+    { x: 20, y: 20 },
+    { x: -20, y: 20 },
+    { x: 0, y: -40 },
+    { x: 32, y: -18 },
+    { x: -32, y: -18 },
+    { x: 32, y: 18 },
+    { x: -32, y: 18 }
+]);
+
+const rectanglesOverlap = (a, b) => !(a.x2 < b.x1 || a.x1 > b.x2 || a.y2 < b.y1 || a.y1 > b.y2);
+
+const createRectFromCenter = (cx, cy, width, height, padding = 2) => ({
+    x1: cx - width / 2 - padding,
+    y1: cy - height / 2 - padding,
+    x2: cx + width / 2 + padding,
+    y2: cy + height / 2 + padding
+});
+
+const measureTextDimensions = (ctx, text) => {
+    const metrics = ctx.measureText(text);
+    const width = metrics.width;
+    const ascent = metrics.actualBoundingBoxAscent ?? 10;
+    const descent = metrics.actualBoundingBoxDescent ?? 4;
+    return {
+        width,
+        ascent,
+        descent,
+        height: ascent + descent
+    };
+};
+
+const findLabelPlacement = (baseX, baseY, size, obstacles, offsets = LABEL_CANDIDATE_OFFSETS) => {
+    for (const offset of offsets) {
+        const cx = baseX + offset.x;
+        const cy = baseY + offset.y;
+        const rect = createRectFromCenter(cx, cy, size, size, 3);
+        if (!obstacles.some(obstacle => rectanglesOverlap(obstacle, rect))) {
+            return { cx, cy, rect };
+        }
+    }
+    const fallbackRect = createRectFromCenter(baseX, baseY, size, size, 3);
+    return { cx: baseX, cy: baseY, rect: fallbackRect };
+};
+
+const drawSquareNumberLabel = (ctx, text, baseX, baseY, obstacles, options = {}) => {
+    ctx.save();
+    ctx.font = options.font || 'bold 14px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const { width, height } = measureTextDimensions(ctx, text);
+    const padding = options.padding ?? 8;
+    const size = Math.max(width, height) + padding;
+    const placement = findLabelPlacement(baseX, baseY, size, obstacles, options.offsets);
+
+    ctx.fillStyle = options.background || 'rgba(255,255,255,0.92)';
+    ctx.strokeStyle = options.border || '#222';
+    ctx.lineWidth = options.lineWidth || 1.5;
+    ctx.beginPath();
+    ctx.rect(placement.cx - size / 2, placement.cy - size / 2, size, size);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = options.color || '#000';
+    ctx.fillText(text, placement.cx, placement.cy);
+
+    obstacles.push(placement.rect);
+    ctx.restore();
+};
+
+const drawCircleNumberLabel = (ctx, text, baseX, baseY, obstacles, options = {}) => {
+    ctx.save();
+    ctx.font = options.font || 'bold 14px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const { width, height } = measureTextDimensions(ctx, text);
+    const padding = options.padding ?? 8;
+    const diameter = Math.max(width, height) + padding;
+    const placement = findLabelPlacement(baseX, baseY, diameter, obstacles, options.offsets);
+
+    const radius = diameter / 2;
+    ctx.fillStyle = options.background || 'rgba(255,255,255,0.92)';
+    ctx.strokeStyle = options.border || '#222';
+    ctx.lineWidth = options.lineWidth || 1.5;
+    ctx.beginPath();
+    ctx.arc(placement.cx, placement.cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = options.color || '#000';
+    ctx.fillText(text, placement.cx, placement.cy);
+
+    obstacles.push(createRectFromCenter(placement.cx, placement.cy, diameter, diameter, 0));
+    ctx.restore();
+};
+
+const registerTextObstacle = (obstacles, ctx, text, x, y, options = {}) => {
+    const { width, ascent, descent, height } = measureTextDimensions(ctx, text);
+    const padding = options.padding ?? 4;
+    const textAlign = options.align || ctx.textAlign || 'start';
+    const textBaseline = options.baseline || ctx.textBaseline || 'alphabetic';
+
+    let x1 = x;
+    if (textAlign === 'center') {
+        x1 = x - width / 2;
+    } else if (textAlign === 'right' || textAlign === 'end') {
+        x1 = x - width;
+    }
+    const x2 = x1 + width;
+
+    let yTop = y;
+    if (textBaseline === 'middle') {
+        yTop = y - height / 2;
+    } else if (textBaseline === 'alphabetic' || textBaseline === 'ideographic') {
+        yTop = y - ascent;
+    }
+
+    const rect = {
+        x1: x1 - padding,
+        y1: yTop - padding,
+        x2: x2 + padding,
+        y2: yTop + height + padding
+    };
+
+    obstacles.push(rect);
+};
+
+const registerCircleObstacle = (obstacles, cx, cy, radius, padding = 4) => {
+    obstacles.push({
+        x1: cx - radius - padding,
+        y1: cy - radius - padding,
+        x2: cx + radius + padding,
+        y2: cy + radius + padding
+    });
+};
+
 // 各投影面の全ての座標値を取得する関数
 const getAllFrameCoordinates = (nodes, projectionMode) => {
     const uniqueCoords = new Set();
@@ -590,6 +734,9 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
             y: y + frameHeight / 2 - (py - geometry.centerY) * geometry.scale
         });
         const orientation = getDisplacementOrientation(frame.mode);
+        const labelObstacles = [];
+        const nodeScreenData = [];
+        const memberScreenData = [];
 
         // 元の構造を描画（グレー）
         ctx.strokeStyle = '#ccc';
@@ -604,6 +751,17 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
             ctx.moveTo(p1.x, p1.y);
             ctx.lineTo(p2.x, p2.y);
             ctx.stroke();
+
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const length = Math.hypot(dx, dy) || 1;
+            memberScreenData.push({
+                memberIndex: memberIdx,
+                midX: (p1.x + p2.x) / 2,
+                midY: (p1.y + p2.y) / 2,
+                tangent: { x: dx / length, y: dy / length },
+                normal: { x: -dy / length, y: dx / length }
+            });
         });
 
         // 変形後の構造を描画（赤、太線）- 曲げ変形を考慮
@@ -660,6 +818,9 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
             ctx.arc(point.x, point.y, 6, 0, 2 * Math.PI);
             ctx.fill();
 
+             registerCircleObstacle(labelObstacles, point.x, point.y, 6);
+             nodeScreenData.push({ nodeIndex: nodeIdx, x: point.x, y: point.y });
+
             if (is3D && D_global.length > nodeIdx * 6 + 2) {
                 const dx = D_global[nodeIdx * 6][0] * 1000;
                 const dy = D_global[nodeIdx * 6 + 1][0] * 1000;
@@ -668,11 +829,45 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
                 if (totalDisp > 0.1) {
                     ctx.strokeStyle = 'white';
                     ctx.lineWidth = 5;
-                    ctx.strokeText(`${totalDisp.toFixed(1)}mm`, point.x, point.y - 15);
+                    const dispText = `${totalDisp.toFixed(1)}mm`;
+                    const textX = point.x;
+                    const textY = point.y - 15;
+                    ctx.strokeText(dispText, textX, textY);
                     ctx.fillStyle = 'darkblue';
-                    ctx.fillText(`${totalDisp.toFixed(1)}mm`, point.x, point.y - 15);
+                    ctx.fillText(dispText, textX, textY);
+                    registerTextObstacle(labelObstacles, ctx, dispText, textX, textY);
                 }
             }
+        });
+
+        const nodeLabelOffsets = [
+            { x: 0, y: 28 },
+            { x: 26, y: 12 },
+            { x: -26, y: 12 },
+            { x: 0, y: -32 },
+            { x: 32, y: -16 },
+            { x: -32, y: -16 }
+        ];
+        nodeScreenData.forEach(({ nodeIndex, x: nodeX, y: nodeY }) => {
+            drawCircleNumberLabel(ctx, String(nodeIndex + 1), nodeX, nodeY, labelObstacles, {
+                offsets: nodeLabelOffsets,
+                font: 'bold 13px Arial'
+            });
+        });
+
+        memberScreenData.forEach(({ memberIndex, midX, midY, tangent, normal }) => {
+            const dynamicOffsets = [
+                { x: normal.x * 28, y: normal.y * 28 },
+                { x: -normal.x * 28, y: -normal.y * 28 },
+                { x: tangent.x * 32, y: tangent.y * 32 },
+                { x: -tangent.x * 32, y: -tangent.y * 32 },
+                { x: normal.x * 42, y: normal.y * 42 },
+                { x: -normal.x * 42, y: -normal.y * 42 }
+            ];
+            drawSquareNumberLabel(ctx, String(memberIndex + 1), midX, midY, labelObstacles, {
+                offsets: dynamicOffsets,
+                font: 'bold 13px Arial'
+            });
         });
 
         ctx.restore();
@@ -903,6 +1098,18 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
             };
         };
 
+        const labelObstacles = [];
+        const nodeScreenData = [];
+        const memberScreenData = [];
+
+        visibleNodes.forEach(idx => {
+            const node = nodes[idx];
+            const projected = project3DTo2D(node, frame.mode);
+            const pos = transform(projected.x, projected.y);
+            nodeScreenData.push({ nodeIndex: idx, x: pos.x, y: pos.y });
+            registerCircleObstacle(labelObstacles, pos.x, pos.y, 4);
+        });
+
         // 実際の描画範囲を事前計算して、枠をはみ出さないようにスケールを調整
         let maxOffsetFromFrame = 0;
         visibleMembers.forEach(m => {
@@ -969,6 +1176,8 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
         ctx.strokeStyle = '#ccc';
         ctx.lineWidth = 1;
         visibleMembers.forEach(m => {
+            const memberIndex = members.findIndex(mem => mem.i === m.i && mem.j === m.j);
+            if (memberIndex === -1) return;
             const ni = nodes[m.i];
             const nj = nodes[m.j];
             const pi = project3DTo2D(ni, frame.mode);
@@ -979,6 +1188,17 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
             ctx.moveTo(p1.x, p1.y);
             ctx.lineTo(p2.x, p2.y);
             ctx.stroke();
+
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const length = Math.hypot(dx, dy) || 1;
+            memberScreenData.push({
+                memberIndex,
+                midX: (p1.x + p2.x) / 2,
+                midY: (p1.y + p2.y) / 2,
+                tangent: { x: dx / length, y: dy / length },
+                normal: { x: -dy / length, y: dx / length }
+            });
         });
 
         // 応力図を描画（部材途中の値も考慮）
@@ -1107,7 +1327,11 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
                 ctx.strokeText(p1.value.toFixed(2), p1.x + perpX * p1.offset, p1.y - perpY * p1.offset - 8);
                 // 黒いテキスト
                 ctx.fillStyle = '#000';
-                ctx.fillText(p1.value.toFixed(2), p1.x + perpX * p1.offset, p1.y - perpY * p1.offset - 8);
+                const startValueX = p1.x + perpX * p1.offset;
+                const startValueY = p1.y - perpY * p1.offset - 8;
+                const startValueText = p1.value.toFixed(2);
+                ctx.fillText(startValueText, startValueX, startValueY);
+                registerTextObstacle(labelObstacles, ctx, startValueText, startValueX, startValueY);
             }
             
             if (Math.abs(pN.value) > 0.01) {
@@ -1116,7 +1340,11 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
                 ctx.strokeText(pN.value.toFixed(2), pN.x + perpX * pN.offset, pN.y - perpY * pN.offset - 8);
                 // 黒いテキスト
                 ctx.fillStyle = '#000';
-                ctx.fillText(pN.value.toFixed(2), pN.x + perpX * pN.offset, pN.y - perpY * pN.offset - 8);
+                const endValueX = pN.x + perpX * pN.offset;
+                const endValueY = pN.y - perpY * pN.offset - 8;
+                const endValueText = pN.value.toFixed(2);
+                ctx.fillText(endValueText, endValueX, endValueY);
+                registerTextObstacle(labelObstacles, ctx, endValueText, endValueX, endValueY);
             }
             
             // 最大応力値の位置にマーカーと値を表示（端点以外の場合のみ）
@@ -1138,10 +1366,42 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
                 ctx.font = 'bold 16px Arial';
                 ctx.lineWidth = 4;
                 ctx.strokeStyle = 'white';
-                ctx.strokeText(`Max: ${pMax.value.toFixed(2)}`, maxX, maxY - 12);
+                const maxText = `Max: ${pMax.value.toFixed(2)}`;
+                ctx.strokeText(maxText, maxX, maxY - 12);
                 ctx.fillStyle = pMax.value >= 0 ? '#cc0000' : '#0000cc';
-                ctx.fillText(`Max: ${pMax.value.toFixed(2)}`, maxX, maxY - 12);
+                ctx.fillText(maxText, maxX, maxY - 12);
+                registerTextObstacle(labelObstacles, ctx, maxText, maxX, maxY - 12);
             }
+        });
+
+        const nodeLabelOffsets = [
+            { x: 0, y: 26 },
+            { x: 24, y: 0 },
+            { x: -24, y: 0 },
+            { x: 0, y: -28 },
+            { x: 28, y: -18 },
+            { x: -28, y: -18 }
+        ];
+        nodeScreenData.forEach(({ nodeIndex, x: nodeX, y: nodeY }) => {
+            drawCircleNumberLabel(ctx, String(nodeIndex + 1), nodeX, nodeY, labelObstacles, {
+                offsets: nodeLabelOffsets,
+                font: 'bold 13px Arial'
+            });
+        });
+
+        memberScreenData.forEach(({ memberIndex, midX, midY, tangent, normal }) => {
+            const dynamicOffsets = [
+                { x: normal.x * 28, y: normal.y * 28 },
+                { x: -normal.x * 28, y: -normal.y * 28 },
+                { x: tangent.x * 30, y: tangent.y * 30 },
+                { x: -tangent.x * 30, y: -tangent.y * 30 },
+                { x: normal.x * 40, y: normal.y * 40 },
+                { x: -normal.x * 40, y: -normal.y * 40 }
+            ];
+            drawSquareNumberLabel(ctx, String(memberIndex + 1), midX, midY, labelObstacles, {
+                offsets: dynamicOffsets,
+                font: 'bold 13px Arial'
+            });
         });
 
         ctx.restore();
@@ -1343,6 +1603,18 @@ const drawCapacityRatioDiagram = (canvas, nodes, members, sectionCheckResults) =
             };
         };
 
+        const labelObstacles = [];
+        const nodeScreenData = [];
+        const memberScreenData = [];
+
+        visibleNodes.forEach(idx => {
+            const node = nodes[idx];
+            const projected = project3DTo2D(node, frame.mode);
+            const pos = transform(projected.x, projected.y);
+            nodeScreenData.push({ nodeIndex: idx, x: pos.x, y: pos.y });
+            registerCircleObstacle(labelObstacles, pos.x, pos.y, 4);
+        });
+
         // 検定比に応じた色を返す関数
         const getRatioColor = (ratio) => {
             if (ratio < 0.5) return '#00ff00';      // 緑
@@ -1374,6 +1646,7 @@ const drawCapacityRatioDiagram = (canvas, nodes, members, sectionCheckResults) =
         ctx.strokeStyle = '#ccc';
         ctx.lineWidth = 1;
         visibleMembers.forEach(m => {
+            const memberIndex = members.findIndex(mem => mem.i === m.i && mem.j === m.j);
             const ni = nodes[m.i];
             const nj = nodes[m.j];
             const pi = project3DTo2D(ni, frame.mode);
@@ -1384,6 +1657,19 @@ const drawCapacityRatioDiagram = (canvas, nodes, members, sectionCheckResults) =
             ctx.moveTo(p1.x, p1.y);
             ctx.lineTo(p2.x, p2.y);
             ctx.stroke();
+
+            if (memberIndex !== -1) {
+                const dx = p2.x - p1.x;
+                const dy = p2.y - p1.y;
+                const length = Math.hypot(dx, dy) || 1;
+                memberScreenData.push({
+                    memberIndex,
+                    midX: (p1.x + p2.x) / 2,
+                    midY: (p1.y + p2.y) / 2,
+                    tangent: { x: dx / length, y: dy / length },
+                    normal: { x: -dy / length, y: dx / length }
+                });
+            }
         });
 
         // 検定比分布を描画
@@ -1504,10 +1790,42 @@ const drawCapacityRatioDiagram = (canvas, nodes, members, sectionCheckResults) =
             ctx.lineWidth = 5;
             // 白い縁取り
             ctx.strokeStyle = 'white';
-            ctx.strokeText(maxRatio.toFixed(3), maxX, maxY - 12);
+            const ratioText = maxRatio.toFixed(3);
+            ctx.strokeText(ratioText, maxX, maxY - 12);
             // カラーテキスト
             ctx.fillStyle = textColor;
-            ctx.fillText(maxRatio.toFixed(3), maxX, maxY - 12);
+            ctx.fillText(ratioText, maxX, maxY - 12);
+            registerTextObstacle(labelObstacles, ctx, ratioText, maxX, maxY - 12);
+        });
+
+        const nodeLabelOffsets = [
+            { x: 0, y: 26 },
+            { x: 24, y: 0 },
+            { x: -24, y: 0 },
+            { x: 0, y: -28 },
+            { x: 28, y: -18 },
+            { x: -28, y: -18 }
+        ];
+        nodeScreenData.forEach(({ nodeIndex, x: nodeX, y: nodeY }) => {
+            drawCircleNumberLabel(ctx, String(nodeIndex + 1), nodeX, nodeY, labelObstacles, {
+                offsets: nodeLabelOffsets,
+                font: 'bold 13px Arial'
+            });
+        });
+
+        memberScreenData.forEach(({ memberIndex, midX, midY, tangent, normal }) => {
+            const dynamicOffsets = [
+                { x: normal.x * 26, y: normal.y * 26 },
+                { x: -normal.x * 26, y: -normal.y * 26 },
+                { x: tangent.x * 32, y: tangent.y * 32 },
+                { x: -tangent.x * 32, y: -tangent.y * 32 },
+                { x: normal.x * 40, y: normal.y * 40 },
+                { x: -normal.x * 40, y: -normal.y * 40 }
+            ];
+            drawSquareNumberLabel(ctx, String(memberIndex + 1), midX, midY, labelObstacles, {
+                offsets: dynamicOffsets,
+                font: 'bold 13px Arial'
+            });
         });
 
         ctx.restore();

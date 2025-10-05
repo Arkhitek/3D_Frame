@@ -6055,6 +6055,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // 分布荷重のテキスト領域を障害物として追加
         const loadObstacles = [...obstacles];
+        const getDistributedLoadOrientationMultiplier = (axisLabel) => {
+            if (is3DModeActive) {
+                if (axisLabel === 'Wx' || axisLabel === 'Wy') {
+                    return -1;
+                }
+                return 1;
+            }
+
+            if (projectionMode === 'xy') {
+                if (axisLabel === 'Wx' || axisLabel === 'Wy') {
+                    return -1;
+                }
+            } else if (projectionMode === 'iso') {
+                if (axisLabel === 'Wx' || axisLabel === 'Wy') {
+                    return -1;
+                }
+            }
+
+            return 1;
+        };
 
         const subtractVec3 = (a, b) => ({
             x: (a?.x ?? 0) - (b?.x ?? 0),
@@ -6251,7 +6271,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             components.forEach(component => {
-                const dir = Math.sign(component.w) || 1;
+                const baseSign = Math.sign(component.w) || 1;
+                const orientationSign = getDistributedLoadOrientationMultiplier(component.label);
+                const dir = baseSign * orientationSign;
                 const dirNorm = normalizeVec2(component.direction) || defaultDirectionNorm;
                 const firstArrowTipX = p1.x + dir * arrowLength * dirNorm.x;
                 const firstArrowTipY = p1.y + dir * arrowLength * dirNorm.y;
