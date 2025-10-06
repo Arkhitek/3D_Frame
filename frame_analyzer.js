@@ -280,7 +280,7 @@ const calculateSelfWeight = {
             const densityInput = densityCell.querySelector('input');
             const density = densityInput ? parseFloat(densityInput.value) : 0;
 
-            const areaInput = memberRow.cells[6]?.querySelector('input');
+            const areaInput = memberRow.cells[8]?.querySelector('input');
             const area = areaInput ? parseFloat(areaInput.value) : 0;
 
             if (!(density > 0) || !(area > 0)) return;
@@ -406,6 +406,22 @@ const calculateSelfWeight = {
         console.log('  節点自重数:', nodeSelfWeights.length);
         nodeSelfWeights.forEach(load => {
             console.log(`  節点${load.nodeIndex + 1}: px=${load.px.toFixed(3)}, py=${load.py.toFixed(3)}, mz=${load.mz.toFixed(3)}`);
+        });
+
+        // テーブルの自重表示を更新
+        memberSelfWeights.forEach(selfWeight => {
+            if (selfWeight.totalWeight && selfWeight.memberIndex !== undefined) {
+                const memberRow = membersTableBody.rows[selfWeight.memberIndex];
+                if (memberRow) {
+                    const densityCell = memberRow.querySelector('.density-cell');
+                    if (densityCell) {
+                        const selfWeightDisplay = densityCell.querySelector('.self-weight-display');
+                        if (selfWeightDisplay) {
+                            selfWeightDisplay.textContent = `自重: ${selfWeight.totalWeight.toFixed(3)} kN`;
+                        }
+                    }
+                }
+            }
         });
 
         return { memberSelfWeights, nodeSelfWeights };
@@ -6738,9 +6754,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             components.forEach(component => {
-                // 自重の場合: 正の値で格納されているので、符号を反転して下向きにする
-                // 外部荷重の場合: 正の値を入力したら下向きに描画するため反転
-                const baseSign = isSelfWeightLoad ? -Math.sign(component.w || 1) : Math.sign(component.w) || 1;
+                // 自重の場合: 正の値で格納されているので、そのまま使って下向きに描画
+                // 外部荷重の場合: 正の値を入力したら下向きに描画
+                const baseSign = isSelfWeightLoad ? Math.sign(component.w || 1) : Math.sign(component.w) || 1;
                 const orientationSign = getDistributedLoadOrientationMultiplier(component.label);
                 const dir = baseSign * orientationSign;
                 const dirNorm = normalizeVec2(component.direction) || defaultDirectionNorm;
@@ -11255,6 +11271,7 @@ const createEInputHTML = (idPrefix, currentE = '205000') => {
                 ${options_html}
             </select>
             <input id="${inputId}" type="number" value="${currentDensity}" title="密度 ρ (kg/m³)" min="0" ${isPreset ? 'readonly' : ''}>
+            <span class="self-weight-display" style="font-size: 0.85em; color: #666; font-style: italic;">-</span>
         </div>`;
         
         // イベントリスナーを後で設定
