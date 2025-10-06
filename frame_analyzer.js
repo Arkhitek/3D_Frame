@@ -1694,6 +1694,13 @@ document.addEventListener('DOMContentLoaded', () => {
         hiddenAxisLabel: document.getElementById('hidden-axis-label'),
     };
 
+    const popupSupportSelect = document.getElementById('popup-support');
+    if (popupSupportSelect) {
+        const initializedValue = normalizeSupportValue(popupSupportSelect.value || 'free');
+        popupSupportSelect.innerHTML = buildSupportOptionsMarkup(initializedValue);
+        popupSupportSelect.value = initializedValue;
+    }
+
     if (elements.projectionMode) {
         const initialProjection = elements.projectionMode.value;
         if (!initialProjection || initialProjection === 'xy') {
@@ -3400,30 +3407,47 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
         Array.from(elements.membersTable.rows).forEach(row => {
-            const e_select = row.cells[3].querySelector('select');
-            const e_input = row.cells[3].querySelector('input[type="number"]');
-            const strengthInputContainer = row.cells[4].firstElementChild;
-            const strengthType = strengthInputContainer.dataset.strengthType;
-            let strengthValue;
-            if (strengthType === 'F-value' || strengthType === 'Fc' || strengthType === 'F-stainless' || strengthType === 'F-aluminum') {
-                strengthValue = strengthInputContainer.querySelector('input').value;
-            } else if (strengthType === 'wood-type') {
-                strengthValue = strengthInputContainer.querySelector('select').value;
+            const eCell = row.cells[3];
+            const e_select = eCell ? eCell.querySelector('select') : null;
+            const e_input = eCell ? eCell.querySelector('input[type="number"]') : null;
+            const strengthCell = row.cells[4];
+            const strengthInputContainer = strengthCell ? strengthCell.firstElementChild : null;
+            const strengthType = strengthInputContainer?.dataset?.strengthType || '';
+            let strengthValue = '';
+            if (strengthInputContainer) {
+                if (strengthType === 'F-value' || strengthType === 'Fc' || strengthType === 'F-stainless' || strengthType === 'F-aluminum') {
+                    const valueInput = strengthInputContainer.querySelector('input');
+                    strengthValue = valueInput ? valueInput.value : '';
+                } else if (strengthType === 'wood-type') {
+                    const presetSelect = strengthInputContainer.querySelector('select');
+                    strengthValue = presetSelect ? presetSelect.value : '';
+                }
             }
 
-            state.members.push({
+            const izValue = row.cells[5]?.querySelector('input')?.value || 1840;
+            const iyValue = row.cells[6]?.querySelector('input')?.value || 613;
+            const jValue = row.cells[7]?.querySelector('input')?.value || 235;
+            const aValue = row.cells[8]?.querySelector('input')?.value || 2340;
+            const zzValue = row.cells[9]?.querySelector('input')?.value || 1230;
+            const zyValue = row.cells[10]?.querySelector('input')?.value || 410;
+
+            const memberRecord = {
                 i: row.cells[1]?.querySelector('input')?.value || 1,
                 j: row.cells[2]?.querySelector('input')?.value || 2,
-                E: e_select?.value === 'custom' ? e_input?.value : (e_select?.value || '205000'),
-                strengthType: strengthType,
-                strengthValue: strengthValue,
-                Iz: row.cells[5]?.querySelector('input')?.value || 1840,
-                Iy: row.cells[6]?.querySelector('input')?.value || 613,
-                J: row.cells[7]?.querySelector('input')?.value || 235,
-                A: row.cells[8]?.querySelector('input')?.value || 2340,
-                Zz: row.cells[9]?.querySelector('input')?.value || 1230,
-                Zy: row.cells[10]?.querySelector('input')?.value || 410,
-            });
+                E: e_select?.value === 'custom' ? (e_input?.value || '') : (e_select?.value || '205000'),
+                strengthType,
+                strengthValue,
+                Iz: izValue,
+                Iy: iyValue,
+                J: jValue,
+                A: aValue,
+                Zz: zzValue,
+                Zy: zyValue,
+                I: izValue,
+                Z: zzValue
+            };
+
+            state.members.push(memberRecord);
             
             // 接合条件の取得 - 動的にselect要素を検索
             const cellCount = row.cells.length;
@@ -3451,7 +3475,6 @@ document.addEventListener('DOMContentLoaded', () => {
             currentMember.i_conn = iConnSelect?.value || 'rigid';
             currentMember.j_conn = jConnSelect?.value || 'rigid';
             currentMember.Zx = row.dataset.zx;
-            currentMember.Zy = row.dataset.zy;
             currentMember.ix = row.dataset.ix;
             currentMember.iy = row.dataset.iy;
 
@@ -3512,7 +3535,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 member: row.cells[0]?.querySelector('input')?.value || 1, 
                 wx: row.cells[1]?.querySelector('input')?.value || 0,
                 wy: row.cells[2]?.querySelector('input')?.value || 0,
-                wz: row.cells[3]?.querySelector('input')?.value || 0
+                wz: row.cells[3]?.querySelector('input')?.value || 0,
+                w: row.cells[2]?.querySelector('input')?.value || 0
             });
         });
         return state;
@@ -13209,35 +13233,92 @@ const loadPreset = (index) => {
     const saveInputData = () => {
         try {
             const state = getCurrentState();
+            const toCsvValue = (value) => (value === undefined || value === null) ? '' : `${value}`;
+            const encodeIfNeeded = (value) => {
+                if (typeof value !== 'string' || value.length === 0) return '';
+                return encodeURIComponent(value);
+            };
             const csvSections = [];
             if (state.nodes.length > 0) {
-                const header = 'x,y,support';
-                const rows = state.nodes.map(n => `${n.x},${n.y},${n.support}`);
+                const header = 'x,y,z,support,dx_forced,dy_forced,dz_forced,rx_forced,ry_forced,rz_forced';
+                const rows = state.nodes.map(n => [
+                    toCsvValue(n.x),
+                    toCsvValue(n.y),
+                    toCsvValue(n.z),
+                    toCsvValue(n.support),
+                    toCsvValue(n.dx_forced),
+                    toCsvValue(n.dy_forced),
+                    toCsvValue(n.dz_forced),
+                    toCsvValue(n.rx_forced),
+                    toCsvValue(n.ry_forced),
+                    toCsvValue(n.rz_forced)
+                ].join(','));
                 csvSections.push('#NODES\n' + header + '\n' + rows.join('\n'));
             }
             if (state.members.length > 0) {
-                const header = 'i,j,E,strengthType,strengthValue,I,A,Z,i_conn,j_conn,Zx,Zy,ix,iy,sectionLabel,sectionSummary,sectionSource,sectionInfo,sectionAxisKey,sectionAxisMode,sectionAxisLabel';
+                const header = 'i,j,E,strengthType,strengthValue,Iz,Iy,J,A,Zz,Zy,I,Z,i_conn,j_conn,Zx,ix,iy,sectionLabel,sectionSummary,sectionSource,sectionInfo,sectionAxisKey,sectionAxisMode,sectionAxisLabel';
                 const rows = state.members.map(m => {
-                    const sectionLabel = m.sectionLabel ? encodeURIComponent(m.sectionLabel) : '';
-                    const sectionSummary = m.sectionSummary ? encodeURIComponent(m.sectionSummary) : '';
-                    const sectionSource = m.sectionSource ? encodeURIComponent(m.sectionSource) : '';
-                    const sectionInfoEncoded = m.sectionInfoEncoded || (m.sectionInfo ? encodeURIComponent(JSON.stringify(m.sectionInfo)) : '');
+                    const sectionLabel = encodeIfNeeded(m.sectionLabel || (m.sectionInfo && m.sectionInfo.label));
+                    const sectionSummary = encodeIfNeeded(m.sectionSummary || (m.sectionInfo && m.sectionInfo.dimensionSummary));
+                    const sectionSource = encodeIfNeeded(m.sectionSource || (m.sectionInfo && m.sectionInfo.source));
+                    const sectionInfoEncoded = typeof m.sectionInfoEncoded === 'string' && m.sectionInfoEncoded.length > 0
+                        ? m.sectionInfoEncoded
+                        : (m.sectionInfo ? encodeURIComponent(JSON.stringify(m.sectionInfo)) : '');
                     const sectionAxisKey = m.sectionAxisKey || (m.sectionAxis && m.sectionAxis.key) || '';
                     const sectionAxisMode = m.sectionAxisMode || (m.sectionAxis && m.sectionAxis.mode) || '';
-                    const sectionAxisLabelRaw = m.sectionAxisLabel || (m.sectionAxis && m.sectionAxis.label) || '';
-                    const sectionAxisLabel = sectionAxisLabelRaw ? encodeURIComponent(sectionAxisLabelRaw) : '';
-                    return `${m.i},${m.j},${m.E},${m.strengthType},${m.strengthValue},${m.I},${m.A},${m.Z},${m.i_conn},${m.j_conn},${m.Zx || ''},${m.Zy || ''},${m.ix || ''},${m.iy || ''},${sectionLabel},${sectionSummary},${sectionSource},${sectionInfoEncoded},${sectionAxisKey},${sectionAxisMode},${sectionAxisLabel}`;
+                    const sectionAxisLabel = encodeIfNeeded(m.sectionAxisLabel || (m.sectionAxis && m.sectionAxis.label));
+
+                    return [
+                        toCsvValue(m.i),
+                        toCsvValue(m.j),
+                        toCsvValue(m.E),
+                        toCsvValue(m.strengthType),
+                        toCsvValue(m.strengthValue),
+                        toCsvValue(m.Iz ?? m.I),
+                        toCsvValue(m.Iy),
+                        toCsvValue(m.J),
+                        toCsvValue(m.A),
+                        toCsvValue(m.Zz ?? m.Z),
+                        toCsvValue(m.Zy),
+                        toCsvValue(m.I !== undefined ? m.I : (m.Iz ?? '')),
+                        toCsvValue(m.Z !== undefined ? m.Z : (m.Zz ?? '')),
+                        toCsvValue(m.i_conn),
+                        toCsvValue(m.j_conn),
+                        toCsvValue(m.Zx),
+                        toCsvValue(m.ix),
+                        toCsvValue(m.iy),
+                        sectionLabel,
+                        sectionSummary,
+                        sectionSource,
+                        sectionInfoEncoded,
+                        toCsvValue(sectionAxisKey),
+                        toCsvValue(sectionAxisMode),
+                        sectionAxisLabel
+                    ].join(',');
                 });
                 csvSections.push('#MEMBERS\n' + header + '\n' + rows.join('\n'));
             }
             if (state.nodeLoads.length > 0) {
-                const header = 'node,px,py,mz';
-                const rows = state.nodeLoads.map(l => `${l.node},${l.px},${l.py},${l.mz}`);
+                const header = 'node,px,py,pz,mx,my,mz';
+                const rows = state.nodeLoads.map(l => [
+                    toCsvValue(l.node),
+                    toCsvValue(l.px),
+                    toCsvValue(l.py),
+                    toCsvValue(l.pz),
+                    toCsvValue(l.mx),
+                    toCsvValue(l.my),
+                    toCsvValue(l.mz)
+                ].join(','));
                 csvSections.push('#NODELOADS\n' + header + '\n' + rows.join('\n'));
             }
             if (state.memberLoads.length > 0) {
-                const header = 'member,w';
-                const rows = state.memberLoads.map(l => `${l.member},${l.w}`);
+                const header = 'member,wx,wy,wz';
+                const rows = state.memberLoads.map(l => [
+                    toCsvValue(l.member),
+                    toCsvValue(l.wx),
+                    toCsvValue(l.wy ?? l.w),
+                    toCsvValue(l.wz)
+                ].join(','));
                 csvSections.push('#MEMBERLOADS\n' + header + '\n' + rows.join('\n'));
             }
             const csvString = csvSections.join('\n\n');

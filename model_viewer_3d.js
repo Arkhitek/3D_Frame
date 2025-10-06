@@ -86,9 +86,9 @@ function modelGetRollerAxis(value) {
 }
 
 const MODEL_ROLLER_AXIS_COLORS = Object.freeze({
-    x: { int: 0xe53935, hex: '#e53935', label: 'X' },
-    y: { int: 0x1e88e5, hex: '#1e88e5', label: 'Y' },
-    z: { int: 0x00897b, hex: '#00897b', label: 'Z' }
+    x: { int: 0xe53935, hex: '#e53935', label: 'ローラー(X軸固定)' },
+    y: { int: 0x1e88e5, hex: '#1e88e5', label: 'ローラー(Y軸固定)' },
+    z: { int: 0x00897b, hex: '#00897b', label: 'ローラー(Z軸固定)' }
 });
 
 function modelCreateAxisDirection(axis) {
@@ -107,36 +107,87 @@ function modelCreateAxisDirection(axis) {
 function addModelRollerSupportIndicator(group, position, axis) {
     if (!group || !position || !axis) return;
     const color = MODEL_ROLLER_AXIS_COLORS[axis] || MODEL_ROLLER_AXIS_COLORS.x;
-    const direction = modelCreateAxisDirection(axis);
-    if (!direction) return;
+    const markerGroup = new THREE.Group();
+    markerGroup.position.copy(position);
 
-    const normalizedDir = direction.clone().normalize();
-    const arrowLength = 1.0;
-    const arrowHeadLength = Math.min(arrowLength * 0.35, 0.35);
-    const arrowHeadWidth = arrowHeadLength * 0.6;
-    const origin = position.clone().add(normalizedDir.clone().multiplyScalar(0.25));
+    const braceMaterial = new THREE.MeshStandardMaterial({
+        color: color.int,
+        emissive: color.int,
+        emissiveIntensity: 0.35,
+        metalness: 0.45,
+        roughness: 0.25,
+        transparent: true,
+        opacity: 0.8
+    });
 
-    const arrow = new THREE.ArrowHelper(normalizedDir, origin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
-    group.add(arrow);
+    const plateSpan = 0.75;
+    const plateThickness = 0.16;
+    let plateGeometry = null;
+    const offset = new THREE.Vector3();
+
+    switch (axis) {
+        case 'x':
+            plateGeometry = new THREE.BoxGeometry(plateThickness, plateSpan, plateSpan);
+            offset.set(0.5, 0, 0);
+            break;
+        case 'y':
+            plateGeometry = new THREE.BoxGeometry(plateSpan, plateSpan, plateThickness);
+            offset.set(0, 0, 0.5);
+            break;
+        case 'z':
+            plateGeometry = new THREE.BoxGeometry(plateSpan, plateThickness, plateSpan);
+            offset.set(0, 0.5, 0);
+            break;
+        default:
+            return;
+    }
+
+    if (!plateGeometry) return;
+
+    const brace = new THREE.Mesh(plateGeometry, braceMaterial);
+    brace.position.copy(offset);
+    markerGroup.add(brace);
+
+    const clampGeometry = new THREE.BoxGeometry(plateThickness * 0.6, plateSpan * 0.6, plateSpan * 0.6);
+    const clampMaterial = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        metalness: 0.1,
+        roughness: 0.6,
+        transparent: true,
+        opacity: 0.3
+    });
+    const clamp = new THREE.Mesh(clampGeometry, clampMaterial);
+    clamp.position.copy(offset.clone().multiplyScalar(0.6));
+    markerGroup.add(clamp);
 
     if (typeof THREE.CSS2DObject !== 'undefined') {
         const labelElement = document.createElement('div');
         labelElement.className = 'support-label-3d';
-        labelElement.textContent = color.label || axis.toUpperCase();
+        labelElement.textContent = color.label || `ローラー(${axis.toUpperCase()}軸固定)`;
         labelElement.style.color = color.hex;
         labelElement.style.fontWeight = 'bold';
         labelElement.style.fontSize = '11px';
         labelElement.style.backgroundColor = 'rgba(255, 255, 255, 0.92)';
-        labelElement.style.padding = '2px 4px';
+        labelElement.style.padding = '2px 6px';
         labelElement.style.borderRadius = '3px';
         labelElement.style.border = `1px solid ${color.hex}`;
         labelElement.style.pointerEvents = 'none';
         labelElement.style.userSelect = 'none';
 
         const labelObject = new THREE.CSS2DObject(labelElement);
-        labelObject.position.copy(origin).add(normalizedDir.clone().multiplyScalar(arrowLength + 0.25));
-        group.add(labelObject);
+        const labelDirection = offset.clone();
+        if (labelDirection.lengthSq() === 0) {
+            labelDirection.set(0, 1, 0);
+        }
+        const labelDistance = Math.max(1.0, offset.length() + 0.45);
+        labelObject.position.copy(labelDirection.normalize().multiplyScalar(labelDistance));
+        if (axis !== 'y') {
+            labelObject.position.y += 0.25;
+        }
+        markerGroup.add(labelObject);
     }
+
+    group.add(markerGroup);
 }
 
 /**
@@ -471,6 +522,26 @@ function updateModel3DView(nodes, members, loadData = {}) {
         return labelObject;
     };
 
+    const createSupportLabel = (text, position, colorHex) => {
+        if (typeof THREE.CSS2DObject === 'undefined') return null;
+        const element = document.createElement('div');
+        element.className = 'support-label-3d';
+        element.textContent = text;
+        element.style.color = colorHex;
+        element.style.fontWeight = 'bold';
+        element.style.fontSize = '11px';
+        element.style.backgroundColor = 'rgba(255, 255, 255, 0.94)';
+        element.style.padding = '2px 6px';
+        element.style.borderRadius = '3px';
+        element.style.border = `1px solid ${colorHex}`;
+        element.style.pointerEvents = 'none';
+        element.style.userSelect = 'none';
+
+        const label = new THREE.CSS2DObject(element);
+        label.position.copy(position);
+        return label;
+    };
+
     const addForceArrow = (group, origin, axis, magnitude, color, labelPrefix, unit) => {
         if (!axis || !isFinite(magnitude) || Math.abs(magnitude) < 1e-6) return;
 
@@ -612,6 +683,9 @@ function updateModel3DView(nodes, members, loadData = {}) {
             const supportSphere = new THREE.Mesh(new THREE.SphereGeometry(0.25, 32, 32), supportMaterial);
             supportSphere.position.copy(nodePosition);
             modelGroup.add(supportSphere);
+
+            const label = createSupportLabel('ピン', nodePosition.clone().add(new THREE.Vector3(0, -0.4, 0)), '#ff0000');
+            if (label) modelGroup.add(label);
         }
 
         // 固定支持の場合は緑の立方体を追加
@@ -626,6 +700,9 @@ function updateModel3DView(nodes, members, loadData = {}) {
             const supportBox = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), supportMaterial);
             supportBox.position.copy(nodePosition);
             modelGroup.add(supportBox);
+
+            const label = createSupportLabel('固定', nodePosition.clone().add(new THREE.Vector3(0, -0.4, 0)), '#00aa00');
+            if (label) modelGroup.add(label);
         } else if (modelIsRollerSupport(supportType)) {
             const axis = modelGetRollerAxis(supportType);
             if (axis) {
