@@ -13877,7 +13877,11 @@ const loadPreset = (index) => {
     }
 
     // ページ読み込み時に共有リンクをチェック
-    loadFromShareLink();
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', loadFromShareLink);
+    } else {
+        loadFromShareLink();
+    }
     
     // エクセル出力ボタンのイベントリスナー追加（エラーチェック付き）
     if (elements.exportExcelBtn) {
