@@ -1632,6 +1632,7 @@ function hideMemberTooltip() {
 
 // ★★★ 重要: elements をグローバルスコープで宣言（DOMContentLoaded内で初期化） ★★★
 let elements = null;
+let shareLinkApplied = false;
 
 // 編集モード関連のグローバル変数（3Dビューからアクセスするため）
 let canvasMode = 'select';
@@ -13823,6 +13824,10 @@ const loadPreset = (index) => {
         try {
             if (window.location.hash && window.location.hash.startsWith('#model=')) {
                 console.log("共有リンクからモデルを読み込みます...");
+                if (shareLinkApplied) {
+                    console.log('共有リンクは既に適用済みです。スキップします。');
+                    return;
+                }
                 const encodedData = window.location.hash.substring(7);
                 if (!encodedData) return;
 
@@ -13830,7 +13835,8 @@ const loadPreset = (index) => {
                 const jsonString = pako.inflate(compressed, { to: 'string' });
                 const state = JSON.parse(jsonString);
                 
-                if (state && state.nodes) {
+                if (state && Array.isArray(state.nodes) && state.nodes.length > 0) {
+                    shareLinkApplied = true;
                     historyStack = [];
                     elements.nodesTable.innerHTML = '';
                     elements.membersTable.innerHTML = '';
@@ -13841,6 +13847,17 @@ const loadPreset = (index) => {
                     restoreState(state);
                     runFullAnalysis();
                     console.log("モデルの読み込みが完了しました。");
+                    if (elements.presetSelector) {
+                        let shareOption = elements.presetSelector.querySelector('option[value="shared"]');
+                        if (!shareOption) {
+                            shareOption = document.createElement('option');
+                            shareOption.value = 'shared';
+                            shareOption.textContent = '共有リンクから読み込み';
+                            shareOption.dataset.dynamic = 'share-link';
+                            elements.presetSelector.insertBefore(shareOption, elements.presetSelector.firstChild);
+                        }
+                        elements.presetSelector.value = 'shared';
+                    }
                     
                     history.replaceState(null, document.title, window.location.pathname + window.location.search);
                 }
@@ -14115,8 +14132,12 @@ const loadPreset = (index) => {
     });
     
     // Initial Load
-    loadPreset(1);
-    elements.presetSelector.value = 1;
+    if (!shareLinkApplied) {
+        loadPreset(1);
+        elements.presetSelector.value = 1;
+    } else if (elements.presetSelector && elements.presetSelector.value !== 'shared') {
+        elements.presetSelector.value = 'shared';
+    }
     setCanvasMode('select');
     
     // 初期化時に自重表示を更新
