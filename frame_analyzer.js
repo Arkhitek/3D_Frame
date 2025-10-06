@@ -6997,7 +6997,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 ctx.fillStyle = '#32CD32';
             
             if (load.pz && load.pz !== 0) {
-                const directionSign = load.pz > 0 ? 1 : -1;
+                // 自重の集中荷重: pzは負の値で格納されている（下向き）
+                // 矢印を正しい方向に描画するため、符号をそのまま使用
+                const directionSign = -Math.sign(load.pz);
                 const projectedDir = projectGlobalDirection(node3D, { x: 0, y: 0, z: directionSign });
                 const hasProjectedDir = projectedDir && Math.hypot(projectedDir.x, projectedDir.y) > 1e-6;
 
