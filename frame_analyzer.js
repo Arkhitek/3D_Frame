@@ -6535,11 +6535,11 @@ document.addEventListener('DOMContentLoaded', () => {
         // 分布荷重のテキスト領域を障害物として追加
         const loadObstacles = [...obstacles];
         const getDistributedLoadOrientationMultiplier = (axisLabel, isSelfWeight = false) => {
-            // 分布荷重の描画方向を決定
-            // 自重: 正の値 × Z軸負方向ベクトル → 下向き
-            // 外部荷重: 符号 × Z軸正方向ベクトル → 符号通りの方向
-            
-            // 符号をそのまま使用（ベクトルの向きで方向が決まる）
+            // 分布荷重の描画方向を軸ごとに補正
+            // モデル図ではグローバルX/Y方向の矢印が反転して描画されていたため補正する
+            if (axisLabel === 'Wx' || axisLabel === 'Wy') {
+                return -1;
+            }
             return 1;
         };
 

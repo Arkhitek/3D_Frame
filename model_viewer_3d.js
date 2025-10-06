@@ -856,20 +856,7 @@ function updateModel3DView(nodes, members, loadData = {}) {
         });
     });
 
-    memberSelfWeights.forEach(load => {
-        if (!includeSelfWeightLoads) return;
-        if (load.loadType === 'distributed' || (load.loadType === 'mixed' && load.w)) {
-            // 自重はグローバルZ方向（鉛直下向き）の等分布荷重
-            distributedLoads.push({
-                memberIndex: load.memberIndex,
-                wx: 0,
-                wy: 0,
-                wz: load.w || 0,  // 負の値（下向き）
-                w: 0,
-                isFromSelfWeight: true
-            });
-        }
-    });
+    // 3Dビューでは部材自重の等分布荷重を描画しない
 
     if (distributedLoads.length > 0) {
         const numArrows = 5;
@@ -879,8 +866,8 @@ function updateModel3DView(nodes, members, loadData = {}) {
 
         distributedLoads.forEach(load => {
             const isSelfWeight = !!load.isFromSelfWeight;
-            if (isSelfWeight && !includeSelfWeightLoads) return;
-            if (!isSelfWeight && !showExternalLoads) return;
+            if (isSelfWeight) return;
+            if (!showExternalLoads) return;
 
             const member = members[load.memberIndex];
             if (!member) return;
@@ -950,8 +937,7 @@ function updateModel3DView(nodes, members, loadData = {}) {
             if (wz !== 0) labelParts.push(`Wz=${formatLoadValue(wz)}kN/m`);
             if (legacyW !== 0 && wz === 0) labelParts.push(`W=${formatLoadValue(legacyW)}kN/m`);
             
-            const prefix = isSelfWeight ? '自重 ' : '';
-            const loadText = prefix + labelParts.join(' ');
+            const loadText = labelParts.join(' ');
 
             if (loadText.trim()) {
                 const midpoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
@@ -978,19 +964,15 @@ function updateModel3DView(nodes, members, loadData = {}) {
             nodeLoadsToRender.push({ ...load, isFromSelfWeight: false });
         });
     }
-    if (includeSelfWeightLoads) {
-        nodeSelfWeights.forEach(load => {
-            nodeLoadsToRender.push({ ...load, isFromSelfWeight: true });
-        });
-    }
+    // 3Dビューでは節点自重荷重を描画しない
 
     if (nodeLoadsToRender.length > 0) {
         nodeLoadsToRender.forEach(load => {
             const nodePos = nodePositions[load.nodeIndex];
             if (!nodePos) return;
 
-            const color = load.isFromSelfWeight ? COLORS.selfWeight : COLORS.externalConcentrated;
-            const prefix = load.isFromSelfWeight ? 'SW ' : '';
+            const color = COLORS.externalConcentrated;
+            const prefix = '';
 
             addForceArrow(loadGroup, nodePos, new THREE.Vector3(1, 0, 0), load.px || 0, color, `${prefix}Px=`, 'kN');
             addForceArrow(loadGroup, nodePos, new THREE.Vector3(0, 0, 1), load.py || 0, color, `${prefix}Py=`, 'kN');

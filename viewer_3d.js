@@ -691,22 +691,15 @@ function build3DModel(scene, nodes, members, loadData = {}) {
     memberLoads.forEach(load => {
         distributedLoads.push({
             memberIndex: load.memberIndex,
-            wy: load.wy !== undefined ? load.wy : (load.w !== undefined ? load.w : 0),
-            wz: load.wz || 0,
+            wx: Number(load.wx) || 0,
+            wy: Number(load.wy) || 0,
+            wz: Number(load.wz) || 0,
+            legacyW: Number(load.w) || 0,
             isFromSelfWeight: !!load.isFromSelfWeight
         });
     });
 
-    memberSelfWeights.forEach(load => {
-        if (load.loadType === 'distributed' || (load.loadType === 'mixed' && load.w)) {
-            distributedLoads.push({
-                memberIndex: load.memberIndex,
-                wy: load.w || 0,
-                wz: 0,
-                isFromSelfWeight: true
-            });
-        }
-    });
+    // 3Dビューワでは部材自重の等分布荷重は描画しない
 
     if (distributedLoads.length > 0) {
         const numArrows = 5;
@@ -715,47 +708,73 @@ function build3DModel(scene, nodes, members, loadData = {}) {
         const arrowHeadWidth = arrowLength * 0.18;
 
         distributedLoads.forEach(load => {
+            if (load.isFromSelfWeight) return;
+
             const member = members[load.memberIndex];
             if (!member) return;
             const p1 = nodePositions[member.i];
             const p2 = nodePositions[member.j];
             if (!p1 || !p2) return;
 
+            const wx = load.wx || 0;
             const wy = load.wy || 0;
             const wz = load.wz || 0;
-            if (wy === 0 && wz === 0) return;
+            const legacyW = (!wz && load.legacyW) ? load.legacyW : 0;
 
-            const color = load.isFromSelfWeight ? COLORS.selfWeight : COLORS.externalDistributed;
+            const components = [];
+            const addComponent = (key, value, vector) => {
+                if (!Number.isFinite(value) || Math.abs(value) < 1e-9) return;
+                components.push({ key, value, vector });
+            };
+
+            addComponent('wx', wx, new THREE.Vector3(1, 0, 0));
+            addComponent('wy', wy, new THREE.Vector3(0, 0, 1));
+            addComponent('wz', wz, new THREE.Vector3(0, -1, 0));
+            if (!wz) {
+                addComponent('legacyW', legacyW, new THREE.Vector3(0, -1, 0));
+            }
+
+            if (components.length === 0) return;
+
+            const color = COLORS.externalDistributed;
 
             for (let i = 0; i <= numArrows; i++) {
                 const t = i / numArrows;
                 const position = new THREE.Vector3().lerpVectors(p1, p2, t);
 
-                if (wy !== 0) {
-                    const baseDir = new THREE.Vector3(0, 0, Math.sign(wy));
-                    const dir = baseDir.clone().multiplyScalar(-1);
-                    const origin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
-                    const arrow = new THREE.ArrowHelper(dir, origin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
+                components.forEach(component => {
+                    const sign = Math.sign(component.value) || 1;
+                    const baseDir = component.vector.clone().normalize().multiplyScalar(sign);
+                    const offset = baseDir.clone().multiplyScalar(arrowLength);
+                    const shouldFlipOrigin = component.key === 'wx' || component.key === 'wy';
+                    const origin = shouldFlipOrigin ? position.clone().sub(offset) : position.clone().add(offset);
+                    const direction = shouldFlipOrigin ? baseDir : baseDir.clone().multiplyScalar(-1);
+                    const arrow = new THREE.ArrowHelper(direction, origin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
                     loadGroup.add(arrow);
-                }
-
-                if (wz !== 0) {
-                    const baseDir = new THREE.Vector3(0, Math.sign(wz), 0);
-                    const dir = baseDir.clone().multiplyScalar(-1);
-                    const origin = position.clone().add(baseDir.clone().multiplyScalar(arrowLength));
-                    const arrow = new THREE.ArrowHelper(dir, origin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
-                    loadGroup.add(arrow);
-                }
+                });
             }
 
             const labelParts = [];
-            if (wy !== 0) labelParts.push(`wy=${formatValue(wy)}kN/m`);
-            if (wz !== 0) labelParts.push(`wz=${formatValue(wz)}kN/m`);
+            const labelMap = {
+                wx: value => `Wx=${formatValue(value)}kN/m`,
+                wy: value => `Wy=${formatValue(value)}kN/m`,
+                wz: value => `Wz=${formatValue(value)}kN/m`,
+                legacyW: value => `W=${formatValue(value)}kN/m`
+            };
+            components.forEach(component => {
+                const formatter = labelMap[component.key];
+                if (formatter) {
+                    labelParts.push(formatter(component.value));
+                }
+            });
             if (labelParts.length > 0) {
                 const midpoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
                 const offset = new THREE.Vector3();
-                if (wy !== 0) offset.z += Math.sign(wy) * 0.6;
-                if (wz !== 0) offset.y += Math.sign(wz) * 0.6;
+                components.forEach(component => {
+                    const sign = Math.sign(component.value) || 1;
+                    const baseOffset = component.vector.clone().normalize().multiplyScalar(sign * 0.6);
+                    offset.add(baseOffset);
+                });
                 if (offset.lengthSq() === 0) offset.y = 0.6;
 
                 const label = createLoadLabel(labelParts.join(' '), midpoint.clone().add(offset), color.hex);
@@ -767,22 +786,21 @@ function build3DModel(scene, nodes, members, loadData = {}) {
     // 節点荷重の描画
     const nodeLoadsCombined = [];
     nodeLoads.forEach(load => nodeLoadsCombined.push({ ...load, isFromSelfWeight: false }));
-    nodeSelfWeights.forEach(load => nodeLoadsCombined.push({ ...load, isFromSelfWeight: true }));
+    // 3Dビューワでは節点自重荷重は描画しない
 
     if (nodeLoadsCombined.length > 0) {
         nodeLoadsCombined.forEach(load => {
             const position = nodePositions[load.nodeIndex];
             if (!position) return;
-            const color = load.isFromSelfWeight ? COLORS.selfWeight : COLORS.externalConcentrated;
-            const prefix = load.isFromSelfWeight ? 'SW ' : '';
+            const color = COLORS.externalConcentrated;
 
-            addForceArrow(loadGroup, position, new THREE.Vector3(1, 0, 0), load.px || 0, color, `${prefix}Px=`, 'kN');
-            addForceArrow(loadGroup, position, new THREE.Vector3(0, 0, 1), load.py || 0, color, `${prefix}Py=`, 'kN');
-            addForceArrow(loadGroup, position, new THREE.Vector3(0, 1, 0), load.pz || 0, color, `${prefix}Pz=`, 'kN');
+            addForceArrow(loadGroup, position, new THREE.Vector3(1, 0, 0), load.px || 0, color, 'Px=', 'kN');
+            addForceArrow(loadGroup, position, new THREE.Vector3(0, 0, 1), load.py || 0, color, 'Py=', 'kN');
+            addForceArrow(loadGroup, position, new THREE.Vector3(0, 1, 0), load.pz || 0, color, 'Pz=', 'kN');
 
-            addMomentIndicator(loadGroup, position, new THREE.Vector3(1, 0, 0), load.mx || 0, color, `${prefix}Mx=`);
-            addMomentIndicator(loadGroup, position, new THREE.Vector3(0, 0, 1), load.my || 0, color, `${prefix}My=`);
-            addMomentIndicator(loadGroup, position, new THREE.Vector3(0, 1, 0), load.mz || 0, color, `${prefix}Mz=`);
+            addMomentIndicator(loadGroup, position, new THREE.Vector3(1, 0, 0), load.mx || 0, color, 'Mx=');
+            addMomentIndicator(loadGroup, position, new THREE.Vector3(0, 0, 1), load.my || 0, color, 'My=');
+            addMomentIndicator(loadGroup, position, new THREE.Vector3(0, 1, 0), load.mz || 0, color, 'Mz=');
         });
     }
 
@@ -893,7 +911,9 @@ function createMemberMesh(member, nodes) {
     mesh.up.set(isVertical ? 1 : 0, isVertical ? 0 : 1, 0);
     mesh.lookAt(p2);
 
-    if (member.sectionAxis && member.sectionAxis.key === 'y') {
+    if (isVertical) {
+        mesh.rotateZ(Math.PI / 2);
+    } else if (member.sectionAxis && member.sectionAxis.key === 'y') {
         mesh.rotateZ(Math.PI / 2);
     }
 
