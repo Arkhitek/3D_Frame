@@ -33,99 +33,106 @@
                             <div class="guide-section">
                                 <h5>📍 基本操作</h5>
                                 <ul>
-                                    <li><strong>ドラッグ:</strong> 画面移動（パン）</li>
-                                    <li><strong>ホイール:</strong> 拡大・縮小</li>
-                                    <li><strong>クリック:</strong> 単独選択</li>
-                                    <li><strong>右クリック:</strong> コンテキストメニュー</li>
-                                    <li><strong>Shift+クリック:</strong> 複数選択</li>
-                                    <li><strong>Shift+ドラッグ:</strong> 範囲選択</li>
+                                    <li><strong>左ドラッグ:</strong> キャンバスを移動（パン）</li>
+                                    <li><strong>マウスホイール:</strong> 拡大・縮小</li>
+                                    <li><strong>クリック:</strong> 節点・部材・荷重を個別選択</li>
+                                    <li><strong>節点ドラッグ:</strong> 2D投影（XY/XZ/YZ）で位置調整 ※等角投影では移動不可</li>
+                                    <li><strong>Shift+ドラッグ:</strong> 矩形範囲で節点/部材を選択</li>
+                                    <li><strong>Ctrl (⌘)+ドラッグ:</strong> 矩形選択をやり直し</li>
                                 </ul>
                             </div>
-                            
+
                             <div class="guide-section">
-                                <h5>🎯 モード選択</h5>
+                                <h5>🎯 モード・選択操作</h5>
                                 <ul>
                                     <li><strong>S:</strong> 選択/移動モード</li>
                                     <li><strong>N:</strong> 節点追加モード</li>
                                     <li><strong>M:</strong> 部材追加モード</li>
+                                    <li><strong>Shift+クリック:</strong> 個別要素を追加選択</li>
+                                    <li><strong>複数選択:</strong> 一括編集・削除に対応</li>
                                 </ul>
                             </div>
-                            
+
                             <div class="guide-section">
-                                <h5>⚙️ 編集機能</h5>
+                                <h5>🛠 編集メニュー</h5>
                                 <ul>
-                                    <li><strong>節点右クリック:</strong> 座標・荷重・境界条件編集</li>
-                                    <li><strong>部材右クリック:</strong> 材料・断面・接合・分布荷重編集</li>
-                                    <li><strong>荷重矢印右クリック:</strong> 荷重の直接編集</li>
-                                    <li><strong>複数選択:</strong> 一括編集・削除可能</li>
-                                    <li><strong>Delete:</strong> 選択要素を削除</li>
+                                    <li><strong>節点右クリック:</strong> 座標・荷重・境界条件を編集</li>
+                                    <li><strong>部材右クリック:</strong> 材料・断面・接合・分布荷重を編集</li>
+                                    <li><strong>荷重矢印右クリック:</strong> 荷重値を直接編集</li>
+                                    <li><strong>Delete / Backspace:</strong> 選択要素を削除</li>
                                 </ul>
                             </div>
-                            
+
                             <div class="guide-section">
-                                <h5>🔧 便利機能</h5>
+                                <h5>🔧 補助ツール</h5>
                                 <ul>
-                                    <li><strong>フレームジェネレーター:</strong> 多層ラーメン自動生成</li>
-                                    <li><strong>断面選択ツール:</strong> 鋼材断面の選択・設定</li>
-                                    <li><strong>自動スケーリング (A):</strong> 全体表示</li>
-                                    <li><strong>グリッド表示 (G):</strong> 作図補助</li>
-                                    <li><strong>部材情報表示:</strong> マウスオーバー情報</li>
+                                    <li><strong>フレームジェネレーター:</strong> 多層・多スパンラーメンを自動生成</li>
+                                    <li><strong>断面選択ツール:</strong> 鋼材ライブラリから断面を設定</li>
+                                    <li><strong>自動スケーリング (A):</strong> モデル全体を表示範囲に最適化</li>
+                                    <li><strong>グリッド表示 (G):</strong> 作図補助のON/OFF</li>
+                                    <li><strong>ズームボタン (+/-):</strong> 段階的に拡大・縮小</li>
+                                    <li><strong>アニメーション倍率:</strong> 変位図・アニメの倍率を調整</li>
                                 </ul>
                             </div>
                         </div>
-                        
+
                         <div class="guide-column">
                             <div class="guide-section">
                                 <h5>⌨️ キーボードショートカット</h5>
                                 <ul>
-                                    <li><strong>C:</strong> 計算実行</li>
+                                    <li><strong>S / N / M:</strong> 各モードに切替</li>
+                                    <li><strong>C:</strong> 構造解析を実行</li>
                                     <li><strong>R:</strong> レポート出力</li>
+                                    <li><strong>A:</strong> 自動スケーリング</li>
+                                    <li><strong>G:</strong> グリッド表示切替</li>
+                                    <li><strong>Ctrl+S / Ctrl+O:</strong> 入力データの保存・読込</li>
                                     <li><strong>Ctrl+Z:</strong> 元に戻す</li>
-                                    <li><strong>Ctrl+S:</strong> 入力データ保存</li>
-                                    <li><strong>Ctrl+O:</strong> 入力データ読込</li>
-                                    <li><strong>Escape:</strong> 選択クリア</li>
+                                    <li><strong>Escape:</strong> 選択をクリア</li>
                                 </ul>
                             </div>
-                            
+
                             <div class="guide-section">
                                 <h5>📊 解析・結果表示</h5>
                                 <ul>
-                                    <li><strong>構造解析:</strong> 変位・断面力・支点反力</li>
-                                    <li><strong>断面算定:</strong> 検定比・短期/長期</li>
-                                    <li><strong>弾性座屈解析:</strong> 座屈荷重・安全率</li>
-                                    <li><strong>アニメーション:</strong> 変位の動的表示</li>
-                                    <li><strong>応力図:</strong> BMD・AFD・SFD・検定比図</li>
+                                    <li><strong>構造解析:</strong> 変位・断面力・支点反力を算出</li>
+                                    <li><strong>断面算定:</strong> 検定比（短期/長期）を表示</li>
+                                    <li><strong>弾性座屈解析:</strong> 座屈荷重・安全率を評価</li>
+                                    <li><strong>応力・検定図:</strong> BMD・SFD・AFD・検定比図を描画</li>
+                                    <li><strong>アニメーション:</strong> 変形モードを動的に確認</li>
                                 </ul>
                             </div>
-                            
+
                             <div class="guide-section">
-                                <h5>� データ管理</h5>
+                                <h5>🗂 データ管理・共有</h5>
                                 <ul>
-                                    <li><strong>プリセット:</strong> 計算例の読込</li>
-                                    <li><strong>CSV保存/読込:</strong> 入力データ管理</li>
-                                    <li><strong>レポート出力:</strong> 印刷用総合レポート</li>
-                                    <li><strong>エクセル出力:</strong> 結果データのExcel形式出力</li>
+                                    <li><strong>プリセット読込:</strong> サンプルモデルを呼び出し</li>
+                                    <li><strong>入力保存/読込:</strong> CSV形式でモデル入力を保存・復元</li>
+                                    <li><strong>エクセル出力:</strong> 解析結果をExcel形式で保存</li>
+                                    <li><strong>レポート出力:</strong> 印刷用総合レポートを生成</li>
+                                    <li><strong>共有リンク作成:</strong> モデル状態をURLで共有</li>
                                 </ul>
                             </div>
-                            
+
                             <div class="guide-section">
-                                <h5>🔍 表示制御</h5>
+                                <h5>� 表示・ビュー切替</h5>
                                 <ul>
-                                    <li><strong>外部荷重表示:</strong> 外部荷重の表示切替</li>
+                                    <li><strong>2D/3D表示:</strong> 表示モードで作図と3Dを切替</li>
+                                    <li><strong>投影面:</strong> XY/XZ/YZ/等角投影を選択</li>
+                                    <li><strong>隠し軸座標:</strong> 投影されない軸位置を指定</li>
+                                    <li><strong>外部荷重表示:</strong> 荷重シンボルの表示切替</li>
                                     <li><strong>自重表示:</strong> 自重荷重の表示切替</li>
-                                    <li><strong>倍率調整:</strong> アニメーション・変位図倍率</li>
-                                    <li><strong>選択強調:</strong> 選択要素の赤色表示</li>
+                                    <li><strong>部材情報表示:</strong> ツールチップのON/OFF</li>
                                 </ul>
                             </div>
 
                             <div class="guide-section">
                                 <h5>🎬 3Dビューア</h5>
                                 <ul>
-                                    <li><strong>独立ウィンドウ:</strong> 別窓で3D表示</li>
-                                    <li><strong>リアルタイム更新:</strong> メイン画面の編集を即座に反映</li>
-                                    <li><strong>マウス操作:</strong> 左ドラッグ回転・右ドラッグ移動・ホイール拡大縮小</li>
-                                    <li><strong>ラベル表示:</strong> 節点・部材・断面名称の表示切替</li>
-                                    <li><strong>断面形状:</strong> H形鋼・チャンネル・角パイプ等を3D表示</li>
+                                    <li><strong>独立ウィンドウ:</strong> 別ウィンドウで3Dモデルを表示</li>
+                                    <li><strong>リアルタイム連携:</strong> メイン画面の編集内容を即時反映</li>
+                                    <li><strong>マウス操作:</strong> 左ドラッグ回転・右ドラッグ平行移動・ホイール拡大縮小</li>
+                                    <li><strong>ラベル表示:</strong> 節点・部材番号や断面名を切替</li>
+                                    <li><strong>断面形状:</strong> H形鋼・チャンネル・角パイプ等を立体表示</li>
                                 </ul>
                             </div>
                         </div>
