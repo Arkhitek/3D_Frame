@@ -6532,20 +6532,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // 分布荷重のテキスト領域を障害物として追加
         const loadObstacles = [...obstacles];
-        const getDistributedLoadOrientationMultiplier = (axisLabel) => {
+        const getDistributedLoadOrientationMultiplier = (axisLabel, isSelfWeight = false) => {
             // 分布荷重の描画方向を決定
             // 正の荷重値 → 正の軸方向への力として描画
             // 負の荷重値 → 負の軸方向への力として描画（例: wz=-10 は下向き）
             
-            // 外部荷重（ユーザー入力）: 正の値を入力したら下向きに描画したいので-1を返す
-            // 自重: すでに負の値で格納されているので、そのまま描画するため1を返す
-            
             if (is3DModeActive) {
-                // 3Dモード: Wx, Wy, Wzは外部荷重の慣習に従い反転
-                return -1;
+                // 3Dモード: 符号反転なし（baseSignで制御）
+                return 1;
             }
 
-            // 2D投影モード: 外部荷重は反転、自重はそのまま
+            // 2D投影モード: 外部荷重は反転、自重も反転（projectGlobalDirectionのy軸反転を補正）
             if (projectionMode === 'xy') {
                 return -1;
             } else if (projectionMode === 'xz') {
@@ -6754,10 +6751,14 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             components.forEach(component => {
-                // 自重の場合: 正の値で格納されているので、そのまま使って下向きに描画
+                // 自重の場合: 正の値で格納されているが、下向きに描画する必要がある
+                // - 3Dモード: baseSignを負にして下向きに
+                // - 2Dモード: baseSignは正のまま、orientationSignで調整
                 // 外部荷重の場合: 正の値を入力したら下向きに描画
-                const baseSign = isSelfWeightLoad ? Math.sign(component.w || 1) : Math.sign(component.w) || 1;
-                const orientationSign = getDistributedLoadOrientationMultiplier(component.label);
+                const baseSign = (isSelfWeightLoad && is3DModeActive) 
+                    ? -Math.sign(component.w || 1) 
+                    : Math.sign(component.w || 1);
+                const orientationSign = getDistributedLoadOrientationMultiplier(component.label, isSelfWeightLoad);
                 const dir = baseSign * orientationSign;
                 const dirNorm = normalizeVec2(component.direction) || defaultDirectionNorm;
                 const firstArrowTipX = p1.x + dir * arrowLength * dirNorm.x;
