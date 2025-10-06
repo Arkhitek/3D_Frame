@@ -25,6 +25,88 @@ let labelVisibility = {
     sections: true
 };
 
+const ROLLER_SUPPORT_ALIAS_MAP = (() => {
+    const entries = [
+        ['x', ['roller-x', 'rollerx', 'roller_x', 'r-x', 'rx']],
+        ['y', ['roller-y', 'rollery', 'roller_y', 'r-y', 'ry', 'roller', 'r']],
+        ['z', ['roller-z', 'rollerz', 'roller_z', 'r-z', 'rz']]
+    ];
+    const map = new Map();
+    entries.forEach(([axis, aliases]) => {
+        aliases.forEach(alias => {
+            const key = `${alias}`.trim().toLowerCase();
+            if (key) {
+                map.set(key, axis);
+            }
+        });
+    });
+    return map;
+})();
+
+const ROLLER_AXIS_INFO = {
+    x: { color: 0xe74c3c, label: 'X固定', direction: new THREE.Vector3(1, 0, 0) },
+    y: { color: 0x3498db, label: 'Y固定', direction: new THREE.Vector3(0, 0, 1) },
+    z: { color: 0x9b59b6, label: 'Z固定', direction: new THREE.Vector3(0, 1, 0) }
+};
+
+function getRollerAxisFromSupport(value) {
+    if (value === undefined || value === null) return null;
+    const normalized = `${value}`.trim().toLowerCase();
+    if (!normalized) return null;
+    if (ROLLER_SUPPORT_ALIAS_MAP.has(normalized)) {
+        return ROLLER_SUPPORT_ALIAS_MAP.get(normalized);
+    }
+    return null;
+}
+
+function addRollerSupportIndicator(group, labelGroup, position, axis) {
+    const info = ROLLER_AXIS_INFO[axis];
+    if (!info || !group) return;
+
+    const indicatorGroup = new THREE.Group();
+
+    const contactSphere = new THREE.Mesh(
+        new THREE.SphereGeometry(0.22, 20, 20),
+        new THREE.MeshLambertMaterial({
+            color: info.color,
+            emissive: info.color,
+            emissiveIntensity: 0.18,
+            opacity: 0.85,
+            transparent: true
+        })
+    );
+    contactSphere.position.copy(position);
+    indicatorGroup.add(contactSphere);
+
+    const direction = info.direction.clone().normalize();
+    const arrowLength = 0.95;
+    const arrowOrigin = position.clone().add(direction.clone().multiplyScalar(0.28));
+    const arrow = new THREE.ArrowHelper(direction, arrowOrigin, arrowLength, info.color, 0.26, 0.18);
+    indicatorGroup.add(arrow);
+
+    group.add(indicatorGroup);
+
+    if (labelGroup && typeof THREE.CSS2DObject !== 'undefined') {
+        const labelDiv = document.createElement('div');
+        labelDiv.className = 'label support-label';
+        labelDiv.textContent = info.label;
+        labelDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.65)';
+        labelDiv.style.color = '#ffffff';
+        labelDiv.style.padding = '2px 6px';
+        labelDiv.style.borderRadius = '3px';
+        labelDiv.style.fontSize = '11px';
+        labelDiv.style.fontWeight = 'bold';
+        labelDiv.style.border = 'none';
+    labelDiv.style.pointerEvents = 'none';
+    labelDiv.style.userSelect = 'none';
+
+        const label = new THREE.CSS2DObject(labelDiv);
+        const labelOffset = direction.clone().multiplyScalar(1.1).add(new THREE.Vector3(0, 0.35, 0));
+        label.position.copy(position).add(labelOffset);
+        labelGroup.add(label);
+    }
+}
+
 /**
  * 3Dシーンの初期化
  */
@@ -449,6 +531,11 @@ function build3DModel(scene, nodes, members, loadData = {}) {
             const supportSphere = new THREE.Mesh(new THREE.SphereGeometry(0.3, 32, 32), supportMaterial);
             supportSphere.position.copy(nodePosition);
             memberGroup.add(supportSphere);
+        }
+
+        const rollerAxis = getRollerAxisFromSupport(node.support);
+        if (rollerAxis) {
+            addRollerSupportIndicator(memberGroup, nodeLabelsGroup, nodePosition, rollerAxis);
         }
 
         const nodeDiv = document.createElement('div');

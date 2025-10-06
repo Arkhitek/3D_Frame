@@ -62,6 +62,68 @@ const UNIT_CONVERSION = {
     G_STEEL: CONFIG.materials.steelShearModulus,
 };
 
+const SUPPORT_TYPE_OPTIONS = Object.freeze([
+    { value: 'free', label: '自由' },
+    { value: 'pinned', label: 'ピン' },
+    { value: 'fixed', label: '固定' },
+    { value: 'roller-x', label: 'ローラー(X軸固定)' },
+    { value: 'roller-y', label: 'ローラー(Y軸固定)' },
+    { value: 'roller-z', label: 'ローラー(Z軸固定)' }
+]);
+
+const SUPPORT_ALIAS_ENTRIES = [
+    { target: 'free', aliases: ['f', 'free', '自由'] },
+    { target: 'pinned', aliases: ['p', 'pin', 'pinned', 'hinge', 'hinged', 'ピン'] },
+    { target: 'fixed', aliases: ['x', 'fix', 'fixed', '固定'] },
+    { target: 'roller-x', aliases: ['roller-x', 'roller_x', 'rollerx', 'r-x', 'rx', 'ローラーx', 'ローラー(x)', 'ローラー(X軸固定)'] },
+    { target: 'roller-y', aliases: ['roller-y', 'roller_y', 'rollery', 'r-y', 'ry', 'ローラー', 'ローラーy', 'ローラー(y)', 'ローラー(Y軸固定)', 'r', 'roller'] },
+    { target: 'roller-z', aliases: ['roller-z', 'roller_z', 'rollerz', 'r-z', 'rz', 'ローラーz', 'ローラー(z)', 'ローラー(Z軸固定)'] }
+];
+
+const SUPPORT_ALIAS_MAP = SUPPORT_ALIAS_ENTRIES.reduce((map, entry) => {
+    entry.aliases.forEach(alias => {
+        const key = `${alias}`.trim();
+        if (!key) return;
+        map.set(key, entry.target);
+        map.set(key.toLowerCase(), entry.target);
+    });
+    return map;
+}, new Map());
+
+const normalizeSupportValue = (value) => {
+    if (value === undefined || value === null) return 'free';
+    const raw = `${value}`.trim();
+    if (!raw) return 'free';
+    return SUPPORT_ALIAS_MAP.get(raw) || SUPPORT_ALIAS_MAP.get(raw.toLowerCase()) || raw;
+};
+
+const isRollerSupport = (value) => {
+    const normalized = normalizeSupportValue(value);
+    return normalized === 'roller-x' || normalized === 'roller-y' || normalized === 'roller-z';
+};
+
+const getRollerAxis = (value) => {
+    const normalized = normalizeSupportValue(value);
+    if (normalized === 'roller-x') return 'x';
+    if (normalized === 'roller-y') return 'y';
+    if (normalized === 'roller-z') return 'z';
+    return null;
+};
+
+const SUPPORT_LABEL_MAP = SUPPORT_TYPE_OPTIONS.reduce((map, { value, label }) => {
+    map[value] = label;
+    return map;
+}, {});
+
+const buildSupportOptionsMarkup = (selectedValue = 'free') => {
+    const normalized = normalizeSupportValue(selectedValue);
+    return SUPPORT_TYPE_OPTIONS.map(({ value, label }) =>
+        `<option value="${value}"${normalized === value ? ' selected' : ''}>${label}</option>`
+    ).join('');
+};
+
+const buildSupportSelectMarkup = (selectedValue = 'free') => `<select>${buildSupportOptionsMarkup(selectedValue)}</select>`;
+
 function getCurrentProjectionMode() {
     return elements?.projectionMode?.value || DEFAULT_PROJECTION_MODE;
 }
@@ -1645,47 +1707,54 @@ document.addEventListener('DOMContentLoaded', () => {
     let lastSectionCheckResults = null;
     let lastDisplacementScale = 0;
 
-    const dispScaleInput = document.getElementById('disp-scale-input');
-    dispScaleInput.addEventListener('change', (e) => {
-        if(lastResults) {
-            const newScale = parseFloat(e.target.value);
-            if(!isNaN(newScale)) {
-                drawDisplacementDiagram(lastResults.nodes, lastResults.members, lastResults.D, lastResults.memberLoads, newScale);
-            }
-        }
-    });
-
-    // Local State (canvasMode, firstMemberNode, selectedNodeIndex, selectedMemberIndex はグローバルスコープで定義済み)
-    let isDragging = false;
-    let isDraggingCanvas = false;
-    let lastMouseX = 0;
-    let lastMouseY = 0;
-    let historyStack = [];
-    const resolutionScale = 2.0;
-    let newMemberDefaults = { E: '205000', F: '235', Iz: '1840', Iy: '613', J: '235', A: '2340', Zz: '1230', Zy: '410', i_conn: 'rigid', j_conn: 'rigid' };
-    
-    // ポップアップの初期化（確実に非表示にする）
-    if (elements.memberPropsPopup) {
-        elements.memberPropsPopup.style.display = 'none';
-        elements.memberPropsPopup.style.visibility = 'hidden';
-        console.log('✅ memberPropsPopup初期化完了 (非表示設定)');
-    }
-    if (elements.nodePropsPopup) {
-        elements.nodePropsPopup.style.display = 'none';
-        elements.nodePropsPopup.style.visibility = 'hidden';
-        console.log('✅ nodePropsPopup初期化完了 (非表示設定)');
-    }
-    if (elements.nodeLoadPopup) {
-        elements.nodeLoadPopup.style.display = 'none';
-        elements.nodeLoadPopup.style.visibility = 'hidden';
-    }
-    if (elements.nodeCoordsPopup) {
-        elements.nodeCoordsPopup.style.display = 'none';
-        elements.nodeCoordsPopup.style.visibility = 'hidden';
-    }
     if (elements.addMemberPopup) {
+                const highlightNode = (nodeIndex) => {
+                    const node = nodes[nodeIndex];
+                    const projectedNode = getProjectedNode(nodeIndex);
+                    if (node && projectedNode) {
+                        const drawPos = transformPoint(projectedNode);
+                        if (drawPos) {
+                            ctx.save();
+                            ctx.strokeStyle = '#0066ff';
+                            ctx.lineWidth = 4;
+                            ctx.beginPath();
+                            ctx.arc(drawPos.x, drawPos.y, 10, 0, 2 * Math.PI);
+                            ctx.stroke();
+                            ctx.restore();
+                        }
+                    }
+                };
         elements.addMemberPopup.style.display = 'none';
+                const highlightMember = (memberIndex) => {
+                    const member = members[memberIndex];
+                    if (member) {
+                        const projected1 = getProjectedNode(member.i);
+                        const projected2 = getProjectedNode(member.j);
+                        if (projected1 && projected2 && isNodeVisible(member.i) && isNodeVisible(member.j)) {
+                            const pos1 = transformPoint(projected1);
+                            const pos2 = transformPoint(projected2);
+                            if (pos1 && pos2) {
+                                ctx.save();
+                                ctx.strokeStyle = '#0066ff';
+                                ctx.lineWidth = 5;
+                                ctx.beginPath();
+                                ctx.moveTo(pos1.x, pos1.y);
+                                ctx.lineTo(pos2.x, pos2.y);
+                                ctx.stroke();
+                                ctx.restore();
+                            }
+                        }
+                    }
+                };
         elements.addMemberPopup.style.visibility = 'hidden';
+                const hasValidNode = Number.isInteger(window.selectedNodeIndex) && window.selectedNodeIndex >= 0;
+                const hasValidMember = Number.isInteger(window.selectedMemberIndex) && window.selectedMemberIndex >= 0;
+
+                if (hasValidNode && isNodeVisible(window.selectedNodeIndex)) {
+                    highlightNode(window.selectedNodeIndex);
+                } else if (hasValidMember) {
+                    highlightMember(window.selectedMemberIndex);
+                }
     }
     
     // ツールチップ表示の状態管理
@@ -1706,6 +1775,74 @@ document.addEventListener('DOMContentLoaded', () => {
     let isRangeSelecting = false;
     let rangeSelectionAdditive = false;
     let selectionChoiceMenu = null;
+    let isDragging = false;
+    let isDraggingCanvas = false;
+    let lastMouseX = 0;
+    let lastMouseY = 0;
+    let historyStack = [];
+    let newMemberDefaults = {
+        E: '205000',
+        F: '235',
+        Iz: '1840',
+        Iy: '613',
+        J: '235',
+        A: '2340',
+        Zz: '1230',
+        Zy: '410',
+        i_conn: 'rigid',
+        j_conn: 'rigid'
+    };
+
+    window.newMemberDefaults = newMemberDefaults;
+
+    const addNodeToTable = (x, y, z, support = 'free', options = {}) => {
+        const tableBody = elements?.nodesTable || document.getElementById('nodes-table')?.getElementsByTagName('tbody')[0];
+        if (!tableBody) {
+            console.error('nodes-table not found');
+            return null;
+        }
+
+        const normalizedSupport = normalizeSupportValue(support);
+        const saveHistory = Object.prototype.hasOwnProperty.call(options, 'saveHistory')
+            ? options.saveHistory
+            : true;
+
+        const formatCoord = (value) => {
+            const num = Number.parseFloat(value ?? 0);
+            return Number.isFinite(num) ? num.toFixed(3) : '0.000';
+        };
+
+        const formatForced = (value, decimals = 3) => {
+            if (value === '' || value === null || value === undefined) return '0';
+            const num = Number.parseFloat(value);
+            return Number.isFinite(num) ? num.toFixed(decimals) : '0';
+        };
+
+        const forcedDx = options.dx_forced ?? options.dx ?? 0;
+        const forcedDy = options.dy_forced ?? options.dy ?? 0;
+        const forcedDz = options.dz_forced ?? options.dz ?? 0;
+        const forcedRx = options.rx_forced ?? options.rx ?? 0;
+        const forcedRy = options.ry_forced ?? options.ry ?? 0;
+        const forcedRz = options.rz_forced ?? options.rz ?? options.r_forced ?? 0;
+
+        const nodeCells = [
+            '#',
+            `<input type="number" step="0.001" value="${formatCoord(x)}">`,
+            `<input type="number" step="0.001" value="${formatCoord(y)}">`,
+            `<input type="number" step="0.001" value="${formatCoord(z)}">`,
+            buildSupportSelectMarkup(normalizedSupport),
+            `<input type="number" value="${formatForced(forcedDx, 3)}" step="0.1" title="強制変位 δx (mm)">`,
+            `<input type="number" value="${formatForced(forcedDy, 3)}" step="0.1" title="強制変位 δy (mm)">`,
+            `<input type="number" value="${formatForced(forcedDz, 3)}" step="0.1" title="強制変位 δz (mm)">`,
+            `<input type="number" value="${formatForced(forcedRx, 3)}" step="0.001" title="強制回転 θx (rad)">`,
+            `<input type="number" value="${formatForced(forcedRy, 3)}" step="0.001" title="強制回転 θy (rad)">`,
+            `<input type="number" value="${formatForced(forcedRz, 3)}" step="0.001" title="強制回転 θz (rad)">`
+        ];
+
+        return addRow(tableBody, nodeCells, saveHistory);
+    };
+
+    window.addNodeToTable = addNodeToTable;
     
     // window変数として登録（クロススコープアクセス用）
     window.selectedNodes = selectedNodes;
@@ -1749,7 +1886,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let unstableMembers = new Set();
     let instabilityMessage = '';
 
-    const analyzeInstability = (K_global, reduced_indices, nodes, members) => {
+    const analyzeInstability = (K_global, reduced_indices, nodes, members, is2DFrame = false) => {
         const analysis = {
             message: '',
             unstableNodes: new Set(),
@@ -1758,14 +1895,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             // 1. 拘束不足の節点を検出
-            const constraintAnalysis = analyzeConstraints(nodes);
+            const constraintAnalysis = analyzeConstraints(nodes, is2DFrame);
             if (constraintAnalysis.unconstrainedNodes.length > 0) {
                 analysis.unstableNodes = new Set(constraintAnalysis.unconstrainedNodes);
                 analysis.message += `拘束が不足している節点: ${constraintAnalysis.unconstrainedNodes.map(i => i+1).join(', ')}`;
             }
 
             // 2. 機構（メカニズム）を検出
-            const mechanismAnalysis = analyzeMechanisms(nodes, members);
+            const mechanismAnalysis = analyzeMechanisms(nodes, members, is2DFrame);
             if (mechanismAnalysis.problematicMembers.length > 0) {
                 mechanismAnalysis.problematicMembers.forEach(idx => analysis.unstableMembers.add(idx));
                 if (analysis.message) analysis.message += '\n';
@@ -1795,27 +1932,75 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    const analyzeConstraints = (nodes) => {
+    const ZERO_TOL_CONSTRAINT = 1e-6;
+
+    const isEffectivelyZeroConstraint = (value) => {
+        if (value === undefined || value === null) return false;
+        const numeric = Number(value);
+        return Number.isFinite(numeric) && Math.abs(numeric) < ZERO_TOL_CONSTRAINT;
+    };
+
+    const collectConstraintDofsForNode = (node, is2DFrame) => {
+        const dofs = new Set();
+        if (!node) return dofs;
+
+        const support = normalizeSupportValue(node.support);
+
+        if (is2DFrame) {
+            if (support === 'fixed') {
+                dofs.add('dx');
+                dofs.add('dy');
+                dofs.add('rz');
+            } else if (support === 'pinned') {
+                dofs.add('dx');
+                dofs.add('dy');
+            } else if (isRollerSupport(support)) {
+                const axis = getRollerAxis(support);
+                if (axis === 'x') dofs.add('dx');
+                else if (axis === 'z') dofs.add('dy');
+                else if (axis === 'y') dofs.add('out-of-plane-y');
+                else dofs.add(`roller-${support}`);
+            }
+
+            if (isEffectivelyZeroConstraint(node.dx_forced)) dofs.add('dx');
+            if (isEffectivelyZeroConstraint(node.dy_forced)) dofs.add('dy');
+            const rotationForced = node.rz_forced !== undefined ? node.rz_forced : node.r_forced;
+            if (isEffectivelyZeroConstraint(rotationForced)) dofs.add('rz');
+        } else {
+            if (support === 'fixed') {
+                ['dx', 'dy', 'dz', 'rx', 'ry', 'rz'].forEach(dof => dofs.add(dof));
+            } else if (support === 'pinned') {
+                ['dx', 'dy', 'dz'].forEach(dof => dofs.add(dof));
+            } else if (isRollerSupport(support)) {
+                const axis = getRollerAxis(support);
+                if (axis === 'x') dofs.add('dx');
+                else if (axis === 'y') dofs.add('dy');
+                else if (axis === 'z') dofs.add('dz');
+                else dofs.add(`roller-${support}`);
+            }
+
+            if (isEffectivelyZeroConstraint(node.dx_forced)) dofs.add('dx');
+            if (isEffectivelyZeroConstraint(node.dy_forced)) dofs.add('dy');
+            if (isEffectivelyZeroConstraint(node.dz_forced)) dofs.add('dz');
+            if (isEffectivelyZeroConstraint(node.rx_forced)) dofs.add('rx');
+            if (isEffectivelyZeroConstraint(node.ry_forced)) dofs.add('ry');
+            const rotationForced = node.rz_forced !== undefined ? node.rz_forced : node.r_forced;
+            if (isEffectivelyZeroConstraint(rotationForced)) dofs.add('rz');
+        }
+
+        return dofs;
+    };
+
+    const analyzeConstraints = (nodes, is2DFrame) => {
         const unconstrainedNodes = [];
         
         // support値から拘束数を計算するヘルパー関数
-        const getConstraintCount = (node) => {
-            if (!node || !node.support) return 0;
-            const s = node.support;
-            // x: 固定 (3自由度拘束 in 2D), p: ピン (2並進拘束), r: ローラー (1並進拘束), f: 自由 (0拘束)
-            if (s === 'x') return 3; // 2D解析では3自由度 (dx, dy, θz)
-            if (s === 'p') return 2; // 2並進拘束 (dx, dy)
-            if (s === 'r') return 1; // 1並進拘束 (通常はdy)
-            return 0; // 'f' or その他
-        };
+        const getConstraintCount = (node) => collectConstraintDofsForNode(node, is2DFrame).size;
         
         nodes.forEach((node, index) => {
             let constraintCount = getConstraintCount(node);
             
-            // 強制変位がある場合も拘束としてカウント（2D解析: dx, dy, θz）
-            if (node.dx_forced !== undefined && Math.abs(node.dx_forced) < 1e-6) constraintCount++;
-            if (node.dy_forced !== undefined && Math.abs(node.dy_forced) < 1e-6) constraintCount++;
-            if (node.rz_forced !== undefined && Math.abs(node.rz_forced) < 1e-6) constraintCount++;
+            // collectConstraintDofsForNode で強制変位も考慮済みなので追加処理は不要
             
             // 2D解析では最低2自由度の拘束が必要（並進2方向）
             // 全く拘束されていない節点を検出
@@ -1827,26 +2012,11 @@ document.addEventListener('DOMContentLoaded', () => {
         return { unconstrainedNodes };
     };
 
-    const analyzeMechanisms = (nodes, members) => {
+    const analyzeMechanisms = (nodes, members, is2DFrame) => {
         const problematicMembers = [];
         
         // support値と強制変位から拘束数を計算するヘルパー関数
-        const getConstraintCount = (node) => {
-            if (!node || !node.support) return 0;
-            const s = node.support;
-            let count = 0;
-            // x: 固定 (3自由度), p: ピン (2並進), r: ローラー (1並進), f: 自由 (0)
-            if (s === 'x') count = 3;
-            else if (s === 'p') count = 2;
-            else if (s === 'r') count = 1;
-            
-            // 強制変位がある場合も拘束としてカウント
-            if (node.dx_forced !== undefined && Math.abs(node.dx_forced) < 1e-6) count++;
-            if (node.dy_forced !== undefined && Math.abs(node.dy_forced) < 1e-6) count++;
-            if (node.rz_forced !== undefined && Math.abs(node.rz_forced) < 1e-6) count++;
-            
-            return count;
-        };
+        const getConstraintCount = (node) => collectConstraintDofsForNode(node, is2DFrame).size;
         
         // 基本的なメカニズム検出
         // 1. 孤立した部材（どちらかの端が拘束されていない）
@@ -3069,6 +3239,8 @@ document.addEventListener('DOMContentLoaded', () => {
             font-family: Arial, sans-serif;
         `;
         
+        const bulkSupportOptionsHtml = buildSupportOptionsMarkup('free');
+
         dialog.innerHTML = `
             <h3>節点一括編集 (${selectedNodes.size}個の節点)</h3>
             
@@ -3100,10 +3272,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <label><input type="checkbox" id="bulk-edit-support"> 境界条件</label>
                 <div id="bulk-support-container" style="margin-left: 20px; display: none;">
                     <select id="bulk-support-type" style="width: 150px;">
-                        <option value="free">自由</option>
-                        <option value="pinned">ピン</option>
-                        <option value="fixed">固定</option>
-                        <option value="roller">ローラー</option>
+                        ${bulkSupportOptionsHtml}
                     </select>
                 </div>
             </div>
@@ -3151,7 +3320,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // 境界条件の処理
         if (document.getElementById('bulk-edit-support').checked) {
-            updates.support = document.getElementById('bulk-support-type').value;
+            updates.support = normalizeSupportValue(document.getElementById('bulk-support-type').value);
         }
         
         console.log('節点一括編集内容:', updates);
@@ -3180,7 +3349,10 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             // 境界条件の更新
             if (updates.support) {
-                row.cells[3].querySelector('select').value = updates.support;
+                const supportSelect = row.querySelector('select');
+                if (supportSelect) {
+                    supportSelect.value = updates.support;
+                }
             }
         }
         if (typeof drawOnCanvas === 'function') {
@@ -3213,11 +3385,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const getCurrentState = () => {
         const state = { nodes: [], members: [], nodeLoads: [], memberLoads: [] };
         Array.from(elements.nodesTable.rows).forEach(row => {
+            const supportSelectValue = row.cells[4]?.querySelector('select')?.value || 'free';
             state.nodes.push({
                 x: row.cells[1]?.querySelector('input')?.value || 0,
                 y: row.cells[2]?.querySelector('input')?.value || 0,
                 z: row.cells[3]?.querySelector('input')?.value || 0,
-                support: row.cells[4]?.querySelector('select')?.value || 'free',
+                support: normalizeSupportValue(supportSelectValue),
                 dx_forced: row.cells[5]?.querySelector('input')?.value || 0,
                 dy_forced: row.cells[6]?.querySelector('input')?.value || 0,
                 dz_forced: row.cells[7]?.querySelector('input')?.value || 0,
@@ -3410,21 +3583,6 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             return defaultValue;
         };
-        const normalizeSupport = (value) => {
-            if (!value) return 'free';
-            switch (value) {
-                case 'f':
-                    return 'free';
-                case 'p':
-                    return 'pinned';
-                case 'x':
-                    return 'fixed';
-                case 'r':
-                    return 'roller';
-                default:
-                    return value;
-            }
-        };
         const MEMBER_PROPERTY_DEFAULTS = Object.freeze({
             Iz: 1840,
             Iy: 613,
@@ -3434,10 +3592,7 @@ document.addEventListener('DOMContentLoaded', () => {
             Zy: 410
         });
         const getValue = (value, defaultValue = 0) => getNumberValue(value, defaultValue);
-        const buildSupportSelect = (supportValue) => {
-            const support = normalizeSupport(supportValue);
-            return `<select><option value="free"${support === 'free' ? ' selected' : ''}>自由</option><option value="pinned"${support === 'pinned' ? ' selected' : ''}>ピン</option><option value="fixed"${support === 'fixed' ? ' selected' : ''}>固定</option><option value="roller"${support === 'roller' ? ' selected' : ''}>ローラー</option></select>`;
-        };
+        const buildSupportSelect = (supportValue) => buildSupportSelectMarkup(supportValue);
 
         try {
             elements.nodesTable.innerHTML = '';
@@ -3446,19 +3601,22 @@ document.addEventListener('DOMContentLoaded', () => {
             elements.memberLoadsTable.innerHTML = '';
             
             // 節点復元
-            state.nodes.forEach(n => addRow(elements.nodesTable, [
+            state.nodes.forEach(n => {
+                const normalizedSupport = normalizeSupportValue(n.support);
+                addRow(elements.nodesTable, [
                 `#`,
                 `<input type="number" value="${getNumberValue(n.x, 0)}">`,
                 `<input type="number" value="${getNumberValue(n.y, 0)}">`,
                 `<input type="number" value="${getNumberValue(n.z, 0)}">`,
-                buildSupportSelect(n.support),
+                buildSupportSelect(normalizedSupport),
                 `<input type="number" value="${getNumberValue(n.dx_forced, 0)}" step="0.1">`,
                 `<input type="number" value="${getNumberValue(n.dy_forced, 0)}" step="0.1">`,
                 `<input type="number" value="${getNumberValue(n.dz_forced, 0)}" step="0.1">`,
                 `<input type="number" value="${getNumberValue(n.rx_forced, 0)}" step="0.001">`,
                 `<input type="number" value="${getNumberValue(n.ry_forced, 0)}" step="0.001">`,
                 `<input type="number" value="${getNumberValue(n.rz_forced, 0)}" step="0.001">`
-            ], false));
+            ], false);
+            });
             
             // 部材復元
             state.members.forEach(m => {
@@ -3923,6 +4081,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (is2DFrame) {
                 // 2次元フレームの場合、Z座標をY座標として扱う（2D解析エンジンはXY平面用）
                 nodes.forEach(node => {
+
+            const addNode = typeof window.addNodeToTable === 'function' ? window.addNodeToTable : null;
+            if (!addNode) {
+                alert('節点追加処理が初期化されていません。ページを再読み込みしてください。');
+                return;
+            }
                     const tempY = node.y;
                     node.y = node.z; // Z座標（垂直）をY座標として使用
                     node.z = tempY;  // Y座標（面外）をZ座標として退避
@@ -4667,23 +4831,25 @@ document.addEventListener('DOMContentLoaded', () => {
             // 1. 物理的な支点による拘束自由度を定義（2D/3Dで処理を分ける）
             const support_constraints = new Set();
             nodes.forEach((node, i) => {
-                const supportType = node.support;
+                const supportType = normalizeSupportValue(node.support);
                 
                 if (is2DFrame) {
                     // 2D解析: 3自由度 (dx, dy, θz)
-                    if (supportType === 'x' || supportType === 'fixed') {
+                    if (supportType === 'fixed') {
                         support_constraints.add(i * 3);
                         support_constraints.add(i * 3 + 1);
                         support_constraints.add(i * 3 + 2);
-                    } else if (supportType === 'p' || supportType === 'pinned') {
+                    } else if (supportType === 'pinned') {
                         support_constraints.add(i * 3);
                         support_constraints.add(i * 3 + 1);
-                    } else if (supportType === 'r' || supportType === 'roller') {
+                    } else if (supportType === 'roller-x') {
+                        support_constraints.add(i * 3);
+                    } else if (supportType === 'roller-y' || supportType === 'roller-z') {
                         support_constraints.add(i * 3 + 1);
                     }
                 } else {
                     // 3D解析: 6自由度 (dx, dy, dz, θx, θy, θz)
-                    if (supportType === 'x' || supportType === 'fixed') {
+                    if (supportType === 'fixed') {
                         // 完全固定: 全6自由度を拘束
                         support_constraints.add(i * 6);
                         support_constraints.add(i * 6 + 1);
@@ -4691,14 +4857,18 @@ document.addEventListener('DOMContentLoaded', () => {
                         support_constraints.add(i * 6 + 3);
                         support_constraints.add(i * 6 + 4);
                         support_constraints.add(i * 6 + 5);
-                    } else if (supportType === 'p' || supportType === 'pinned') {
+                    } else if (supportType === 'pinned') {
                         // ピン: 移動3自由度を拘束、回転自由
                         support_constraints.add(i * 6);
                         support_constraints.add(i * 6 + 1);
                         support_constraints.add(i * 6 + 2);
-                    } else if (supportType === 'r' || supportType === 'roller') {
-                        // ローラー: Y方向のみ拘束（簡易的）
-                        support_constraints.add(i * 6 + 1);
+                    } else if (isRollerSupport(supportType)) {
+                        const axis = getRollerAxis(supportType) || 'y';
+                        const axisIndexMap = { x: 0, y: 1, z: 2 };
+                        const offset = axisIndexMap[axis];
+                        if (offset !== undefined) {
+                            support_constraints.add(i * 6 + offset);
+                        }
                     }
                 }
             });
@@ -4848,7 +5018,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // 6. 未知変位 D_f を解く
             const D_f = mat.solve(K_ff, F_modified);
             if (!D_f) {
-                const instabilityAnalysis = analyzeInstability(K_global, free_indices, nodes, members);
+                const instabilityAnalysis = analyzeInstability(K_global, free_indices, nodes, members, is2DFrame);
                 throw new Error(`解を求めることができませんでした。構造が不安定であるか、拘束が不適切である可能性があります。\n${instabilityAnalysis.message}`);
             }
 
@@ -5064,12 +5234,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const ry_forced_rad = parseFloat(row.cells[9]?.querySelector('input')?.value) || 0;
             const rz_forced_rad = parseFloat(row.cells[10]?.querySelector('input')?.value) || 0;
 
+            const supportValue = normalizeSupportValue(supportSelect.value);
+
             return {
                 id: i + 1,
                 x: parseFloat(xInput.value),
                 y: parseFloat(yInput.value),
                 z: parseFloat(zInput.value),
-                support: supportSelect.value,
+                support: supportValue,
                 // 強制変位を基本単位(m, rad)で格納
                 dx_forced: dx_forced_mm / 1000,
                 dy_forced: dy_forced_mm / 1000,
@@ -5743,6 +5915,13 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
 
+        const resolutionScale = (() => {
+            const override = (typeof window !== 'undefined') ? window.canvasResolutionScale : undefined;
+            if (Number.isFinite(override) && override > 0) return override;
+            const configValue = CONFIG && CONFIG.ui ? CONFIG.ui.canvasResolutionScale : undefined;
+            return Number.isFinite(configValue) && configValue > 0 ? configValue : 1;
+        })();
+
         const dpr = window.devicePixelRatio || 1;
         canvas.width = rect.width * dpr * resolutionScale;
         canvas.height = rect.height * dpr * resolutionScale;
@@ -5923,8 +6102,159 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
     const drawConnections = (ctx, transform, nodes, members) => { ctx.fillStyle = 'white'; ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5; const offset = 6; const projectionMode = getCurrentProjectionMode(); const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode)); const visibleNodeIndices = getVisibleNodeIndices(nodes); members.forEach(m => { if (!visibleNodeIndices.has(m.i) || !visibleNodeIndices.has(m.j)) return; const n_i = projectedNodes[m.i]; const p_i = transform(n_i.x, n_i.y); if (m.i_conn === 'pinned') { const p_i_offset = { x: p_i.x + offset * m.c, y: p_i.y - offset * m.s }; ctx.beginPath(); ctx.arc(p_i_offset.x, p_i_offset.y, 3, 0, 2 * Math.PI); ctx.fill(); ctx.stroke(); } if (m.j_conn === 'pinned') { const n_j = projectedNodes[m.j]; const p_j = transform(n_j.x, n_j.y); const p_j_offset = { x: p_j.x - offset * m.c, y: p_j.y + offset * m.s }; ctx.beginPath(); ctx.arc(p_j_offset.x, p_j_offset.y, 3, 0, 2 * Math.PI); ctx.fill(); ctx.stroke(); } }); };
-    const drawBoundaryConditions = (ctx, transform, nodes) => { const size = 10; const projectionMode = getCurrentProjectionMode(); const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode)); const visibleNodeIndices = getVisibleNodeIndices(nodes); projectedNodes.forEach((projNode, idx) => { if (!visibleNodeIndices.has(idx)) return; if (nodes[idx].support === 'free') return; const pos = transform(projNode.x, projNode.y); ctx.strokeStyle = '#008000'; ctx.fillStyle = '#008000'; ctx.lineWidth = 1.5; ctx.beginPath(); if (nodes[idx].support === 'fixed') { ctx.moveTo(pos.x - size, pos.y + size); ctx.lineTo(pos.x + size, pos.y + size); for(let i=0; i < 5; i++){ ctx.moveTo(pos.x - size + i*size/2, pos.y + size); ctx.lineTo(pos.x - size + i*size/2 - size/2, pos.y + size + size/2); } } else if (nodes[idx].support === 'pinned') { ctx.moveTo(pos.x, pos.y); ctx.lineTo(pos.x - size, pos.y + size); ctx.lineTo(pos.x + size, pos.y + size); ctx.closePath(); ctx.stroke(); ctx.moveTo(pos.x - size*1.2, pos.y + size); ctx.lineTo(pos.x + size*1.2, pos.y + size); } else if (nodes[idx].support === 'roller') { ctx.moveTo(pos.x, pos.y); ctx.lineTo(pos.x - size, pos.y + size); ctx.lineTo(pos.x + size, pos.y + size); ctx.closePath(); ctx.stroke(); ctx.moveTo(pos.x - size, pos.y + size + 3); ctx.lineTo(pos.x + size, pos.y + size + 3); } ctx.stroke(); }); };
-    const drawDimensions = (ctx, transform, nodes, members, labelManager, obstacles) => { const offset = 15; ctx.strokeStyle = '#0000ff'; ctx.lineWidth = 1; const projectionMode = getCurrentProjectionMode(); const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode)); const visibleNodeIndices = getVisibleNodeIndices(nodes); members.forEach(m => { if (!visibleNodeIndices.has(m.i) || !visibleNodeIndices.has(m.j)) return; const n1 = projectedNodes[m.i]; const n2 = projectedNodes[m.j]; const p1 = transform(n1.x, n1.y); const p2 = transform(n2.x, n2.y); const midX = (p1.x + p2.x) / 2; const midY = (p1.y + p2.y) / 2; const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x); const offsetX = offset * Math.sin(angle); const offsetY = -offset * Math.cos(angle); const labelTargetX = midX + offsetX; const labelTargetY = midY + offsetY; const labelText = `${m.length.toFixed(2)}m`; ctx.fillStyle = '#0000ff'; labelManager.draw(ctx, labelText, labelTargetX, labelTargetY, obstacles); }); };
+
+    const ROLLER_AXIS_VISUALS = Object.freeze({
+        x: {
+            color: '#e74c3c',
+            lineWidth: 2,
+            draw(ctx, pos, size) {
+                ctx.beginPath();
+                ctx.moveTo(pos.x + size * 0.3, pos.y + size * 0.4);
+                ctx.lineTo(pos.x + size * 1.4, pos.y + size * 0.4);
+                ctx.moveTo(pos.x + size * 1.4, pos.y + size * 0.4);
+                ctx.lineTo(pos.x + size * 1.2, pos.y + size * 0.2);
+                ctx.moveTo(pos.x + size * 1.4, pos.y + size * 0.4);
+                ctx.lineTo(pos.x + size * 1.2, pos.y + size * 0.6);
+                ctx.stroke();
+
+                ctx.font = 'bold 11px Arial';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('X', pos.x + size * 1.55, pos.y + size * 0.4);
+            }
+        },
+        y: {
+            color: '#3498db',
+            lineWidth: 2,
+            draw(ctx, pos, size) {
+                ctx.beginPath();
+                ctx.moveTo(pos.x - size * 0.4, pos.y - size * 0.2);
+                ctx.lineTo(pos.x - size * 0.4, pos.y - size * 1.4);
+                ctx.moveTo(pos.x - size * 0.4, pos.y - size * 1.4);
+                ctx.lineTo(pos.x - size * 0.6, pos.y - size * 1.2);
+                ctx.moveTo(pos.x - size * 0.4, pos.y - size * 1.4);
+                ctx.lineTo(pos.x - size * 0.2, pos.y - size * 1.2);
+                ctx.stroke();
+
+                ctx.font = 'bold 11px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
+                ctx.fillText('Y', pos.x - size * 0.4, pos.y - size * 1.55);
+            }
+        },
+        z: {
+            color: '#9b59b6',
+            lineWidth: 2,
+            draw(ctx, pos, size) {
+                ctx.beginPath();
+                ctx.arc(pos.x - size * 0.6, pos.y + size * 0.3, size * 0.45, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 10px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('Z', pos.x - size * 0.6, pos.y + size * 0.3);
+            }
+        }
+    });
+
+    const drawBoundaryConditions = (ctx, transform, nodes) => {
+        const size = 10;
+        const projectionMode = getCurrentProjectionMode();
+        const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode));
+        const visibleNodeIndices = getVisibleNodeIndices(nodes);
+
+        projectedNodes.forEach((projNode, idx) => {
+            if (!visibleNodeIndices.has(idx)) return;
+
+            const supportType = normalizeSupportValue(nodes[idx].support);
+            if (supportType === 'free') return;
+
+            const pos = transform(projNode.x, projNode.y);
+
+            ctx.save();
+            ctx.strokeStyle = '#008000';
+            ctx.fillStyle = '#008000';
+            ctx.lineWidth = 1.5;
+
+            if (supportType === 'fixed') {
+                ctx.beginPath();
+                ctx.moveTo(pos.x - size, pos.y + size);
+                ctx.lineTo(pos.x + size, pos.y + size);
+                for (let i = 0; i < 5; i++) {
+                    ctx.moveTo(pos.x - size + (i * size) / 2, pos.y + size);
+                    ctx.lineTo(pos.x - size + (i * size) / 2 - size / 2, pos.y + size + size / 2);
+                }
+                ctx.stroke();
+            } else if (supportType === 'pinned') {
+                ctx.beginPath();
+                ctx.moveTo(pos.x, pos.y);
+                ctx.lineTo(pos.x - size, pos.y + size);
+                ctx.lineTo(pos.x + size, pos.y + size);
+                ctx.closePath();
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(pos.x - size * 1.2, pos.y + size);
+                ctx.lineTo(pos.x + size * 1.2, pos.y + size);
+                ctx.stroke();
+            } else if (isRollerSupport(supportType)) {
+                ctx.beginPath();
+                ctx.moveTo(pos.x, pos.y);
+                ctx.lineTo(pos.x - size, pos.y + size);
+                ctx.lineTo(pos.x + size, pos.y + size);
+                ctx.closePath();
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(pos.x - size, pos.y + size + 3);
+                ctx.lineTo(pos.x + size, pos.y + size + 3);
+                ctx.stroke();
+            }
+
+            ctx.restore();
+
+            if (isRollerSupport(supportType)) {
+                const axis = getRollerAxis(supportType);
+                const visual = axis ? ROLLER_AXIS_VISUALS[axis] : null;
+                if (visual) {
+                    ctx.save();
+                    ctx.strokeStyle = visual.color;
+                    ctx.fillStyle = visual.color;
+                    ctx.lineWidth = visual.lineWidth;
+                    visual.draw(ctx, pos, size);
+                    ctx.restore();
+                }
+            }
+        });
+    };
+    const drawDimensions = (ctx, transform, nodes, members, labelManager, obstacles) => {
+        const offset = 15;
+        ctx.strokeStyle = '#0000ff';
+        ctx.lineWidth = 1;
+        const projectionMode = getCurrentProjectionMode();
+        const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode));
+        const visibleNodeIndices = getVisibleNodeIndices(nodes);
+        members.forEach(m => {
+            if (!visibleNodeIndices.has(m.i) || !visibleNodeIndices.has(m.j)) return;
+            const n1 = projectedNodes[m.i];
+            const n2 = projectedNodes[m.j];
+            const p1 = transform(n1.x, n1.y);
+            const p2 = transform(n2.x, n2.y);
+            const midX = (p1.x + p2.x) / 2;
+            const midY = (p1.y + p2.y) / 2;
+            const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+            const offsetX = offset * Math.sin(angle);
+            const offsetY = -offset * Math.cos(angle);
+            const labelTargetX = midX + offsetX;
+            const labelTargetY = midY + offsetY;
+            const labelText = `${m.length.toFixed(2)}m`;
+            ctx.fillStyle = '#0000ff';
+            labelManager.draw(ctx, labelText, labelTargetX, labelTargetY, obstacles);
+        });
+    };
     const getProjectionModeValue = () => getCurrentProjectionMode();
 
     const buildConcentratedLoadRules = (projectionMode, is3DModeActive) => {
@@ -9161,7 +9491,11 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 const jConnSelect = memberRow.cells[jConnIndex]?.querySelector('select');
                 const props = {E:E_val, F:F_val, Iz:Iz_m4, Iy:Iy_m4, J:J_m4, A:A_m2, Zz:Zz_m3, Zy:Zy_m3, i_conn: iConnSelect ? iConnSelect.value : 'rigid', j_conn: jConnSelect ? jConnSelect.value : 'rigid'};
                 memberRow.querySelector('.delete-row-btn').onclick.apply(memberRow.querySelector('.delete-row-btn'));
-                addRow(elements.nodesTable, [`#`,`<input type="number" value="${nodeX.toFixed(2)}">`,`<input type="number" value="${nodeY.toFixed(2)}">`,`<input type="number" value="${nodeZ.toFixed(2)}">`,`<select><option value="free" selected>自由</option><option value="pinned">ピン</option><option value="fixed">固定</option><option value="roller">ローラー</option></select>`], false);
+                const newNodeRow = addNodeToTable(nodeX, nodeY, nodeZ, 'free');
+                if (!newNodeRow) {
+                    console.error('節点追加に失敗しました（部材分割）');
+                    return;
+                }
                 const newNodeId = elements.nodesTable.rows.length;
                 addRow(elements.membersTable, [`#`, ...memberRowHTML(startNodeId, newNodeId, props.E, props.F, props.Iz, props.Iy, props.J, props.A, props.Zz, props.Zy, props.i_conn, 'rigid')], false);
                 addRow(elements.membersTable, [`#`, ...memberRowHTML(newNodeId, endNodeId, props.E, props.F, props.Iz, props.Iy, props.J, props.A, props.Zz, props.Zy, 'rigid', props.j_conn)], false);
@@ -9186,7 +9520,13 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     nodeX = modelCoords.x; nodeY = modelCoords.y; nodeZ = 0;
                 }
 
-                addRow(elements.nodesTable, [`#`,`<input type="number" value="${nodeX.toFixed(2)}">`,`<input type="number" value="${nodeY.toFixed(2)}">`,`<input type="number" value="${nodeZ.toFixed(2)}">`,`<select><option value="free" selected>自由</option><option value="pinned">ピン</option><option value="fixed">固定</option><option value="roller">ローラー</option></select>`]);
+                const newNodeRow = addNodeToTable(nodeX, nodeY, nodeZ, 'free');
+                if (newNodeRow) {
+                    renumberTables();
+                    if (typeof drawOnCanvas === 'function') {
+                        drawOnCanvas();
+                    }
+                }
             }
         } else if (canvasMode === 'addMember') {
             if (clickedNodeIndex !== -1) {
@@ -12596,19 +12936,23 @@ const loadPreset = (index) => {
         elements.membersTable.innerHTML = '';
         elements.nodeLoadsTable.innerHTML = '';
         elements.memberLoadsTable.innerHTML = '';
-        p.nodes.forEach(n => addRow(elements.nodesTable, [
-            `#`, 
-            `<input type="number" value="${n.x}">`, 
-            `<input type="number" value="${n.y}">`, 
-            `<input type="number" value="${n.z || 0}">`, 
-            `<select><option value="free"${n.s==='f'?' selected':''}>自由</option><option value="pinned"${n.s==='p'?' selected':''}>ピン</option><option value="fixed"${n.s==='x'?' selected':''}>固定</option><option value="roller"${n.s==='r'?' selected':''}>ローラー</option></select>`, 
-            `<input type="number" value="0" step="0.1">`, 
-            `<input type="number" value="0" step="0.1">`, 
-            `<input type="number" value="0" step="0.1">`, 
-            `<input type="number" value="0" step="0.001">`, 
-            `<input type="number" value="0" step="0.001">`, 
-            `<input type="number" value="0" step="0.001">`
-        ], false));
+        p.nodes.forEach(n => {
+            const supportRaw = n.support ?? n.s ?? 'free';
+            const normalizedSupport = normalizeSupportValue(supportRaw);
+            addRow(elements.nodesTable, [
+                `#`, 
+                `<input type="number" value="${n.x}">`, 
+                `<input type="number" value="${n.y}">`, 
+                `<input type="number" value="${n.z || 0}">`, 
+                buildSupportSelectMarkup(normalizedSupport), 
+                `<input type="number" value="0" step="0.1">`, 
+                `<input type="number" value="0" step="0.1">`, 
+                `<input type="number" value="0" step="0.1">`, 
+                `<input type="number" value="0" step="0.001">`, 
+                `<input type="number" value="0" step="0.001">`, 
+                `<input type="number" value="0" step="0.001">`
+            ], false);
+        });
         p.members.forEach(m => {
             const E_N_mm2 = m.E || '205000';
             const F_N_mm2 = m.F || '235';
@@ -12757,7 +13101,8 @@ const loadPreset = (index) => {
             newY = nodeAtMaxX.y;
             newZ = nodeAtMaxX.z || 0;
         }
-        addRow(elements.nodesTable, [`#`, `<input type="number" value="${newX.toFixed(2)}">`, `<input type="number" value="${newY.toFixed(2)}">`, `<input type="number" value="${newZ.toFixed(2)}">`, `<select><option value="free">自由</option><option value="pinned">ピン</option><option value="fixed">固定</option><option value="roller">ローラー</option></select>`, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.001">`, `<input type="number" value="0" step="0.001">`, `<input type="number" value="0" step="0.001">`]);
+    const defaultSupportSelect = buildSupportSelectMarkup('free');
+    addRow(elements.nodesTable, [`#`, `<input type="number" value="${newX.toFixed(2)}">`, `<input type="number" value="${newY.toFixed(2)}">`, `<input type="number" value="${newZ.toFixed(2)}">`, defaultSupportSelect, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.001">`, `<input type="number" value="0" step="0.001">`, `<input type="number" value="0" step="0.001">`]);
     };
     elements.addMemberBtn.onclick = () => {
         const nodeCount = elements.nodesTable.rows.length;
@@ -15005,17 +15350,32 @@ const initializeFrameGenerator = () => {
     // プレビュー更新関数
     const updatePreview = () => {
         const floors = parseInt(floorsInput.value) || 1;
-    const spans = parseInt(spansInput.value) || 1;
-    const depthSpans = parseInt(depthSpansInput.value) || 1;
-    const fixBase = fixBaseCheckbox.checked;
-        
-    const nodesPerFloor = (spans + 1) * (depthSpans + 1);
-    const totalNodes = nodesPerFloor * (floors + 1);
-    const horizontalMembersX = spans * (depthSpans + 1) * (floors + 1); // X方向梁
-    const horizontalMembersZ = depthSpans * (spans + 1) * (floors + 1); // Z方向梁
-    const verticalMembers = nodesPerFloor * floors; // 柱
-    const totalMembers = horizontalMembersX + horizontalMembersZ + verticalMembers;
-        
+        const spans = parseInt(spansInput.value) || 1;
+        const depthSpans = parseInt(depthSpansInput.value) || 1;
+        const fixBase = fixBaseCheckbox.checked;
+        const startZ = parseFloat(startZInput.value) || 0;
+        const floorHeight = parseFloat(floorHeightInput.value) || 3.5;
+
+        const nodesPerFloor = (spans + 1) * (depthSpans + 1);
+        const totalNodes = nodesPerFloor * (floors + 1);
+
+        const zeroTolerance = 1e-6;
+        let zeroLevelFloorCount = 0;
+        for (let floor = 0; floor <= floors; floor++) {
+            const zLevel = startZ + floor * floorHeight;
+            if (Math.abs(zLevel) < zeroTolerance) {
+                zeroLevelFloorCount++;
+            }
+        }
+
+        const horizontalMembersXPerFloor = spans * (depthSpans + 1); // X方向梁
+        const horizontalMembersYPerFloor = depthSpans * (spans + 1); // Y方向梁（従来Z方向表記）
+        const effectiveHorizontalFloorCount = Math.max((floors + 1) - zeroLevelFloorCount, 0);
+        const horizontalMembersX = horizontalMembersXPerFloor * effectiveHorizontalFloorCount;
+        const horizontalMembersZ = horizontalMembersYPerFloor * effectiveHorizontalFloorCount;
+        const verticalMembers = nodesPerFloor * floors; // 柱
+        const totalMembers = horizontalMembersX + horizontalMembersZ + verticalMembers;
+
         previewNodes.textContent = totalNodes;
         previewMembers.textContent = totalMembers;
         previewSupport.textContent = fixBase ? '固定支点' : 'ピン支点';
@@ -15028,6 +15388,12 @@ const initializeFrameGenerator = () => {
     
     // チェックボックス変更時のプレビュー更新
     fixBaseCheckbox.addEventListener('change', updatePreview);
+
+    [floorHeightInput, startZInput].forEach(input => {
+        if (input) {
+            input.addEventListener('input', updatePreview);
+        }
+    });
     
     // モーダル表示
     const showModal = () => {
@@ -15061,40 +15427,6 @@ const initializeFrameGenerator = () => {
         });
     };
     
-    const addNodeToTable = (x, y, z, support = 'free') => {
-        const tableBody = elements?.nodesTable || document.getElementById('nodes-table')?.getElementsByTagName('tbody')[0];
-        if (!tableBody) {
-            console.error('nodes-table not found');
-            return null;
-        }
-
-        const normalizedSupport = support === 'pin' ? 'pinned' : support;
-        const formatCoord = (value) => Number.parseFloat(value ?? 0).toFixed(3);
-
-        const nodeCells = [
-            '#',
-            `<input type="number" step="0.001" value="${formatCoord(x)}">`,
-            `<input type="number" step="0.001" value="${formatCoord(y)}">`,
-            `<input type="number" step="0.001" value="${formatCoord(z)}">`,
-            `<select>
-                <option value="free" ${normalizedSupport === 'free' ? 'selected' : ''}>自由</option>
-                <option value="pinned" ${normalizedSupport === 'pinned' ? 'selected' : ''}>ピン</option>
-                <option value="fixed" ${normalizedSupport === 'fixed' ? 'selected' : ''}>固定</option>
-                <option value="roller-x" ${normalizedSupport === 'roller-x' ? 'selected' : ''}>ローラー(X)</option>
-                <option value="roller-y" ${normalizedSupport === 'roller-y' ? 'selected' : ''}>ローラー(Y)</option>
-                <option value="roller-z" ${normalizedSupport === 'roller-z' ? 'selected' : ''}>ローラー(Z)</option>
-            </select>`,
-            `<input type="number" value="0" step="0.1" title="強制変位 δx (mm)">`,
-            `<input type="number" value="0" step="0.1" title="強制変位 δy (mm)">`,
-            `<input type="number" value="0" step="0.1" title="強制変位 δz (mm)">`,
-            `<input type="number" value="0" step="0.001" title="強制回転 θx (rad)">`,
-            `<input type="number" value="0" step="0.001" title="強制回転 θy (rad)">`,
-            `<input type="number" value="0" step="0.001" title="強制回転 θz (rad)">`
-        ];
-
-        return addRow(tableBody, nodeCells, false);
-    };
-    
     const addMemberToTable = (nodeI, nodeJ, overrides = {}) => {
         try {
             const membersTableBody = elements?.membersTable || document.getElementById('members-table')?.getElementsByTagName('tbody')[0];
@@ -15103,9 +15435,7 @@ const initializeFrameGenerator = () => {
                 return null;
             }
 
-            const defaults = (typeof newMemberDefaults !== 'undefined' && newMemberDefaults)
-                ? newMemberDefaults
-                : {
+            const defaults = window.newMemberDefaults ?? {
                     E: '205000',
                     F: '235',
                     Iz: '1840',
@@ -15230,12 +15560,25 @@ const initializeFrameGenerator = () => {
 
             clearAllTables();
 
+            const zeroTolerance = 1e-6;
+            const zeroLevelFloors = new Set();
+            for (let floor = 0; floor <= floors; floor++) {
+                const zLevel = startZ + floor * floorHeight;
+                if (Math.abs(zLevel) < zeroTolerance) {
+                    zeroLevelFloors.add(floor);
+                }
+            }
+
             const nodesPerFloor = (spans + 1) * (depthSpans + 1);
             const totalNodes = nodesPerFloor * (floors + 1);
-            const horizontalMembersX = spans * (depthSpans + 1) * (floors + 1);
-            const horizontalMembersZ = depthSpans * (spans + 1) * (floors + 1);
+
+            const horizontalMembersXPerFloor = spans * (depthSpans + 1);
+            const horizontalMembersZPerFloor = depthSpans * (spans + 1);
+            const effectiveHorizontalFloorCount = Math.max((floors + 1) - zeroLevelFloors.size, 0);
+            const expectedHorizontalMembersX = horizontalMembersXPerFloor * effectiveHorizontalFloorCount;
+            const expectedHorizontalMembersZ = horizontalMembersZPerFloor * effectiveHorizontalFloorCount;
             const verticalMembers = nodesPerFloor * floors;
-            const expectedMembers = horizontalMembersX + horizontalMembersZ + verticalMembers;
+            const expectedMembers = expectedHorizontalMembersX + expectedHorizontalMembersZ + verticalMembers;
 
             const getNodeId = (floorIndex, depthIndex, spanIndex) => (
                 floorIndex * nodesPerFloor + depthIndex * (spans + 1) + spanIndex + 1
@@ -15243,13 +15586,14 @@ const initializeFrameGenerator = () => {
 
             let nodesAdded = 0;
             for (let floor = 0; floor <= floors; floor++) {
-                const y = startY + floor * floorHeight;
-                const support = floor === 0 ? (fixBase ? 'fixed' : 'pinned') : 'free';
+                const z = startZ + floor * floorHeight;
+                const isZeroLevel = zeroLevelFloors.has(floor);
+                const support = isZeroLevel ? (fixBase ? 'fixed' : 'pinned') : 'free';
                 for (let depth = 0; depth <= depthSpans; depth++) {
-                    const z = startZ + depth * depthSpanLength;
+                    const y = startY + depth * depthSpanLength;
                     for (let spanIndex = 0; spanIndex <= spans; spanIndex++) {
                         const x = startX + spanIndex * spanLength;
-                        const row = addNodeToTable(x, y, z, support);
+                        const row = addNode(x, y, z, support, { saveHistory: false });
                         if (row) {
                             nodesAdded++;
                         }
@@ -15266,6 +15610,9 @@ const initializeFrameGenerator = () => {
             const memberCounter = { count: 0 };
 
             for (let floor = 0; floor <= floors; floor++) {
+                if (zeroLevelFloors.has(floor)) {
+                    continue;
+                }
                 for (let depth = 0; depth <= depthSpans; depth++) {
                     for (let spanIndex = 0; spanIndex < spans; spanIndex++) {
                         const nodeI = getNodeId(floor, depth, spanIndex);
@@ -15276,6 +15623,9 @@ const initializeFrameGenerator = () => {
             }
 
             for (let floor = 0; floor <= floors; floor++) {
+                if (zeroLevelFloors.has(floor)) {
+                    continue;
+                }
                 for (let depth = 0; depth < depthSpans; depth++) {
                     for (let spanIndex = 0; spanIndex <= spans; spanIndex++) {
                         const nodeI = getNodeId(floor, depth, spanIndex);
@@ -15513,79 +15863,17 @@ document.addEventListener('DOMContentLoaded', () => {
  */
 window.addNodeProgrammatically = function(x, y, z) {
     try {
-        const nodesTable = document.getElementById('nodes-table').getElementsByTagName('tbody')[0];
-        if (!nodesTable) return;
+        if (typeof window.addNodeToTable !== 'function') {
+            throw new Error('addNodeToTable が初期化されていません');
+        }
 
-        const newRow = nodesTable.insertRow();
-        const nodeId = nodesTable.rows.length;
+        const newRow = window.addNodeToTable(x, y, z, 'free');
+        if (!newRow) {
+            throw new Error('節点の追加に失敗しました');
+        }
 
-        // 節点番号
-        const cell0 = newRow.insertCell(0);
-        cell0.textContent = nodeId;
+        renumberTables();
 
-        // X座標
-        const cell1 = newRow.insertCell(1);
-        const inputX = document.createElement('input');
-        inputX.type = 'number';
-        inputX.step = '0.01';
-        inputX.value = x.toFixed(2);
-        cell1.appendChild(inputX);
-
-        // Y座標
-        const cell2 = newRow.insertCell(2);
-        const inputY = document.createElement('input');
-        inputY.type = 'number';
-        inputY.step = '0.01';
-        inputY.value = y.toFixed(2);
-        cell2.appendChild(inputY);
-
-        // Z座標
-        const cell3 = newRow.insertCell(3);
-        const inputZ = document.createElement('input');
-        inputZ.type = 'number';
-        inputZ.step = '0.01';
-        inputZ.value = z.toFixed(2);
-        cell3.appendChild(inputZ);
-
-        // 境界条件
-        const cell4 = newRow.insertCell(4);
-        const select = document.createElement('select');
-        ['free', 'pinned', 'fixed', 'roller_x', 'roller_y', 'roller_z'].forEach(opt => {
-            const option = document.createElement('option');
-            option.value = opt;
-            const labels = {
-                'free': '自由',
-                'pinned': 'ピン',
-                'fixed': '固定',
-                'roller_x': 'ローラーX',
-                'roller_y': 'ローラーY',
-                'roller_z': 'ローラーZ'
-            };
-            option.textContent = labels[opt] || opt;
-            select.appendChild(option);
-        });
-        select.value = 'free';
-        cell4.appendChild(select);
-
-        // 削除ボタン
-        const cell5 = newRow.insertCell(5);
-        const deleteBtn = document.createElement('button');
-        deleteBtn.textContent = '✕';
-        deleteBtn.onclick = function() {
-            if (confirm('この節点を削除しますか？')) {
-                nodesTable.deleteRow(newRow.rowIndex - 1);
-                // 節点番号を振り直し
-                Array.from(nodesTable.rows).forEach((row, i) => {
-                    row.cells[0].textContent = i + 1;
-                });
-                if (typeof drawOnCanvas === 'function') {
-                    drawOnCanvas();
-                }
-            }
-        };
-        cell5.appendChild(deleteBtn);
-
-        // 描画を更新
         if (typeof drawOnCanvas === 'function') {
             drawOnCanvas();
         }
@@ -15607,7 +15895,7 @@ window.addMemberProgrammatically = function(nodeI, nodeJ) {
         }
 
         // デフォルト値を取得（newMemberDefaults がある場合）
-        const defaults = typeof newMemberDefaults !== 'undefined' ? newMemberDefaults : {
+        const defaults = window.newMemberDefaults ?? {
             E: '205000',
             F: '235',
             Iz: 1840,
