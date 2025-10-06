@@ -6516,11 +6516,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (memberSelfWeights && memberSelfWeights.length > 0) {
             memberSelfWeights.forEach(selfWeight => {
                 // 自重のwプロパティをwz（グローバルZ方向）に変換して追加
+                // selfWeight.wは正の値（大きさ）で、そのまま正の値として格納
+                // 描画時にZ軸負方向ベクトルと組み合わせて下向きにする
                 allMemberLoads.push({
                     memberIndex: selfWeight.memberIndex,
                     wx: 0,
                     wy: 0,
-                    wz: selfWeight.w,  // 負の値（下向き）
+                    wz: selfWeight.w,  // 正の値（大きさ）
                     isFromSelfWeight: true
                 });
             });
@@ -6534,26 +6536,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const loadObstacles = [...obstacles];
         const getDistributedLoadOrientationMultiplier = (axisLabel, isSelfWeight = false) => {
             // 分布荷重の描画方向を決定
-            // 正の荷重値 → 正の軸方向への力として描画
-            // 負の荷重値 → 負の軸方向への力として描画（例: wz=-10 は下向き）
+            // 自重: 正の値 × Z軸負方向ベクトル → 下向き
+            // 外部荷重: 符号 × Z軸正方向ベクトル → 符号通りの方向
             
-            if (is3DModeActive) {
-                // 3Dモード: 符号反転なし（baseSignで制御）
-                return 1;
-            }
-
-            // 2D投影モード: 外部荷重は反転、自重も反転（projectGlobalDirectionのy軸反転を補正）
-            if (projectionMode === 'xy') {
-                return -1;
-            } else if (projectionMode === 'xz') {
-                return -1;
-            } else if (projectionMode === 'yz') {
-                return -1;
-            } else if (projectionMode === 'iso') {
-                return -1;
-            }
-
-            return -1;  // デフォルトも反転（外部荷重用）
+            // 符号をそのまま使用（ベクトルの向きで方向が決まる）
+            return 1;
         };
 
         const subtractVec3 = (a, b) => ({
@@ -6652,15 +6639,14 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             let result = { x: dx / len, y: dy / len };
 
-            const is3DModeActive = window.is3DMode === true;
-            if (!is3DModeActive) {
-                const EPS = 1e-9;
-                const isPureZAxis = Math.abs(vector3D.z || 0) > EPS &&
-                    Math.abs(vector3D.x || 0) < EPS &&
-                    Math.abs(vector3D.y || 0) < EPS;
-                if (isPureZAxis) {
-                    result = { x: result.x, y: -result.y };
-                }
+            // 純粋なZ軸ベクトル（上下方向）の場合、y座標を反転
+            // これにより、Z軸負方向（下向き）が画面上で下向きに描画される
+            const EPS = 1e-9;
+            const isPureZAxis = Math.abs(vector3D.z || 0) > EPS &&
+                Math.abs(vector3D.x || 0) < EPS &&
+                Math.abs(vector3D.y || 0) < EPS;
+            if (isPureZAxis) {
+                result = { x: result.x, y: -result.y };
             }
 
             return result;
@@ -6713,10 +6699,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const hasLegacyW = Number.isFinite(legacyValue) && Math.abs(legacyValue) > EPS;
 
             const components = [];
+            // 自重の場合はZ軸を負方向（下向き）に設定
+            const zVector = isSelfWeightLoad ? { x: 0, y: 0, z: -1 } : { x: 0, y: 0, z: 1 };
             const axisDefinitions = [
                 { value: wxValue, label: 'Wx', vector: { x: 1, y: 0, z: 0 } },
                 { value: wyValue, label: 'Wy', vector: { x: 0, y: 1, z: 0 } },
-                { value: wzValue, label: 'Wz', vector: { x: 0, y: 0, z: 1 } }
+                { value: wzValue, label: 'Wz', vector: zVector }
             ];
 
             axisDefinitions.forEach(axis => {
@@ -6751,13 +6739,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             components.forEach(component => {
-                // 自重の場合: 正の値で格納されているが、下向きに描画する必要がある
-                // - 3Dモード: baseSignを負にして下向きに
-                // - 2Dモード: baseSignは正のまま、orientationSignで調整
-                // 外部荷重の場合: 正の値を入力したら下向きに描画
-                const baseSign = (isSelfWeightLoad && is3DModeActive) 
-                    ? -Math.sign(component.w || 1) 
-                    : Math.sign(component.w || 1);
+                // 自重の場合: 負の値で格納されている（下向き）
+                // 外部荷重の場合: ユーザー入力値の符号をそのまま使用
+                // 3Dモード: 符号をそのまま反映
+                // 2Dモード: orientationSignで反転（projectGlobalDirectionのy軸反転を補正）
+                const baseSign = Math.sign(component.w || 1);
                 const orientationSign = getDistributedLoadOrientationMultiplier(component.label, isSelfWeightLoad);
                 const dir = baseSign * orientationSign;
                 const dirNorm = normalizeVec2(component.direction) || defaultDirectionNorm;
@@ -6779,26 +6765,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 };
                 loadObstacles.push(arrowObstacle);
 
-                ctx.beginPath();
-                ctx.moveTo(firstArrowTipX, firstArrowTipY);
-                ctx.lineTo(lastArrowTipX, lastArrowTipY);
-                ctx.stroke();
-
-                for (let i = 0; i <= numArrows; i++) {
-                    const ratio = i / numArrows;
-                    const memberX = p1.x + (p2.x - p1.x) * ratio;
-                    const memberY = p1.y + (p2.y - p1.y) * ratio;
-                    const baseX = memberX + dir * arrowLength * dirNorm.x;
-                    const baseY = memberY + dir * arrowLength * dirNorm.y;
+                // 3Dモードで自重の場合は矢印を描画しない（ラベルのみ）
+                const is3DModeActive = window.is3DMode === true;
+                const skipArrowDrawing = is3DModeActive && isSelfWeightLoad;
+                
+                if (!skipArrowDrawing) {
                     ctx.beginPath();
-                    ctx.moveTo(baseX, baseY);
-                    ctx.lineTo(memberX, memberY);
-                    const headAngle = Math.atan2(memberY - baseY, memberX - baseX);
-                    ctx.moveTo(memberX, memberY);
-                    ctx.lineTo(memberX - arrowHeadSize * Math.cos(headAngle - Math.PI / 6), memberY - arrowHeadSize * Math.sin(headAngle - Math.PI / 6));
-                    ctx.moveTo(memberX, memberY);
-                    ctx.lineTo(memberX - arrowHeadSize * Math.cos(headAngle + Math.PI / 6), memberY - arrowHeadSize * Math.sin(headAngle + Math.PI / 6));
+                    ctx.moveTo(firstArrowTipX, firstArrowTipY);
+                    ctx.lineTo(lastArrowTipX, lastArrowTipY);
                     ctx.stroke();
+
+                    for (let i = 0; i <= numArrows; i++) {
+                        const ratio = i / numArrows;
+                        const memberX = p1.x + (p2.x - p1.x) * ratio;
+                        const memberY = p1.y + (p2.y - p1.y) * ratio;
+                        const baseX = memberX + dir * arrowLength * dirNorm.x;
+                        const baseY = memberY + dir * arrowLength * dirNorm.y;
+                        ctx.beginPath();
+                        ctx.moveTo(baseX, baseY);
+                        ctx.lineTo(memberX, memberY);
+                        const headAngle = Math.atan2(memberY - baseY, memberX - baseX);
+                        ctx.moveTo(memberX, memberY);
+                        ctx.lineTo(memberX - arrowHeadSize * Math.cos(headAngle - Math.PI / 6), memberY - arrowHeadSize * Math.sin(headAngle - Math.PI / 6));
+                        ctx.moveTo(memberX, memberY);
+                        ctx.lineTo(memberX - arrowHeadSize * Math.cos(headAngle + Math.PI / 6), memberY - arrowHeadSize * Math.sin(headAngle + Math.PI / 6));
+                        ctx.stroke();
+                    }
                 }
 
                 const textOffset = arrowLength + 10;
@@ -6984,91 +6976,95 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // 自重による集中荷重を緑色で描画
     if (showSelfWeight) {
-            // 1. 個別の矢印描画
-            nodeSelfWeights.forEach(load => {
-                if ((load.pz === undefined || load.pz === 0) && (load.mz === 0 || load.mz === undefined)) return;
-                // 節点が表示対象でない場合はスキップ
-                if (!visibleNodeIndices.has(load.nodeIndex)) return;
-                const node3D = nodes[load.nodeIndex];
-                const projectedNode = projectedNodes[load.nodeIndex];
-                const pos = transform(projectedNode.x, projectedNode.y);
-                
-                // 自重荷重用の緑色で描画
-                ctx.strokeStyle = '#32CD32';
-                ctx.fillStyle = '#32CD32';
+            // 3Dモードでは矢印を描画せず、ラベルのみ表示
+            const is3DModeActive = window.is3DMode === true;
             
-            if (load.pz && load.pz !== 0) {
-                // 自重の集中荷重: pzは負の値で格納されている（下向き）
-                // 矢印を正しい方向に描画するため、符号をそのまま使用
-                const directionSign = -Math.sign(load.pz);
-                const projectedDir = projectGlobalDirection(node3D, { x: 0, y: 0, z: directionSign });
-                const hasProjectedDir = projectedDir && Math.hypot(projectedDir.x, projectedDir.y) > 1e-6;
+            // 1. 個別の矢印描画（3Dモードではスキップ）
+            if (!is3DModeActive) {
+                nodeSelfWeights.forEach(load => {
+                    if ((load.pz === undefined || load.pz === 0) && (load.mz === 0 || load.mz === undefined)) return;
+                    // 節点が表示対象でない場合はスキップ
+                    if (!visibleNodeIndices.has(load.nodeIndex)) return;
+                    const node3D = nodes[load.nodeIndex];
+                    const projectedNode = projectedNodes[load.nodeIndex];
+                    const pos = transform(projectedNode.x, projectedNode.y);
+                    
+                    // 自重荷重用の緑色で描画
+                    ctx.strokeStyle = '#32CD32';
+                    ctx.fillStyle = '#32CD32';
+                
+                if (load.pz && load.pz !== 0) {
+                    // 自重の集中荷重: pzは負の値で格納されている（下向き）
+                    // 矢印を正しい方向に描画するため、符号をそのまま使用
+                    const directionSign = -Math.sign(load.pz);
+                    const projectedDir = projectGlobalDirection(node3D, { x: 0, y: 0, z: directionSign });
+                    const hasProjectedDir = projectedDir && Math.hypot(projectedDir.x, projectedDir.y) > 1e-6;
 
-                if (hasProjectedDir) {
-                    const direction2D = normalizeVec2(projectedDir);
-                    if (!direction2D) {
-                        console.warn(`節点${load.nodeIndex + 1}: 自重方向が正規化できず描画をスキップします。`, projectedDir);
-                        return;
+                    if (hasProjectedDir) {
+                        const direction2D = normalizeVec2(projectedDir);
+                        if (!direction2D) {
+                            console.warn(`節点${load.nodeIndex + 1}: 自重方向が正規化できず描画をスキップします。`, projectedDir);
+                            return;
+                        }
+                        const perpDir = normalizeVec2({ x: -direction2D.y, y: direction2D.x }) || { x: 1, y: 0 };
+                        const arrowLen = arrowSize * loadScale;
+                        const headX = pos.x;
+                        const headY = pos.y;
+                        const tailX = headX - direction2D.x * arrowLen;
+                        const tailY = headY - direction2D.y * arrowLen;
+
+                        ctx.beginPath();
+                        ctx.moveTo(tailX, tailY);
+                        ctx.lineTo(headX, headY);
+                        ctx.stroke();
+
+                        const headLength = arrowSize * 0.9;
+                        const headWidth = arrowSize * 0.6;
+                        const leftX = headX - direction2D.x * headLength + perpDir.x * headWidth;
+                        const leftY = headY - direction2D.y * headLength + perpDir.y * headWidth;
+                        const rightX = headX - direction2D.x * headLength - perpDir.x * headWidth;
+                        const rightY = headY - direction2D.y * headLength - perpDir.y * headWidth;
+
+                        ctx.beginPath();
+                        ctx.moveTo(headX, headY);
+                        ctx.lineTo(leftX, leftY);
+                        ctx.moveTo(headX, headY);
+                        ctx.lineTo(rightX, rightY);
+                        ctx.stroke();
+                    } else {
+                        const radius = arrowSize * 0.7;
+                        ctx.beginPath();
+                        ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.arc(pos.x, pos.y, radius * 0.4, 0, Math.PI * 2);
+                        ctx.fill();
                     }
-                    const perpDir = normalizeVec2({ x: -direction2D.y, y: direction2D.x }) || { x: 1, y: 0 };
-                    const arrowLen = arrowSize * loadScale;
-                    const headX = pos.x;
-                    const headY = pos.y;
-                    const tailX = headX - direction2D.x * arrowLen;
-                    const tailY = headY - direction2D.y * arrowLen;
-
-                    ctx.beginPath();
-                    ctx.moveTo(tailX, tailY);
-                    ctx.lineTo(headX, headY);
-                    ctx.stroke();
-
-                    const headLength = arrowSize * 0.9;
-                    const headWidth = arrowSize * 0.6;
-                    const leftX = headX - direction2D.x * headLength + perpDir.x * headWidth;
-                    const leftY = headY - direction2D.y * headLength + perpDir.y * headWidth;
-                    const rightX = headX - direction2D.x * headLength - perpDir.x * headWidth;
-                    const rightY = headY - direction2D.y * headLength - perpDir.y * headWidth;
-
-                    ctx.beginPath();
-                    ctx.moveTo(headX, headY);
-                    ctx.lineTo(leftX, leftY);
-                    ctx.moveTo(headX, headY);
-                    ctx.lineTo(rightX, rightY);
-                    ctx.stroke();
-                } else {
-                    const radius = arrowSize * 0.7;
-                    ctx.beginPath();
-                    ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
-                    ctx.stroke();
-                    ctx.beginPath();
-                    ctx.arc(pos.x, pos.y, radius * 0.4, 0, Math.PI * 2);
-                    ctx.fill();
                 }
-            }
 
-            if(load.mz !== 0){ 
-                const dir = -Math.sign(load.mz); 
-                const r = arrowSize * 1.5; 
-                const arrowHeadSize = 5; 
-                const startAngle = Math.PI; 
-                const endAngle = Math.PI * 2.5; 
-                ctx.beginPath(); 
-                ctx.arc(pos.x, pos.y, r, startAngle, endAngle, dir < 0); 
-                ctx.stroke(); 
-                const endX = pos.x + r * Math.cos(endAngle); 
-                const endY = pos.y + r * Math.sin(endAngle); 
-                const smallAngleOffset = 0.05 * (dir > 0 ? -1 : 1); 
-                const beforeX = pos.x + r * Math.cos(endAngle + smallAngleOffset); 
-                const beforeY = pos.y + r * Math.sin(endAngle + smallAngleOffset); 
-                const tangentAngle = Math.atan2(endY - beforeY, endX - beforeX); 
-                ctx.beginPath(); 
-                ctx.moveTo(endX, endY); 
-                ctx.lineTo(endX - arrowHeadSize * Math.cos(tangentAngle - Math.PI / 6), endY - arrowHeadSize * Math.sin(tangentAngle - Math.PI / 6)); 
-                ctx.lineTo(endX - arrowHeadSize * Math.cos(tangentAngle + Math.PI / 6), endY - arrowHeadSize * Math.sin(tangentAngle + Math.PI / 6)); 
-                ctx.closePath(); 
-                ctx.fill(); 
-            }
-        });
+                if(load.mz !== 0){ 
+                    const dir = -Math.sign(load.mz); 
+                    const r = arrowSize * 1.5; 
+                    const arrowHeadSize = 5; 
+                    const startAngle = Math.PI; 
+                    const endAngle = Math.PI * 2.5; 
+                    ctx.beginPath(); 
+                    ctx.arc(pos.x, pos.y, r, startAngle, endAngle, dir < 0); 
+                    ctx.stroke(); 
+                        const endY = pos.y + r * Math.sin(endAngle); 
+                    const smallAngleOffset = 0.05 * (dir > 0 ? -1 : 1); 
+                    const beforeX = pos.x + r * Math.cos(endAngle + smallAngleOffset); 
+                    const beforeY = pos.y + r * Math.sin(endAngle + smallAngleOffset); 
+                    const tangentAngle = Math.atan2(endY - beforeY, endX - beforeX); 
+                    ctx.beginPath(); 
+                    ctx.moveTo(endX, endY); 
+                    ctx.lineTo(endX - arrowHeadSize * Math.cos(tangentAngle - Math.PI / 6), endY - arrowHeadSize * Math.sin(tangentAngle - Math.PI / 6)); 
+                    ctx.lineTo(endX - arrowHeadSize * Math.cos(tangentAngle + Math.PI / 6), endY - arrowHeadSize * Math.sin(tangentAngle + Math.PI / 6)); 
+                    ctx.closePath(); 
+                    ctx.fill(); 
+                }
+            });
+        }
         
         // 2. 節点ごとの合計荷重を計算してラベル表示
         const nodeWeightSummary = new Map();
