@@ -6103,63 +6103,149 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     const drawConnections = (ctx, transform, nodes, members) => { ctx.fillStyle = 'white'; ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5; const offset = 6; const projectionMode = getCurrentProjectionMode(); const projectedNodes = nodes.map(n => project3DTo2D(n, projectionMode)); const visibleNodeIndices = getVisibleNodeIndices(nodes); members.forEach(m => { if (!visibleNodeIndices.has(m.i) || !visibleNodeIndices.has(m.j)) return; const n_i = projectedNodes[m.i]; const p_i = transform(n_i.x, n_i.y); if (m.i_conn === 'pinned') { const p_i_offset = { x: p_i.x + offset * m.c, y: p_i.y - offset * m.s }; ctx.beginPath(); ctx.arc(p_i_offset.x, p_i_offset.y, 3, 0, 2 * Math.PI); ctx.fill(); ctx.stroke(); } if (m.j_conn === 'pinned') { const n_j = projectedNodes[m.j]; const p_j = transform(n_j.x, n_j.y); const p_j_offset = { x: p_j.x - offset * m.c, y: p_j.y + offset * m.s }; ctx.beginPath(); ctx.arc(p_j_offset.x, p_j_offset.y, 3, 0, 2 * Math.PI); ctx.fill(); ctx.stroke(); } }); };
 
-    const ROLLER_AXIS_VISUALS = Object.freeze({
-        x: {
-            color: '#e74c3c',
-            lineWidth: 2,
-            draw(ctx, pos, size) {
-                ctx.beginPath();
-                ctx.moveTo(pos.x + size * 0.3, pos.y + size * 0.4);
-                ctx.lineTo(pos.x + size * 1.4, pos.y + size * 0.4);
-                ctx.moveTo(pos.x + size * 1.4, pos.y + size * 0.4);
-                ctx.lineTo(pos.x + size * 1.2, pos.y + size * 0.2);
-                ctx.moveTo(pos.x + size * 1.4, pos.y + size * 0.4);
-                ctx.lineTo(pos.x + size * 1.2, pos.y + size * 0.6);
-                ctx.stroke();
-
-                ctx.font = 'bold 11px Arial';
-                ctx.textAlign = 'left';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('X', pos.x + size * 1.55, pos.y + size * 0.4);
-            }
-        },
-        y: {
-            color: '#3498db',
-            lineWidth: 2,
-            draw(ctx, pos, size) {
-                ctx.beginPath();
-                ctx.moveTo(pos.x - size * 0.4, pos.y - size * 0.2);
-                ctx.lineTo(pos.x - size * 0.4, pos.y - size * 1.4);
-                ctx.moveTo(pos.x - size * 0.4, pos.y - size * 1.4);
-                ctx.lineTo(pos.x - size * 0.6, pos.y - size * 1.2);
-                ctx.moveTo(pos.x - size * 0.4, pos.y - size * 1.4);
-                ctx.lineTo(pos.x - size * 0.2, pos.y - size * 1.2);
-                ctx.stroke();
-
-                ctx.font = 'bold 11px Arial';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'bottom';
-                ctx.fillText('Y', pos.x - size * 0.4, pos.y - size * 1.55);
-            }
-        },
-        z: {
-            color: '#9b59b6',
-            lineWidth: 2,
-            draw(ctx, pos, size) {
-                ctx.beginPath();
-                ctx.arc(pos.x - size * 0.6, pos.y + size * 0.3, size * 0.45, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.stroke();
-
-                ctx.fillStyle = '#ffffff';
-                ctx.font = 'bold 10px Arial';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('Z', pos.x - size * 0.6, pos.y + size * 0.3);
-            }
+    const projectAxisToScreen = (node, axis, transform, projectionMode) => {
+        const axisVectors = {
+            x: { x: 1, y: 0, z: 0 },
+            y: { x: 0, y: 1, z: 0 },
+            z: { x: 0, y: 0, z: 1 }
+        };
+        const basis = axisVectors[axis];
+        if (!basis) {
+            return null;
         }
+        const originProjected = project3DTo2D(node, projectionMode);
+        const offsetNode = {
+            x: (node?.x ?? 0) + basis.x,
+            y: (node?.y ?? 0) + basis.y,
+            z: (node?.z ?? 0) + basis.z
+        };
+        const offsetProjected = project3DTo2D(offsetNode, projectionMode);
+        const originScreen = transform(originProjected.x, originProjected.y);
+        const offsetScreen = transform(offsetProjected.x, offsetProjected.y);
+        const dir = {
+            x: offsetScreen.x - originScreen.x,
+            y: offsetScreen.y - originScreen.y
+        };
+        const len = Math.hypot(dir.x, dir.y);
+        if (!isFinite(len) || len < 1e-3) {
+            return null;
+        }
+        return { x: dir.x / len, y: dir.y / len };
+    };
+
+    const rotatePoint = (point, angle) => ({
+        x: point.x * Math.cos(angle) - point.y * Math.sin(angle),
+        y: point.x * Math.sin(angle) + point.y * Math.cos(angle)
     });
 
+    const drawRollerTriangle = (ctx, center, size, angle) => {
+        const localPoints = [
+            { x: 0, y: -size },
+            { x: -size, y: size },
+            { x: size, y: size }
+        ];
+        const rotated = localPoints.map(p => {
+            const r = rotatePoint(p, angle);
+            return { x: center.x + r.x, y: center.y + r.y };
+        });
+
+        ctx.beginPath();
+        ctx.moveTo(rotated[0].x, rotated[0].y);
+        ctx.lineTo(rotated[1].x, rotated[1].y);
+        ctx.lineTo(rotated[2].x, rotated[2].y);
+        ctx.closePath();
+        ctx.stroke();
+
+        return {
+            apex: rotated[0],
+            baseLeft: rotated[1],
+            baseRight: rotated[2]
+        };
+    };
+
+    const drawRollerGroundLine = (ctx, baseLeft, baseRight, axisDirection, offset = 4) => {
+        let offsetVector;
+        if (axisDirection && isFinite(axisDirection.x) && isFinite(axisDirection.y)) {
+            offsetVector = {
+                x: -axisDirection.x * offset,
+                y: -axisDirection.y * offset
+            };
+        } else {
+            offsetVector = { x: 0, y: offset };
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(baseLeft.x + offsetVector.x, baseLeft.y + offsetVector.y);
+        ctx.lineTo(baseRight.x + offsetVector.x, baseRight.y + offsetVector.y);
+        ctx.stroke();
+    };
+    const drawRollerAxisIndicator2D = (ctx, transform, projectionMode, node, screenPos, axis, supportSize = 10) => {
+        if (!ctx || !axis) return;
+        const style = ROLLER_AXIS_STYLES[axis] || { color: '#555555', label: axis.toUpperCase() };
+        const node3D = {
+            x: node?.x ?? 0,
+            y: node?.y ?? 0,
+            z: node?.z ?? 0
+        };
+
+        const axisOffset3D = {
+            x: node3D.x + (axis === 'x' ? 1 : 0),
+            y: node3D.y + (axis === 'y' ? 1 : 0),
+            z: node3D.z + (axis === 'z' ? 1 : 0)
+        };
+
+        const projectedOffset = project3DTo2D(axisOffset3D, projectionMode);
+        const offsetScreen = transform(projectedOffset.x, projectedOffset.y);
+        const baseScreen = { x: screenPos.x, y: screenPos.y };
+        const dirVec = {
+            x: offsetScreen.x - baseScreen.x,
+            y: offsetScreen.y - baseScreen.y
+        };
+        const length = Math.hypot(dirVec.x, dirVec.y);
+        const TARGET_LENGTH = 18;
+
+        if (length >= 1e-3) {
+            const scale = TARGET_LENGTH / length;
+            const arrowVec = {
+                x: dirVec.x * scale,
+                y: dirVec.y * scale
+            };
+            ctx.save();
+            ctx.strokeStyle = style.color;
+            ctx.fillStyle = style.color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(baseScreen.x, baseScreen.y);
+            ctx.lineTo(baseScreen.x + arrowVec.x, baseScreen.y + arrowVec.y);
+            ctx.stroke();
+
+            const headSize = 6;
+            const angle = Math.atan2(arrowVec.y, arrowVec.x);
+            ctx.beginPath();
+            ctx.moveTo(baseScreen.x + arrowVec.x, baseScreen.y + arrowVec.y);
+            ctx.lineTo(baseScreen.x + arrowVec.x - headSize * Math.cos(angle - Math.PI / 6), baseScreen.y + arrowVec.y - headSize * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(baseScreen.x + arrowVec.x - headSize * Math.cos(angle + Math.PI / 6), baseScreen.y + arrowVec.y - headSize * Math.sin(angle + Math.PI / 6));
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        } else {
+            const fallbackPos = {
+                x: baseScreen.x,
+                y: baseScreen.y + supportSize + 8
+            };
+            ctx.save();
+            ctx.fillStyle = style.color;
+            ctx.beginPath();
+            ctx.arc(fallbackPos.x, fallbackPos.y, 6, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(style.label, fallbackPos.x, fallbackPos.y);
+            ctx.restore();
+        }
+    };
     const drawBoundaryConditions = (ctx, transform, nodes) => {
         const size = 10;
         const projectionMode = getCurrentProjectionMode();
@@ -6169,7 +6255,8 @@ document.addEventListener('DOMContentLoaded', () => {
         projectedNodes.forEach((projNode, idx) => {
             if (!visibleNodeIndices.has(idx)) return;
 
-            const supportType = normalizeSupportValue(nodes[idx].support);
+            const node = nodes[idx];
+            const supportType = normalizeSupportValue(node.support);
             if (supportType === 'free') return;
 
             const pos = transform(projNode.x, projNode.y);
@@ -6201,33 +6288,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 ctx.lineTo(pos.x + size * 1.2, pos.y + size);
                 ctx.stroke();
             } else if (isRollerSupport(supportType)) {
-                ctx.beginPath();
-                ctx.moveTo(pos.x, pos.y);
-                ctx.lineTo(pos.x - size, pos.y + size);
-                ctx.lineTo(pos.x + size, pos.y + size);
-                ctx.closePath();
-                ctx.stroke();
+                const axis = getRollerAxis(supportType);
+                const axisDirection = projectAxisToScreen(node, axis, transform, projectionMode);
+                const angle = axisDirection
+                    ? Math.atan2(axisDirection.y, axisDirection.x) + Math.PI / 2
+                    : 0;
 
-                ctx.beginPath();
-                ctx.moveTo(pos.x - size, pos.y + size + 3);
-                ctx.lineTo(pos.x + size, pos.y + size + 3);
-                ctx.stroke();
+                const triangle = drawRollerTriangle(ctx, pos, size, angle);
+                drawRollerGroundLine(ctx, triangle.baseLeft, triangle.baseRight, axisDirection, 4);
             }
 
             ctx.restore();
-
-            if (isRollerSupport(supportType)) {
-                const axis = getRollerAxis(supportType);
-                const visual = axis ? ROLLER_AXIS_VISUALS[axis] : null;
-                if (visual) {
-                    ctx.save();
-                    ctx.strokeStyle = visual.color;
-                    ctx.fillStyle = visual.color;
-                    ctx.lineWidth = visual.lineWidth;
-                    visual.draw(ctx, pos, size);
-                    ctx.restore();
-                }
-            }
         });
     };
     const drawDimensions = (ctx, transform, nodes, members, labelManager, obstacles) => {

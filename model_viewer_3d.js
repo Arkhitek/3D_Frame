@@ -29,87 +29,115 @@ if (typeof THREE === 'undefined') {
     console.warn('Three.js not loaded - 3D model view will not be available');
 }
 
-const MODEL_ROLLER_SUPPORT_ALIAS_MAP = (() => {
-    const entries = [
-        ['x', ['roller-x', 'rollerx', 'roller_x', 'r-x', 'rx']],
-        ['y', ['roller-y', 'rollery', 'roller_y', 'r-y', 'ry', 'roller', 'r']],
-        ['z', ['roller-z', 'rollerz', 'roller_z', 'r-z', 'rz']]
-    ];
+const MODEL_AXIS_CANVAS_SIZE = 120;
+const MODEL_AXIS_MARGIN = 15;
+
+const MODEL_SUPPORT_ALIAS_ENTRIES = [
+    { target: 'free', aliases: ['f', 'free', '自由'] },
+    { target: 'pinned', aliases: ['p', 'pin', 'pinned', 'hinge', 'hinged', 'ピン'] },
+    { target: 'fixed', aliases: ['x', 'fix', 'fixed', '固定'] },
+    { target: 'roller-x', aliases: ['roller-x', 'roller_x', 'rollerx', 'r-x', 'rx', 'ローラーx', 'ローラー(x)', 'ローラー(X軸固定)'] },
+    { target: 'roller-y', aliases: ['roller-y', 'roller_y', 'rollery', 'r-y', 'ry', 'ローラー', 'ローラーy', 'ローラー(y)', 'ローラー(Y軸固定)', 'r', 'roller'] },
+    { target: 'roller-z', aliases: ['roller-z', 'roller_z', 'rollerz', 'r-z', 'rz', 'ローラーz', 'ローラー(z)', 'ローラー(Z軸固定)'] }
+];
+
+const MODEL_SUPPORT_ALIAS_MAP = (() => {
     const map = new Map();
-    entries.forEach(([axis, aliases]) => {
+    MODEL_SUPPORT_ALIAS_ENTRIES.forEach(({ target, aliases }) => {
         aliases.forEach(alias => {
-            const key = `${alias}`.trim().toLowerCase();
-            if (key) {
-                map.set(key, axis);
-            }
+            const key = `${alias}`.trim();
+            if (!key) return;
+            map.set(key, target);
+            map.set(key.toLowerCase(), target);
         });
     });
     return map;
 })();
 
-const MODEL_ROLLER_AXIS_INFO = (typeof THREE !== 'undefined') ? {
-    x: { color: 0xe74c3c, label: 'X固定', direction: new THREE.Vector3(1, 0, 0) },
-    y: { color: 0x3498db, label: 'Y固定', direction: new THREE.Vector3(0, 0, 1) },
-    z: { color: 0x9b59b6, label: 'Z固定', direction: new THREE.Vector3(0, 1, 0) }
-} : {};
+function modelNormalizeSupportValue(value) {
+    if (typeof normalizeSupportValue === 'function') {
+        try {
+            const normalized = normalizeSupportValue(value);
+            if (normalized) {
+                return normalized;
+            }
+        } catch (e) {
+            // フォールバックに進む
+        }
+    }
 
-function modelGetRollerAxisFromSupport(value) {
-    if (value === undefined || value === null) return null;
-    const normalized = `${value}`.trim().toLowerCase();
-    if (!normalized) return null;
-    return MODEL_ROLLER_SUPPORT_ALIAS_MAP.get(normalized) || null;
+    if (value === undefined || value === null) return 'free';
+    const raw = `${value}`.trim();
+    if (!raw) return 'free';
+    return MODEL_SUPPORT_ALIAS_MAP.get(raw) || MODEL_SUPPORT_ALIAS_MAP.get(raw.toLowerCase()) || raw;
+}
+
+function modelIsRollerSupport(value) {
+    const normalized = modelNormalizeSupportValue(value);
+    return normalized === 'roller-x' || normalized === 'roller-y' || normalized === 'roller-z';
+}
+
+function modelGetRollerAxis(value) {
+    const normalized = modelNormalizeSupportValue(value);
+    if (normalized === 'roller-x') return 'x';
+    if (normalized === 'roller-y') return 'y';
+    if (normalized === 'roller-z') return 'z';
+    return null;
+}
+
+const MODEL_ROLLER_AXIS_COLORS = Object.freeze({
+    x: { int: 0xe53935, hex: '#e53935', label: 'X' },
+    y: { int: 0x1e88e5, hex: '#1e88e5', label: 'Y' },
+    z: { int: 0x00897b, hex: '#00897b', label: 'Z' }
+});
+
+function modelCreateAxisDirection(axis) {
+    switch (axis) {
+        case 'x':
+            return new THREE.Vector3(1, 0, 0);
+        case 'y':
+            return new THREE.Vector3(0, 0, 1);
+        case 'z':
+            return new THREE.Vector3(0, 1, 0);
+        default:
+            return null;
+    }
 }
 
 function addModelRollerSupportIndicator(group, position, axis) {
-    if (!group) return;
-    const info = MODEL_ROLLER_AXIS_INFO[axis];
-    if (!info) return;
+    if (!group || !position || !axis) return;
+    const color = MODEL_ROLLER_AXIS_COLORS[axis] || MODEL_ROLLER_AXIS_COLORS.x;
+    const direction = modelCreateAxisDirection(axis);
+    if (!direction) return;
 
-    const indicatorGroup = new THREE.Group();
+    const normalizedDir = direction.clone().normalize();
+    const arrowLength = 1.0;
+    const arrowHeadLength = Math.min(arrowLength * 0.35, 0.35);
+    const arrowHeadWidth = arrowHeadLength * 0.6;
+    const origin = position.clone().add(normalizedDir.clone().multiplyScalar(0.25));
 
-    const contactSphere = new THREE.Mesh(
-        new THREE.SphereGeometry(0.2, 18, 18),
-        new THREE.MeshStandardMaterial({
-            color: info.color,
-            emissive: info.color,
-            emissiveIntensity: 0.18,
-            opacity: 0.85,
-            transparent: true
-        })
-    );
-    contactSphere.position.copy(position);
-    indicatorGroup.add(contactSphere);
-
-    const direction = info.direction.clone().normalize();
-    const arrowOrigin = position.clone().add(direction.clone().multiplyScalar(0.26));
-    const arrow = new THREE.ArrowHelper(direction, arrowOrigin, 0.85, info.color, 0.24, 0.16);
-    indicatorGroup.add(arrow);
-
-    group.add(indicatorGroup);
+    const arrow = new THREE.ArrowHelper(normalizedDir, origin, arrowLength, color.int, arrowHeadLength, arrowHeadWidth);
+    group.add(arrow);
 
     if (typeof THREE.CSS2DObject !== 'undefined') {
         const labelElement = document.createElement('div');
         labelElement.className = 'support-label-3d';
-        labelElement.textContent = info.label;
-        labelElement.style.backgroundColor = 'rgba(0, 0, 0, 0.65)';
-        labelElement.style.color = '#ffffff';
+        labelElement.textContent = color.label || axis.toUpperCase();
+        labelElement.style.color = color.hex;
+        labelElement.style.fontWeight = 'bold';
+        labelElement.style.fontSize = '11px';
+        labelElement.style.backgroundColor = 'rgba(255, 255, 255, 0.92)';
         labelElement.style.padding = '2px 4px';
         labelElement.style.borderRadius = '3px';
-        labelElement.style.fontSize = '11px';
-        labelElement.style.fontWeight = 'bold';
-        labelElement.style.border = 'none';
+        labelElement.style.border = `1px solid ${color.hex}`;
         labelElement.style.pointerEvents = 'none';
         labelElement.style.userSelect = 'none';
 
         const labelObject = new THREE.CSS2DObject(labelElement);
-        const labelOffset = direction.clone().multiplyScalar(0.95).add(new THREE.Vector3(0, 0.25, 0));
-        labelObject.position.copy(position).add(labelOffset);
+        labelObject.position.copy(origin).add(normalizedDir.clone().multiplyScalar(arrowLength + 0.25));
         group.add(labelObject);
     }
 }
-
-const MODEL_AXIS_CANVAS_SIZE = 120;
-const MODEL_AXIS_MARGIN = 15;
 
 /**
  * モデル図3Dシーンの初期化
@@ -570,8 +598,10 @@ function updateModel3DView(nodes, members, loadData = {}) {
             modelGroup.add(labelObject);
         }
 
+        const supportType = modelNormalizeSupportValue(node.support);
+
         // ピン支持の場合は赤い球体を追加
-        if (node.support === 'pinned' || node.support === 'pin') {
+        if (supportType === 'pinned') {
             const supportMaterial = new THREE.MeshStandardMaterial({ 
                 color: 0xFF0000,
                 metalness: 0.4,
@@ -585,7 +615,7 @@ function updateModel3DView(nodes, members, loadData = {}) {
         }
 
         // 固定支持の場合は緑の立方体を追加
-        if (node.support === 'fixed' || node.support === 'x') {
+        else if (supportType === 'fixed') {
             const supportMaterial = new THREE.MeshStandardMaterial({ 
                 color: 0x00AA00,
                 metalness: 0.4,
@@ -596,11 +626,11 @@ function updateModel3DView(nodes, members, loadData = {}) {
             const supportBox = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), supportMaterial);
             supportBox.position.copy(nodePosition);
             modelGroup.add(supportBox);
-        }
-
-        const rollerAxis = modelGetRollerAxisFromSupport(node.support);
-        if (rollerAxis) {
-            addModelRollerSupportIndicator(modelGroup, nodePosition, rollerAxis);
+        } else if (modelIsRollerSupport(supportType)) {
+            const axis = modelGetRollerAxis(supportType);
+            if (axis) {
+                addModelRollerSupportIndicator(modelGroup, nodePosition, axis);
+            }
         }
     });
 
