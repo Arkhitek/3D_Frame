@@ -9394,6 +9394,16 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     selectedMemberIndex = null;
                     window.selectedMemberIndex = null;
                 }
+
+                const projectionMode = getCurrentProjectionMode();
+                if (projectionMode === 'iso') {
+                    console.info('等角投影では節点移動を無効化しています。');
+                    if (typeof drawOnCanvas === 'function') {
+                        drawOnCanvas();
+                    }
+                    return;
+                }
+
                 isDragging = true;
                 pushState();
                 // 単一選択ハイライト表示
@@ -9487,7 +9497,12 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         if (isRangeSelecting && canvasMode === 'select') {
             multiSelectEnd = { x: mouseX, y: mouseY };
             drawOnCanvas();
-        } else if (isDragging && canvasMode === 'select' && selectedNodeIndex !== null) {
+        } else if (isDragging && canvasMode === 'select' && selectedNodeIndex !== null && selectedNodeIndex !== -1) {
+            const projectionMode = getCurrentProjectionMode();
+            if (projectionMode === 'iso') {
+                return;
+            }
+
             let modelCoords = inverseTransform(mouseX, mouseY);
             if (modelCoords) {
                 if (elements.gridToggle.checked) {
@@ -9495,9 +9510,47 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     modelCoords.x = Math.round(modelCoords.x / spacing) * spacing;
                     modelCoords.y = Math.round(modelCoords.y / spacing) * spacing;
                 }
+
                 const nodeRow = elements.nodesTable.rows[selectedNodeIndex];
-                nodeRow.cells[1].querySelector('input').value = modelCoords.x.toFixed(2);
-                nodeRow.cells[2].querySelector('input').value = modelCoords.y.toFixed(2);
+                if (!nodeRow) {
+                    return;
+                }
+
+                const xInput = nodeRow.cells[1]?.querySelector('input');
+                const yInput = nodeRow.cells[2]?.querySelector('input');
+                const zInput = nodeRow.cells[3]?.querySelector('input');
+
+                const originalX = xInput ? parseFloat(xInput.value) || 0 : 0;
+                const originalY = yInput ? parseFloat(yInput.value) || 0 : 0;
+                const originalZ = zInput ? parseFloat(zInput.value) || 0 : 0;
+
+                let nextX = originalX;
+                let nextY = originalY;
+                let nextZ = originalZ;
+
+                switch (projectionMode) {
+                    case 'xy':
+                        nextX = modelCoords.x;
+                        nextY = modelCoords.y;
+                        break;
+                    case 'xz':
+                        nextX = modelCoords.x;
+                        nextZ = modelCoords.y;
+                        break;
+                    case 'yz':
+                        nextY = modelCoords.x;
+                        nextZ = modelCoords.y;
+                        break;
+                    default:
+                        nextX = modelCoords.x;
+                        nextY = modelCoords.y;
+                        break;
+                }
+
+                if (xInput) xInput.value = nextX.toFixed(3);
+                if (yInput) yInput.value = nextY.toFixed(3);
+                if (zInput) zInput.value = nextZ.toFixed(3);
+
                 drawOnCanvas();
             }
         } else if (isDraggingCanvas && canvasMode === 'select') {
