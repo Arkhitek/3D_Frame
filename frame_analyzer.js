@@ -267,7 +267,8 @@ const calculateSelfWeight = {
 
             const dx = node2.x - node1.x;
             const dy = node2.y - node1.y;
-            const length = Math.sqrt(dx * dx + dy * dy);
+            const dz = node2.z - node1.z;
+            const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
             if (!(length > 0)) return;
 
             const memberRow = membersTableBody.rows[index];
@@ -299,16 +300,18 @@ const calculateSelfWeight = {
                 window.selfWeightCalcLogCount = 1;
             }
 
-            const angle = Math.atan2(dy, dx);
-            const angleDegrees = Math.abs(angle * 180 / Math.PI);
+            // 水平面からの傾斜角を計算（0°=水平, 90°=鉛直）
+            const horizontalLength = Math.sqrt(dx * dx + dy * dy);
+            const angleFromHorizontal = Math.atan2(Math.abs(dz), horizontalLength);
+            const angleDegrees = angleFromHorizontal * 180 / Math.PI;
 
             const HORIZONTAL_TOLERANCE = 5;
             const VERTICAL_TOLERANCE = 5;
 
             let memberType;
-            if (angleDegrees <= HORIZONTAL_TOLERANCE || angleDegrees >= (180 - HORIZONTAL_TOLERANCE)) {
+            if (angleDegrees <= HORIZONTAL_TOLERANCE) {
                 memberType = 'horizontal';
-            } else if (Math.abs(angleDegrees - 90) <= VERTICAL_TOLERANCE) {
+            } else if (angleDegrees >= (90 - VERTICAL_TOLERANCE)) {
                 memberType = 'vertical';
             } else {
                 memberType = 'inclined';
@@ -326,12 +329,13 @@ const calculateSelfWeight = {
                     memberIndex: index,
                     member: index + 1,
                     w: selfWeightValue,
+                    wz: selfWeightValue,  // 正の値で格納（大きさ）
                     totalWeight,
                     isFromSelfWeight: true,
                     loadType: 'distributed'
                 });
             } else if (memberType === 'vertical') {
-                const lowerNodeIndex = node1.y > node2.y ? member.i : member.j;
+                const lowerNodeIndex = node1.z > node2.z ? member.i : member.j;
 
                 memberSelfWeights.push({
                     memberIndex: index,
@@ -344,39 +348,52 @@ const calculateSelfWeight = {
                 });
 
                 if (!nodeWeightMap.has(lowerNodeIndex)) {
-                    nodeWeightMap.set(lowerNodeIndex, { nodeIndex: lowerNodeIndex, px: 0, py: 0, mz: 0 });
+                    nodeWeightMap.set(lowerNodeIndex, { nodeIndex: lowerNodeIndex, px: 0, py: 0, pz: 0, mz: 0 });
                 }
-                nodeWeightMap.get(lowerNodeIndex).py -= totalWeight;
+                nodeWeightMap.get(lowerNodeIndex).pz -= totalWeight;
             } else {
-                const cosAngle = Math.abs(Math.cos(angle));
-                const sinAngle = Math.abs(Math.sin(angle));
-
-                const verticalComponent = weightPerMeter * cosAngle;
-                const horizontalWeight = totalWeight * sinAngle;
-
+                // 斜め部材: 自重を部材軸方向と垂直成分に分解
+                // 重力ベクトル: (0, 0, -weightPerMeter) (下向き)
+                // 部材軸ベクトル: (dx, dy, dz) / length
+                
+                const memberAxisX = dx / length;
+                const memberAxisY = dy / length;
+                const memberAxisZ = dz / length;
+                
+                // 重力の部材軸方向成分（部材に沿った荷重、引張/圧縮を生む）
+                const axialComponent = -memberAxisZ * weightPerMeter;
+                
+                // 重力の部材軸垂直成分（曲げを生む分布荷重）
+                const lateralComponent = Math.sqrt(weightPerMeter * weightPerMeter - axialComponent * axialComponent);
+                
                 memberSelfWeights.push({
                     memberIndex: index,
                     member: index + 1,
-                    w: verticalComponent,
+                    w: lateralComponent,  // 互換性のため
+                    wz: lateralComponent,  // 正の値で格納（大きさ）
                     totalWeight,
                     isFromSelfWeight: true,
-                    loadType: 'mixed',
-                    horizontalComponent: horizontalWeight,
-                    appliedNodeIndexes: [member.i, member.j]
+                    loadType: 'distributed'
                 });
 
-                const horizontalHalfWeight = horizontalWeight / 2;
-                const horizontalDirection = dx > 0 ? 1 : -1;
-
+                // 軸方向成分は節点荷重として両端に分配
+                const axialForce = axialComponent * length / 2;
+                
                 if (!nodeWeightMap.has(member.i)) {
-                    nodeWeightMap.set(member.i, { nodeIndex: member.i, px: 0, py: 0, mz: 0 });
+                    nodeWeightMap.set(member.i, { nodeIndex: member.i, px: 0, py: 0, pz: 0, mz: 0 });
                 }
-                nodeWeightMap.get(member.i).px += horizontalDirection * horizontalHalfWeight;
-
                 if (!nodeWeightMap.has(member.j)) {
-                    nodeWeightMap.set(member.j, { nodeIndex: member.j, px: 0, py: 0, mz: 0 });
+                    nodeWeightMap.set(member.j, { nodeIndex: member.j, px: 0, py: 0, pz: 0, mz: 0 });
                 }
-                nodeWeightMap.get(member.j).px += horizontalDirection * horizontalHalfWeight;
+                
+                // 軸方向力を節点荷重として追加
+                nodeWeightMap.get(member.i).px -= memberAxisX * axialForce;
+                nodeWeightMap.get(member.i).py -= memberAxisY * axialForce;
+                nodeWeightMap.get(member.i).pz -= memberAxisZ * axialForce;
+                
+                nodeWeightMap.get(member.j).px -= memberAxisX * axialForce;
+                nodeWeightMap.get(member.j).py -= memberAxisY * axialForce;
+                nodeWeightMap.get(member.j).pz -= memberAxisZ * axialForce;
             }
         });
 
@@ -4411,16 +4428,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (Math.abs(weightPerMeter) < EPS) return;
 
                     // 自重は常にグローバル鉛直方向（下向き）に作用
-                    // weightPerMeterは既に負の値で格納されている
+                    // weightPerMeterは正の値で格納されているので、符号を反転して下向きにする
                     // 2Dフレーム: -Y方向, 3Dフレーム: -Z方向
                     const globalLoadVector = is2DFrame ? {
                         wx: 0,
-                        wy: weightPerMeter,  // 2D: 負の値（Y軸下向き）
+                        wy: -weightPerMeter,  // 2D: 負の値（Y軸下向き）
                         wz: 0
                     } : {
                         wx: 0,
                         wy: 0,
-                        wz: weightPerMeter  // 3D: 負の値（Z軸下向き）
+                        wz: -weightPerMeter  // 3D: 負の値（Z軸下向き）
                     };
 
                     // 部材の局所座標系を計算（解析用）
@@ -4453,8 +4470,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     // グローバル荷重ベクトルを局所座標系に変換（解析用）
                     const loadVectorGlobal = is2DFrame ? 
-                        { x: 0, y: weightPerMeter, z: 0 } :
-                        { x: 0, y: 0, z: weightPerMeter };
+                        { x: 0, y: -weightPerMeter, z: 0 } :
+                        { x: 0, y: 0, z: -weightPerMeter };
                     const wyComponent = dot3(loadVectorGlobal, localY);
                     const wzComponent = is2DFrame ? 0 : dot3(loadVectorGlobal, localZ);
 
@@ -6500,24 +6517,30 @@ document.addEventListener('DOMContentLoaded', () => {
         // 分布荷重のテキスト領域を障害物として追加
         const loadObstacles = [...obstacles];
         const getDistributedLoadOrientationMultiplier = (axisLabel) => {
+            // 分布荷重の描画方向を決定
+            // 正の荷重値 → 正の軸方向への力として描画
+            // 負の荷重値 → 負の軸方向への力として描画（例: wz=-10 は下向き）
+            
+            // 外部荷重（ユーザー入力）: 正の値を入力したら下向きに描画したいので-1を返す
+            // 自重: すでに負の値で格納されているので、そのまま描画するため1を返す
+            
             if (is3DModeActive) {
-                if (axisLabel === 'Wx' || axisLabel === 'Wy') {
-                    return -1;
-                }
-                return 1;
+                // 3Dモード: Wx, Wy, Wzは外部荷重の慣習に従い反転
+                return -1;
             }
 
+            // 2D投影モード: 外部荷重は反転、自重はそのまま
             if (projectionMode === 'xy') {
-                if (axisLabel === 'Wx' || axisLabel === 'Wy') {
-                    return -1;
-                }
+                return -1;
+            } else if (projectionMode === 'xz') {
+                return -1;
+            } else if (projectionMode === 'yz') {
+                return -1;
             } else if (projectionMode === 'iso') {
-                if (axisLabel === 'Wx' || axisLabel === 'Wy') {
-                    return -1;
-                }
+                return -1;
             }
 
-            return 1;
+            return -1;  // デフォルトも反転（外部荷重用）
         };
 
         const subtractVec3 = (a, b) => ({
@@ -6715,7 +6738,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             components.forEach(component => {
-                const baseSign = Math.sign(component.w) || 1;
+                // 自重の場合: 正の値で格納されているので、符号を反転して下向きにする
+                // 外部荷重の場合: 正の値を入力したら下向きに描画するため反転
+                const baseSign = isSelfWeightLoad ? -Math.sign(component.w || 1) : Math.sign(component.w) || 1;
                 const orientationSign = getDistributedLoadOrientationMultiplier(component.label);
                 const dir = baseSign * orientationSign;
                 const dirNorm = normalizeVec2(component.direction) || defaultDirectionNorm;
