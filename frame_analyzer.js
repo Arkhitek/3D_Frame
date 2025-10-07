@@ -201,28 +201,96 @@ const zeroMatrixRowAndColumn = (matrix, index, tiny = 1e-9) => {
     if (Array.isArray(matrix[index])) matrix[index][index] = tiny;
 };
 
-const apply3DEndReleases = (kLocal3D, iConn, jConn) => {
-    if (!Array.isArray(kLocal3D)) return kLocal3D;
-
+const build3DReleaseData = (kLocal3D, T3D, globalIndexMap, iConn, jConn, matrixLib) => {
+    const matrixOps = matrixLib || globalThis.matrixOps || globalThis.mat;
+    if (!matrixOps) {
+        throw new Error('3D release handling requires matrix utilities.');
+    }
     const isPinned = (conn) => {
         if (typeof conn !== 'string') return false;
         const normalized = conn.trim().toLowerCase();
         return normalized === 'pinned' || normalized === 'p';
     };
 
+    const releaseLocalIndices = [];
     if (isPinned(iConn)) {
-        // ローカルi端の回転自由度 (ry, rz) を解放
-        zeroMatrixRowAndColumn(kLocal3D, 4);
-        zeroMatrixRowAndColumn(kLocal3D, 5);
+        releaseLocalIndices.push(4, 5);
     }
-
     if (isPinned(jConn)) {
-        // ローカルj端の回転自由度 (ry, rz) を解放
-        zeroMatrixRowAndColumn(kLocal3D, 10);
-        zeroMatrixRowAndColumn(kLocal3D, 11);
+        releaseLocalIndices.push(10, 11);
     }
 
-    return kLocal3D;
+    const allIndices = Array.isArray(kLocal3D)
+        ? kLocal3D.map((_, idx) => idx)
+        : Array.from({ length: 12 }, (_, idx) => idx);
+
+    if (!Array.isArray(kLocal3D) || releaseLocalIndices.length === 0) {
+        return {
+            hasRelease: false,
+            usedCondensation: false,
+            activeLocalIndices: allIndices,
+            releaseLocalIndices,
+            k_local_active: kLocal3D,
+            T_active: T3D,
+            K_rr_inv: null,
+            K_ra: null,
+            K_ar: null,
+            fallbackZeroing: false,
+            k_local_modified: kLocal3D,
+            globalIndexMap
+        };
+    }
+
+    const activeLocalIndices = allIndices.filter(idx => !releaseLocalIndices.includes(idx));
+
+    const selectSubmatrix = (matrix, rowIndices, colIndices) => rowIndices.map(r => colIndices.map(c => matrix[r][c]));
+
+    const K_rr = selectSubmatrix(kLocal3D, releaseLocalIndices, releaseLocalIndices);
+    const K_ra = selectSubmatrix(kLocal3D, releaseLocalIndices, activeLocalIndices);
+    const K_ar = selectSubmatrix(kLocal3D, activeLocalIndices, releaseLocalIndices);
+    const K_aa = selectSubmatrix(kLocal3D, activeLocalIndices, activeLocalIndices);
+
+    const K_rr_inv = matrixOps.inverse(K_rr);
+
+    if (!K_rr_inv) {
+        console.warn('3D端部解放の縮約に失敗したため、零行列による近似にフォールバックします。');
+        // Condensation failed (singular). Fallback to zeroing.
+        const kModified = kLocal3D.map(row => [...row]);
+        releaseLocalIndices.forEach(idx => zeroMatrixRowAndColumn(kModified, idx));
+        return {
+            hasRelease: true,
+            usedCondensation: false,
+            activeLocalIndices: allIndices,
+            releaseLocalIndices,
+            k_local_active: kModified,
+            T_active: T3D,
+            K_rr_inv: null,
+            K_ra: null,
+            K_ar: null,
+            fallbackZeroing: true,
+            k_local_modified: kModified,
+            globalIndexMap
+        };
+    }
+
+    const temp = matrixOps.multiply(K_ar, matrixOps.multiply(K_rr_inv, K_ra));
+    const K_condensed = matrixOps.subtract(K_aa, temp);
+    const T_active = activeLocalIndices.map(idx => T3D[idx]);
+
+    return {
+        hasRelease: true,
+        usedCondensation: true,
+        activeLocalIndices,
+        releaseLocalIndices,
+        k_local_active: K_condensed,
+        T_active,
+        K_rr_inv,
+        K_ra,
+        K_ar,
+        fallbackZeroing: false,
+        k_local_modified: kLocal3D,
+        globalIndexMap
+    };
 };
 
 function getCurrentProjectionMode() {
@@ -3530,7 +3598,70 @@ document.addEventListener('DOMContentLoaded', () => {
     window.applyBulkNodeEdit = applyBulkNodeEdit;
     
     // --- Matrix Math Library ---
-    const mat = { create: (rows, cols, value = 0) => Array(rows).fill().map(() => Array(cols).fill(value)), multiply: (A, B) => { const C = mat.create(A.length, B[0].length); for (let i = 0; i < A.length; i++) { for (let j = 0; j < B[0].length; j++) { for (let k = 0; k < A[0].length; k++) { C[i][j] += A[i][k] * B[k][j]; } } } return C; }, transpose: A => A[0].map((_, colIndex) => A.map(row => row[colIndex])), add: (A, B) => A.map((row, i) => row.map((val, j) => val + B[i][j])), subtract: (A, B) => A.map((row, i) => row.map((val, j) => val - B[i][j])), solve: (A, b) => { const n = A.length; const aug = A.map((row, i) => [...row, b[i][0]]); for (let i = 0; i < n; i++) { let maxRow = i; for (let k = i + 1; k < n; k++) { if (Math.abs(aug[k][i]) > Math.abs(aug[maxRow][i])) maxRow = k; } [aug[i], aug[maxRow]] = [aug[maxRow], aug[i]]; if (aug[i][i] === 0) continue; for (let k = i + 1; k < n; k++) { const factor = aug[k][i] / aug[i][i]; for (let j = i; j < n + 1; j++) aug[k][j] -= factor * aug[i][j]; } } const x = mat.create(n, 1); for (let i = n - 1; i >= 0; i--) { let sum = 0; for (let j = i + 1; j < n; j++) sum += aug[i][j] * x[j][0]; if (aug[i][i] === 0 && aug[i][n] - sum !== 0) return null; x[i][0] = aug[i][i] === 0 ? 0 : (aug[i][n] - sum) / aug[i][i]; } return x; } };
+    const mat = {
+        create: (rows, cols, value = 0) => Array(rows).fill().map(() => Array(cols).fill(value)),
+        clone: (A) => A.map(row => row.slice()),
+        identity: (n) => {
+            const I = Array.from({ length: n }, (_, row) => Array.from({ length: n }, (_, col) => (row === col ? 1 : 0)));
+            return I;
+        },
+        multiply: (A, B) => {
+            const C = mat.create(A.length, B[0].length);
+            for (let i = 0; i < A.length; i++) {
+                for (let j = 0; j < B[0].length; j++) {
+                    for (let k = 0; k < A[0].length; k++) {
+                        C[i][j] += A[i][k] * B[k][j];
+                    }
+                }
+            }
+            return C;
+        },
+        transpose: A => A[0].map((_, colIndex) => A.map(row => row[colIndex])),
+        add: (A, B) => A.map((row, i) => row.map((val, j) => val + B[i][j])),
+        subtract: (A, B) => A.map((row, i) => row.map((val, j) => val - B[i][j])),
+        solve: (A, b) => {
+            const n = A.length;
+            const aug = A.map((row, i) => [...row, b[i][0]]);
+            for (let i = 0; i < n; i++) {
+                let maxRow = i;
+                for (let k = i + 1; k < n; k++) {
+                    if (Math.abs(aug[k][i]) > Math.abs(aug[maxRow][i])) maxRow = k;
+                }
+                [aug[i], aug[maxRow]] = [aug[maxRow], aug[i]];
+                if (aug[i][i] === 0) continue;
+                for (let k = i + 1; k < n; k++) {
+                    const factor = aug[k][i] / aug[i][i];
+                    for (let j = i; j < n + 1; j++) aug[k][j] -= factor * aug[i][j];
+                }
+            }
+            const x = mat.create(n, 1);
+            for (let i = n - 1; i >= 0; i--) {
+                let sum = 0;
+                for (let j = i + 1; j < n; j++) sum += aug[i][j] * x[j][0];
+                if (aug[i][i] === 0 && aug[i][n] - sum !== 0) return null;
+                x[i][0] = aug[i][i] === 0 ? 0 : (aug[i][n] - sum) / aug[i][i];
+            }
+            return x;
+        },
+        inverse: (A) => {
+            if (!Array.isArray(A) || A.length === 0 || A.length !== A[0].length) return null;
+            const n = A.length;
+            const identity = mat.identity(n);
+            const inv = mat.create(n, n);
+            for (let col = 0; col < n; col++) {
+                const e = identity.map(row => [row[col]]);
+                const solution = mat.solve(mat.clone(A), e);
+                if (!solution) return null;
+                for (let row = 0; row < n; row++) {
+                    inv[row][col] = solution[row][0];
+                }
+            }
+            return inv;
+        }
+    };
+    if (!globalThis.matrixOps) {
+        globalThis.matrixOps = mat;
+    }
     
     // --- State and History Management ---
     const getCurrentState = () => {
@@ -4770,7 +4901,30 @@ document.addEventListener('DOMContentLoaded', () => {
                         [0, EIz_L2, 0, 0, 0, EIz_L_half, 0, -EIz_L2, 0, 0, 0, EIz_L]
                     ];
 
-                    member.k_local_3d = apply3DEndReleases(k_local_3d, member.i_conn, member.j_conn);
+                    const globalIndexMap = [
+                        member.i * 6,
+                        member.i * 6 + 1,
+                        member.i * 6 + 2,
+                        member.i * 6 + 3,
+                        member.i * 6 + 4,
+                        member.i * 6 + 5,
+                        member.j * 6,
+                        member.j * 6 + 1,
+                        member.j * 6 + 2,
+                        member.j * 6 + 3,
+                        member.j * 6 + 4,
+                        member.j * 6 + 5
+                    ];
+
+                    const releaseData = build3DReleaseData(k_local_3d, R, globalIndexMap, member.i_conn, member.j_conn, mat);
+
+                    member.k_local_3d = k_local_3d;
+                    member.k_local_active = releaseData.k_local_active;
+                    member.T_active = releaseData.T_active;
+                    member.activeLocalIndices = releaseData.activeLocalIndices;
+                    member.releaseLocalIndices = releaseData.releaseLocalIndices;
+                    member.release3D = releaseData;
+                    member.globalIndexMap = globalIndexMap;
                 });
             }
             let K_global = mat.create(dof, dof);
@@ -4886,9 +5040,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     // 3D: 12要素の固定端力ベクトル (6自由度×2節点)
                     // fel = [Fx_i, Fy_i, Fz_i, Mx_i, My_i, Mz_i, Fx_j, Fy_j, Fz_j, Mx_j, My_j, Mz_j]
-                    // 注意: 固定端力は荷重と逆向き（下向き荷重→上向き拘束力）
-                    // しかし、等価節点荷重として扱うため、さらに符号反転が必要
-                    // 結果として、wy/wzと逆符号の固定端力を使用
                     if (member.i_conn === 'rigid' && member.j_conn === 'rigid') {
                         fel = [0, -wy*L/2, -wz*L/2, 0, wz*L**2/12, -wy*L**2/12, 0, -wy*L/2, -wz*L/2, 0, -wz*L**2/12, wy*L**2/12];
                     }
@@ -4901,8 +5052,19 @@ document.addEventListener('DOMContentLoaded', () => {
                     else {
                         fel = [0, -wy*L/2, -wz*L/2, 0, 0, 0, 0, -wy*L/2, -wz*L/2, 0, 0, 0];
                     }
-                    const T_t = mat.transpose(member.T3D);
-                    const feg = mat.multiply(T_t, fel.map(v => [v]));
+
+                    const releaseInfo = member.release3D;
+                    if (releaseInfo?.releaseLocalIndices?.length) {
+                        releaseInfo.releaseLocalIndices.forEach(idx => {
+                            fel[idx] = 0;
+                        });
+                    }
+
+                    const T_forLoads = releaseInfo?.T_active || member.T3D;
+                    const activeLocalIndices = releaseInfo?.activeLocalIndices || Array.from({ length: 12 }, (_, idx) => idx);
+                    const felActiveVector = activeLocalIndices.map(idx => fel[idx]).map(v => [v]);
+                    const feg = mat.multiply(mat.transpose(T_forLoads), felActiveVector);
+
                     const i = member.i;
                     const j = member.j;
                     addForceWithSignFlip(i*6, -feg[0][0]);
@@ -4957,65 +5119,99 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             } else {
                 // 3D解析
-                members.forEach((member, idx) => {
-                    const {k_local_3d, T3D, i, j} = member;
-                    const T_t = mat.transpose(T3D);
-                    const k_global_member = mat.multiply(mat.multiply(T_t, k_local_3d), T3D);
-                    const indices = [
-                        i*6, i*6+1, i*6+2, i*6+3, i*6+4, i*6+5, 
-                        j*6, j*6+1, j*6+2, j*6+3, j*6+4, j*6+5
+                members.forEach((member) => {
+                    const T_use = member.T_active || member.T3D;
+                    const k_local_use = member.k_local_active || member.k_local_3d;
+                    const indices = member.globalIndexMap || [
+                        member.i * 6, member.i * 6 + 1, member.i * 6 + 2,
+                        member.i * 6 + 3, member.i * 6 + 4, member.i * 6 + 5,
+                        member.j * 6, member.j * 6 + 1, member.j * 6 + 2,
+                        member.j * 6 + 3, member.j * 6 + 4, member.j * 6 + 5
                     ];
+
+                    const T_t = mat.transpose(T_use);
+                    const k_global_member = mat.multiply(mat.multiply(T_t, k_local_use), T_use);
+
                     for (let row = 0; row < 12; row++) {
+                        const globalRow = indices[row];
+                        if (globalRow === null || globalRow === undefined) continue;
                         for (let col = 0; col < 12; col++) {
-                            K_global[indices[row]][indices[col]] += k_global_member[row][col];
+                            const globalCol = indices[col];
+                            if (globalCol === null || globalCol === undefined) continue;
+                            K_global[globalRow][globalCol] += k_global_member[row][col];
                         }
                     }
                 });
             }
+            const excludedDOFs = new Set();
+            if (!is2DFrame) {
+                const tolerance = 1e-9;
+                for (let r = 0; r < dof; r++) {
+                    let maxMagnitude = 0;
+                    for (let c = 0; c < dof; c++) {
+                        const val = K_global[r][c];
+                        if (Math.abs(val) > maxMagnitude) {
+                            maxMagnitude = Math.abs(val);
+                            if (maxMagnitude > tolerance) break;
+                        }
+                    }
+                    if (maxMagnitude <= tolerance && Math.abs(F_global[r][0]) <= tolerance) {
+                        excludedDOFs.add(r);
+                        F_global[r][0] = 0;
+                    }
+                }
+            }
+
             // ==========================================================
             // 強制変位を考慮した解析ロジック（自由節点も対応）
             // ==========================================================
 
             // 1. 物理的な支点による拘束自由度を定義（2D/3Dで処理を分ける）
             const support_constraints = new Set();
+            const registerConstraint = (index) => {
+                if (index >= 0 && index < dof && !excludedDOFs.has(index)) {
+                    support_constraints.add(index);
+                }
+            };
+
             nodes.forEach((node, i) => {
                 const supportType = normalizeSupportValue(node.support);
                 
                 if (is2DFrame) {
                     // 2D解析: 3自由度 (dx, dy, θz)
                     if (supportType === 'fixed') {
-                        support_constraints.add(i * 3);
-                        support_constraints.add(i * 3 + 1);
-                        support_constraints.add(i * 3 + 2);
+                        registerConstraint(i * 3);
+                        registerConstraint(i * 3 + 1);
+                        registerConstraint(i * 3 + 2);
                     } else if (supportType === 'pinned') {
-                        support_constraints.add(i * 3);
-                        support_constraints.add(i * 3 + 1);
+                        registerConstraint(i * 3);
+                        registerConstraint(i * 3 + 1);
                     } else if (supportType === 'roller-x') {
-                        support_constraints.add(i * 3);
+                        registerConstraint(i * 3);
                     } else if (supportType === 'roller-y' || supportType === 'roller-z') {
-                        support_constraints.add(i * 3 + 1);
+                        registerConstraint(i * 3 + 1);
                     }
                 } else {
                     // 3D解析: 6自由度 (dx, dy, dz, θx, θy, θz)
                     if (supportType === 'fixed') {
                         // 完全固定: 全6自由度を拘束
-                        support_constraints.add(i * 6);
-                        support_constraints.add(i * 6 + 1);
-                        support_constraints.add(i * 6 + 2);
-                        support_constraints.add(i * 6 + 3);
-                        support_constraints.add(i * 6 + 4);
-                        support_constraints.add(i * 6 + 5);
+                        registerConstraint(i * 6);
+                        registerConstraint(i * 6 + 1);
+                        registerConstraint(i * 6 + 2);
+                        registerConstraint(i * 6 + 3);
+                        registerConstraint(i * 6 + 4);
+                        registerConstraint(i * 6 + 5);
                     } else if (supportType === 'pinned') {
                         // ピン: 移動3自由度を拘束、回転自由
-                        support_constraints.add(i * 6);
-                        support_constraints.add(i * 6 + 1);
-                        support_constraints.add(i * 6 + 2);
+                        registerConstraint(i * 6);
+                        registerConstraint(i * 6 + 1);
+                        registerConstraint(i * 6 + 2);
                     } else if (isRollerSupport(supportType)) {
                         const axis = getRollerAxis(supportType) || 'y';
                         const axisIndexMap = { x: 0, y: 1, z: 2 };
                         const offset = axisIndexMap[axis];
                         if (offset !== undefined) {
-                            support_constraints.add(i * 6 + offset);
+                            registerConstraint(i * 6 + offset);
                         }
                     }
                 }
@@ -5024,58 +5220,60 @@ document.addEventListener('DOMContentLoaded', () => {
             // 2. 強制変位が与えられた自由度を特定し、既知変位ベクトルD_sを作成
             const D_s = mat.create(dof, 1);
             const forced_disp_constraints = new Set();
+            const assignForcedDisplacement = (index, value) => {
+                if (!Number.isFinite(value) || value === 0) return;
+                if (excludedDOFs.has(index)) {
+                    console.warn('強制変位が解放自由度に指定されました', { index, value });
+                    return;
+                }
+                D_s[index][0] = value;
+                forced_disp_constraints.add(index);
+            };
             
             if (is2DFrame) {
                 // 2D: dx, dy, θz
                 nodes.forEach((node, i) => {
                     if (node.dx_forced !== undefined && node.dx_forced !== null && node.dx_forced !== 0) {
-                        D_s[i * 3][0] = node.dx_forced;
-                        forced_disp_constraints.add(i * 3);
+                        assignForcedDisplacement(i * 3, node.dx_forced);
                     }
                     if (node.dy_forced !== undefined && node.dy_forced !== null && node.dy_forced !== 0) {
-                        D_s[i * 3 + 1][0] = node.dy_forced;
-                        forced_disp_constraints.add(i * 3 + 1);
+                        assignForcedDisplacement(i * 3 + 1, node.dy_forced);
                     }
                     const rotationForced = node.rz_forced !== undefined ? node.rz_forced : node.r_forced;
                     if (rotationForced !== undefined && rotationForced !== null && rotationForced !== 0) {
-                        D_s[i * 3 + 2][0] = rotationForced;
-                        forced_disp_constraints.add(i * 3 + 2);
+                        assignForcedDisplacement(i * 3 + 2, rotationForced);
                     }
                 });
             } else {
                 // 3D: dx, dy, dz, θx, θy, θz
                 nodes.forEach((node, i) => {
                     if (node.dx_forced !== undefined && node.dx_forced !== null && node.dx_forced !== 0) {
-                        D_s[i * 6][0] = node.dx_forced;
-                        forced_disp_constraints.add(i * 6);
+                        assignForcedDisplacement(i * 6, node.dx_forced);
                     }
                     if (node.dy_forced !== undefined && node.dy_forced !== null && node.dy_forced !== 0) {
-                        D_s[i * 6 + 1][0] = node.dy_forced;
-                        forced_disp_constraints.add(i * 6 + 1);
+                        assignForcedDisplacement(i * 6 + 1, node.dy_forced);
                     }
                     if (node.dz_forced !== undefined && node.dz_forced !== null && node.dz_forced !== 0) {
-                        D_s[i * 6 + 2][0] = node.dz_forced;
-                        forced_disp_constraints.add(i * 6 + 2);
+                        assignForcedDisplacement(i * 6 + 2, node.dz_forced);
                     }
                     if (node.rx_forced !== undefined && node.rx_forced !== null && node.rx_forced !== 0) {
-                        D_s[i * 6 + 3][0] = node.rx_forced;
-                        forced_disp_constraints.add(i * 6 + 3);
+                        assignForcedDisplacement(i * 6 + 3, node.rx_forced);
                     }
                     if (node.ry_forced !== undefined && node.ry_forced !== null && node.ry_forced !== 0) {
-                        D_s[i * 6 + 4][0] = node.ry_forced;
-                        forced_disp_constraints.add(i * 6 + 4);
+                        assignForcedDisplacement(i * 6 + 4, node.ry_forced);
                     }
                     if (node.rz_forced !== undefined && node.rz_forced !== null && node.rz_forced !== 0) {
-                        D_s[i * 6 + 5][0] = node.rz_forced;
-                        forced_disp_constraints.add(i * 6 + 5);
+                        assignForcedDisplacement(i * 6 + 5, node.rz_forced);
                     }
                 });
             }
             
             // 3. 物理支点と強制変位を合算し、最終的な「拘束自由度」と「自由度」を決定
             const constrained_indices_set = new Set([...support_constraints, ...forced_disp_constraints]);
-            const constrained_indices = Array.from(constrained_indices_set).sort((a, b) => a - b);
-            const free_indices = [...Array(dof).keys()].filter(i => !constrained_indices_set.has(i));
+            const constrained_indices = Array.from(constrained_indices_set)
+                .filter(index => !excludedDOFs.has(index))
+                .sort((a, b) => a - b);
+            const free_indices = [...Array(dof).keys()].filter(i => !constrained_indices_set.has(i) && !excludedDOFs.has(i));
 
             if (free_indices.length === 0) { // 完全拘束モデルの場合
                 const D_global = D_s;
@@ -5109,7 +5307,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         };
                     } else {
                         // 3D解析
-                        const { T3D, k_local_3d, i, j } = member;
+                        const { i, j } = member;
                         const d_global_member = [
                             D_global[i*6][0], D_global[i*6+1][0], D_global[i*6+2][0],
                             D_global[i*6+3][0], D_global[i*6+4][0], D_global[i*6+5][0],
@@ -5117,8 +5315,38 @@ document.addEventListener('DOMContentLoaded', () => {
                             D_global[j*6+3][0], D_global[j*6+4][0], D_global[j*6+5][0]
                         ].map(v => [v]);
 
-                        const d_local = mat.multiply(T3D, d_global_member);
-                        let f_local = mat.multiply(k_local_3d, d_local);
+                        const releaseInfo = member.release3D;
+                        const T_use = member.T_active || member.T3D;
+                        const k_local_use = member.k_local_active || member.k_local_3d;
+                        const d_local_active = mat.multiply(T_use, d_global_member);
+
+                        let d_local_full;
+                        if (releaseInfo?.usedCondensation) {
+                            d_local_full = Array.from({ length: 12 }, () => [0]);
+                            releaseInfo.activeLocalIndices.forEach((localIdx, pos) => {
+                                d_local_full[localIdx][0] = d_local_active[pos][0];
+                            });
+                            if (releaseInfo.releaseLocalIndices.length > 0) {
+                                const temp = mat.multiply(releaseInfo.K_ra, d_local_active);
+                                const d_released = mat.multiply(releaseInfo.K_rr_inv, temp);
+                                releaseInfo.releaseLocalIndices.forEach((localIdx, pos) => {
+                                    d_local_full[localIdx][0] = -d_released[pos][0];
+                                });
+                            }
+                        } else {
+                            d_local_full = d_local_active;
+                        }
+
+                        const k_for_force = (releaseInfo && !releaseInfo.usedCondensation)
+                            ? (member.k_local_active || member.k_local_3d)
+                            : member.k_local_3d;
+
+                        let f_local = mat.multiply(k_for_force, d_local_full);
+
+                        if (fixedEndForces[idx]) {
+                            const fel_mat = fixedEndForces[idx].map(v => [v]);
+                            f_local = mat.add(f_local, fel_mat);
+                        }
 
                         return {
                             N_i: f_local[0][0],
