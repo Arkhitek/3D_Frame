@@ -921,6 +921,174 @@ function normalizeAxisInfo(axisInfo) {
     return { key: normalizedKey, mode: resolvedMode, label: resolvedLabel };
 }
 
+function deriveAxisKeyFromLabel(label) {
+    if (!label) return null;
+    const normalized = `${label}`.trim().toLowerCase();
+    if (!normalized) return null;
+    if (normalized.includes('両') || normalized.includes('both') || normalized.includes('x=y') || normalized.includes('same')) {
+        return 'both';
+    }
+    if (normalized.includes('弱') || normalized.includes('y') || normalized.includes('weak')) {
+        return 'y';
+    }
+    if (normalized.includes('強') || normalized.includes('x') || normalized.includes('strong')) {
+        return 'x';
+    }
+    return null;
+}
+
+function findMemberLoadRow(memberIndex) {
+    if (!elements || !elements.memberLoadsTable || !Number.isInteger(memberIndex)) {
+        return null;
+    }
+
+    return Array.from(elements.memberLoadsTable.rows || []).find((row) => {
+        const memberInput = row.cells[0]?.querySelector('input');
+        if (!memberInput) return false;
+        const value = parseInt(memberInput.value, 10);
+        return Number.isInteger(value) && value - 1 === memberIndex;
+    }) || null;
+}
+
+function readMemberLoadComponents(row) {
+    if (!(row instanceof HTMLTableRowElement)) {
+        return { wx: 0, wy: 0, wz: 0 };
+    }
+    const readCellValue = (index) => {
+        const input = row.cells[index]?.querySelector('input');
+        const value = input ? parseFloat(input.value) : 0;
+        return Number.isFinite(value) ? value : 0;
+    };
+
+    return {
+        wx: readCellValue(1),
+        wy: readCellValue(2),
+        wz: readCellValue(3)
+    };
+}
+
+function areLoadsNearlyZero(loads, tolerance = 1e-6) {
+    if (!loads || typeof loads !== 'object') return true;
+    return ['wx', 'wy', 'wz'].every((key) => {
+        const value = parseFloat(loads[key]);
+        return !Number.isFinite(value) || Math.abs(value) <= tolerance;
+    });
+}
+
+function setPopupLoadInputs(loads = {}) {
+    const setValue = (id, value) => {
+        const input = document.getElementById(id);
+        if (input) {
+            const numericValue = Number.isFinite(value) ? value : 0;
+            input.value = numericValue;
+        }
+    };
+
+    setValue('popup-wx', loads.wx ?? 0);
+    setValue('popup-wy', loads.wy ?? 0);
+    setValue('popup-wz', loads.wz ?? 0);
+}
+
+function getPopupLoadInputs() {
+    const readValue = (id) => {
+        const input = document.getElementById(id);
+        const value = input ? parseFloat(input.value) : 0;
+        return Number.isFinite(value) ? value : 0;
+    };
+
+    return {
+        wx: readValue('popup-wx'),
+        wy: readValue('popup-wy'),
+        wz: readValue('popup-wz')
+    };
+}
+
+function updateMemberLoadRow(memberIndex, loads) {
+    if (!elements || !elements.memberLoadsTable) return null;
+
+    const sanitizedLoads = {
+        wx: Number.isFinite(loads?.wx) ? loads.wx : 0,
+        wy: Number.isFinite(loads?.wy) ? loads.wy : 0,
+        wz: Number.isFinite(loads?.wz) ? loads.wz : 0
+    };
+
+    let row = findMemberLoadRow(memberIndex);
+
+    if (!row) {
+        row = addRow(elements.memberLoadsTable, [
+            `<input type="number" value="${memberIndex + 1}">`,
+            `<input type="number" value="${sanitizedLoads.wx}">`,
+            `<input type="number" value="${sanitizedLoads.wy}">`,
+            `<input type="number" value="${sanitizedLoads.wz}">`
+        ]);
+    } else {
+        const setCell = (index, value) => {
+            const input = row.cells[index]?.querySelector('input');
+            if (input) {
+                input.value = value;
+            }
+        };
+        setCell(1, sanitizedLoads.wx);
+        setCell(2, sanitizedLoads.wy);
+        setCell(3, sanitizedLoads.wz);
+
+        const memberInput = row.cells[0]?.querySelector('input');
+        if (memberInput) {
+            memberInput.value = memberIndex + 1;
+        }
+    }
+
+    return row;
+}
+
+function getPopupDensityElements() {
+    return {
+        densityLabel: document.getElementById('popup-density-label'),
+        densityContainer: document.getElementById('popup-density-container'),
+        densityInput: document.getElementById('popup-density-input'),
+        densitySelect: document.getElementById('popup-density-select'),
+        selfWeightLabel: document.getElementById('popup-self-weight-label'),
+        selfWeightValue: document.getElementById('popup-self-weight-value')
+    };
+}
+
+function updatePopupSelfWeightDisplay() {
+    const { densityContainer, densityInput, selfWeightLabel, selfWeightValue } = getPopupDensityElements();
+    if (!densityContainer || densityContainer.style.display === 'none') {
+        return;
+    }
+
+    const areaInput = document.getElementById('popup-a');
+    if (!areaInput) return;
+
+    const density = parseFloat(densityInput?.value ?? '0');
+    const area = parseFloat(areaInput.value ?? '0');
+    const weightPerMeter = calculateSelfWeight.getMemberSelfWeight(density, area, 1);
+
+    if (selfWeightLabel) selfWeightLabel.style.display = '';
+    if (selfWeightValue) {
+        selfWeightValue.style.display = '';
+        if (Number.isFinite(weightPerMeter) && weightPerMeter > 0) {
+            selfWeightValue.textContent = `${weightPerMeter.toFixed(3)} kN/m`;
+        } else {
+            selfWeightValue.textContent = '-';
+        }
+    }
+}
+
+function setupPopupDensityHandlers() {
+    const { densityInput, densitySelect } = getPopupDensityElements();
+    if (densitySelect) {
+        densitySelect.addEventListener('change', () => {
+            updatePopupSelfWeightDisplay();
+        });
+    }
+
+    if (densityInput) {
+        densityInput.addEventListener('input', updatePopupSelfWeightDisplay);
+    }
+}
+
 // 部材ツールチップ関数
 function detectMemberAtPosition(clientX, clientY) {
     console.log('🔍 detectMemberAtPosition呼び出し - 座標:', clientX, clientY);
@@ -1996,6 +2164,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const initializedValue = normalizeSupportValue(popupSupportSelect.value || 'free');
         popupSupportSelect.innerHTML = buildSupportOptionsMarkup(initializedValue);
         popupSupportSelect.value = initializedValue;
+    }
+
+    const popupAreaInput = document.getElementById('popup-a');
+    if (popupAreaInput) {
+        popupAreaInput.addEventListener('input', updatePopupSelfWeightDisplay);
     }
 
     if (elements.projectionMode) {
@@ -10257,6 +10430,11 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             const memberRow = elements.membersTable.rows[selectedMemberIndex];
             const e_select = memberRow.cells[3].querySelector('select'), e_input = memberRow.cells[3].querySelector('input[type="number"]');
             const currentE = (e_select.value === 'custom') ? e_input.value : e_select.value;
+
+            const popupTitle = document.getElementById('member-props-title');
+            if (popupTitle) {
+                popupTitle.textContent = `部材 #${selectedMemberIndex + 1} プロパティ編集`;
+            }
             
             // ポップアップ内のE入力欄を生成
             const eContainer = document.getElementById('popup-e-container');
@@ -10319,6 +10497,8 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                         const densityContainer = document.getElementById('popup-density-container');
                         if (densityContainer) {
                             densityContainer.innerHTML = createDensityInputHTML('popup-density', newDensity);
+                            setupPopupDensityHandlers();
+                            updatePopupSelfWeightDisplay();
                         }
                     }
                 });
@@ -10331,71 +10511,59 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             document.getElementById('popup-a').value = memberRow.cells[8].querySelector('input').value;
             document.getElementById('popup-zz').value = memberRow.cells[9].querySelector('input').value;
             document.getElementById('popup-zy').value = memberRow.cells[10].querySelector('input').value;
+
+            const sectionNameInput = document.getElementById('popup-section-name');
+            if (sectionNameInput) {
+                const sectionNameSpan = memberRow.querySelector('.section-name-cell');
+                const datasetLabel = (memberRow.dataset.sectionLabel || '').trim();
+                const displayLabel = (sectionNameSpan?.textContent || '').trim();
+                const resolvedName = displayLabel && displayLabel !== '-' ? displayLabel : datasetLabel;
+                sectionNameInput.value = resolvedName || '';
+            }
+
+            const sectionAxisSelect = document.getElementById('popup-section-axis');
+            if (sectionAxisSelect) {
+                const axisKey = memberRow.dataset.sectionAxisKey || deriveAxisKeyFromLabel(memberRow.querySelector('.section-axis-cell')?.textContent) || 'x';
+                sectionAxisSelect.value = ['x', 'y', 'both'].includes(axisKey) ? axisKey : 'x';
+            }
             
             // 密度欄の表示/非表示と値設定
             const hasDensityColumn = document.querySelector('.density-column') && document.querySelector('.density-column').style.display !== 'none';
-            let existingDensityLabel = document.getElementById('popup-density-label');
-            let existingDensityContainer = document.getElementById('popup-density-container');
-            
-            if (hasDensityColumn) {
-                // 密度欄が必要な場合
-                if (!existingDensityLabel || !existingDensityContainer) {
-                    // 密度欄を動的に作成
-                    const propsGrid = document.querySelector('#member-props-popup .props-grid');
-                    const zInput = document.getElementById('popup-z');
-                    
-                    // 密度ラベルを作成
-                    const densityLabel = document.createElement('label');
-                    densityLabel.setAttribute('for', 'popup-density');
-                    densityLabel.textContent = '密度 ρ (kg/m³)';
-                    densityLabel.id = 'popup-density-label';
-                    
-                    // 密度入力欄を作成
-                    const densityContainer = document.createElement('div');
-                    densityContainer.id = 'popup-density-container';
-                    
-                    // Z入力欄の直後に密度欄を挿入
-                    // Z入力欄の次に挿入（より安全な方法）
-                    const iConnLabel = document.querySelector('label[for="popup-i-conn"]');
-                    if (iConnLabel) {
-                        propsGrid.insertBefore(densityLabel, iConnLabel);
-                        propsGrid.insertBefore(densityContainer, iConnLabel);
-                    } else {
-                        // 挿入位置が見つからない場合は末尾に追加
-                        propsGrid.appendChild(densityLabel);
-                        propsGrid.appendChild(densityContainer);
+            const densityLabel = document.getElementById('popup-density-label');
+            const densityContainer = document.getElementById('popup-density-container');
+            const selfWeightLabel = document.getElementById('popup-self-weight-label');
+            const selfWeightValue = document.getElementById('popup-self-weight-value');
+
+            if (densityLabel && densityContainer) {
+                if (hasDensityColumn) {
+                    let currentDensity = '7850';
+                    const densityCell = memberRow.querySelector('.density-cell');
+                    if (densityCell) {
+                        const densitySelect = densityCell.querySelector('select');
+                        const densityInput = densityCell.querySelector('input[type="number"]');
+                        currentDensity = densitySelect && densitySelect.value === 'custom'
+                            ? densityInput?.value ?? '7850'
+                            : densitySelect?.value ?? densityInput?.value ?? '7850';
                     }
-                    
-                    // 作成した要素を変数に保存
-                    existingDensityLabel = densityLabel;
-                    existingDensityContainer = densityContainer;
-                }
-                
-                // 密度値を取得してポップアップに設定
-                const densityCell = memberRow.cells[11]; // 密度は11番目のセル (Iz,Iy,J,A,Zz,Zyの次)
-                if (densityCell && densityCell.classList.contains('density-cell')) {
-                    const densitySelect = densityCell.querySelector('select');
-                    const densityInput = densityCell.querySelector('input[type="number"]');
-                    const currentDensity = (densitySelect && densitySelect.value === 'custom') ? densityInput.value : (densitySelect ? densitySelect.value : '7850');
-                    
-                    // 密度入力欄にHTMLを設定
-                    if (existingDensityContainer) {
-                        existingDensityContainer.innerHTML = createDensityInputHTML('popup-density', currentDensity);
+
+                    densityLabel.style.display = '';
+                    densityContainer.style.display = '';
+                    if (selfWeightLabel) selfWeightLabel.style.display = '';
+                    if (selfWeightValue) selfWeightValue.style.display = '';
+
+                    densityContainer.innerHTML = createDensityInputHTML('popup-density', currentDensity);
+                    setupPopupDensityHandlers();
+                    updatePopupSelfWeightDisplay();
+                } else {
+                    densityLabel.style.display = 'none';
+                    densityContainer.style.display = 'none';
+                    if (selfWeightLabel) selfWeightLabel.style.display = 'none';
+                    if (selfWeightValue) {
+                        selfWeightValue.style.display = 'none';
+                        selfWeightValue.textContent = '-';
                     }
                 }
-                
-                // 密度欄を表示
-                if (existingDensityLabel) existingDensityLabel.style.display = '';
-                if (existingDensityContainer) existingDensityContainer.style.display = '';
-                
-                // 密度フィールド表示後にポップアップ位置を再調整
-                setTimeout(() => adjustPopupPosition(elements.memberPropsPopup), 0);
-            } else {
-                // 密度欄を非表示
-                if (existingDensityLabel) existingDensityLabel.style.display = 'none';
-                if (existingDensityContainer) existingDensityContainer.style.display = 'none';
-                
-                // 密度フィールド非表示後にポップアップ位置を再調整
+
                 setTimeout(() => adjustPopupPosition(elements.memberPropsPopup), 0);
             }
             
@@ -10420,8 +10588,8 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     popupJConn.value = 'rigid';
                 }
             }
-            const memberLoadRow = Array.from(elements.memberLoadsTable.rows).find(row => parseInt(row.cells[0].querySelector('input').value)-1 === selectedMemberIndex);
-            document.getElementById('popup-w').value = memberLoadRow ? memberLoadRow.cells[1].querySelector('input').value : '0';
+            const memberLoadRow = findMemberLoadRow(selectedMemberIndex);
+            setPopupLoadInputs(memberLoadRow ? readMemberLoadComponents(memberLoadRow) : { wx: 0, wy: 0, wz: 0 });
             
             // ポップアップを部材に重ならない位置に表示（null チェック付き）
             const popup = elements.memberPropsPopup;
@@ -10944,16 +11112,52 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         } else {
             console.warn('終端接合selectが見つかりません (popup apply)', { rowIndex: selectedMemberIndex, popupValue: popupJConnValue });
         }
-        const wValue = parseFloat(document.getElementById('popup-w').value) || 0;
-        const memberLoadRow = Array.from(elements.memberLoadsTable.rows).find(row => parseInt(row.cells[0].querySelector('input').value) - 1 === selectedMemberIndex);
-        if (wValue !== 0) {
-            if (memberLoadRow) {
-                memberLoadRow.cells[1].querySelector('input').value = wValue;
-            } else {
-                addRow(elements.memberLoadsTable, [`<input type="number" value="${selectedMemberIndex + 1}">`, '<input type="number" value="0">', `<input type="number" value="${wValue}">`, '<input type="number" value="0">']);
+        const sectionNameInputSave = document.getElementById('popup-section-name');
+        if (sectionNameInputSave) {
+            const nameValue = sectionNameInputSave.value.trim();
+            const sectionNameSpan = memberRow.querySelector('.section-name-cell');
+            if (sectionNameSpan) {
+                sectionNameSpan.textContent = nameValue || '-';
             }
+            if (nameValue) {
+                memberRow.dataset.sectionLabel = nameValue;
+            } else {
+                delete memberRow.dataset.sectionLabel;
+            }
+            delete memberRow.dataset.sectionInfo;
+            delete memberRow.dataset.sectionSummary;
+            delete memberRow.dataset.sectionSource;
+        }
+
+        const sectionAxisSelectSave = document.getElementById('popup-section-axis');
+        if (sectionAxisSelectSave) {
+            const normalizedAxis = normalizeAxisInfo({ key: sectionAxisSelectSave.value });
+            const axisSpan = memberRow.querySelector('.section-axis-cell');
+            if (normalizedAxis) {
+                memberRow.dataset.sectionAxisKey = normalizedAxis.key;
+                memberRow.dataset.sectionAxisMode = normalizedAxis.mode;
+                memberRow.dataset.sectionAxisLabel = normalizedAxis.label;
+                if (axisSpan) axisSpan.textContent = normalizedAxis.label;
+            } else {
+                delete memberRow.dataset.sectionAxisKey;
+                delete memberRow.dataset.sectionAxisMode;
+                delete memberRow.dataset.sectionAxisLabel;
+                if (axisSpan) axisSpan.textContent = '-';
+            }
+        }
+
+        const loadValues = getPopupLoadInputs();
+        const memberLoadRow = findMemberLoadRow(selectedMemberIndex);
+        if (!areLoadsNearlyZero(loadValues)) {
+            updateMemberLoadRow(selectedMemberIndex, loadValues);
         } else if (memberLoadRow) {
-            memberLoadRow.querySelector('.delete-row-btn').click();
+            const deleteBtn = memberLoadRow.querySelector('.delete-row-btn');
+            if (deleteBtn) {
+                deleteBtn.click();
+            } else {
+                memberLoadRow.remove();
+                renumberTables();
+            }
         }
         elements.memberPropsPopup.style.display = 'none';
         runFullAnalysis();
