@@ -422,21 +422,25 @@
         <div class="props-grid member-props-grid">
             <label for="popup-e-container">E (N/mm²)</label>
             <div id="popup-e-container" class="wide-field"></div>
+
             <label for="popup-f-container" class="section-check-item">F (N/mm²)</label>
             <div id="popup-f-container" class="section-check-item wide-field"></div>
 
             <label for="popup-iz">Ix (cm⁴)</label>
             <input type="number" id="popup-iz" title="強軸断面二次モーメント">
+
             <label for="popup-iy">Iy (cm⁴)</label>
             <input type="number" id="popup-iy" title="弱軸断面二次モーメント">
 
             <label for="popup-j">J (cm⁴)</label>
             <input type="number" id="popup-j" title="ねじり定数">
+
             <label for="popup-a">A (cm²)</label>
             <input type="number" id="popup-a">
 
             <label for="popup-zz" class="section-check-item">Zx (cm³)</label>
             <input type="number" id="popup-zz" class="section-check-item" title="強軸断面係数">
+
             <label for="popup-zy" class="section-check-item">Zy (cm³)</label>
             <input type="number" id="popup-zy" class="section-check-item" title="弱軸断面係数">
 
@@ -445,6 +449,7 @@
                 <option value="rigid">剛</option>
                 <option value="pinned">ピン</option>
             </select>
+
             <label for="popup-j-conn">終端接合</label>
             <select id="popup-j-conn">
                 <option value="rigid">剛</option>
@@ -453,13 +458,19 @@
 
             <label for="popup-wx">Wx (kN/m)</label>
             <input type="number" id="popup-wx" step="0.01" title="グローバルX方向の等分布荷重">
+
             <label for="popup-wy">Wy (kN/m)</label>
             <input type="number" id="popup-wy" step="0.01" title="グローバルY方向の等分布荷重">
+
             <label for="popup-wz">Wz (kN/m)</label>
             <input type="number" id="popup-wz" step="0.01" title="グローバルZ方向の等分布荷重">
 
             <label for="popup-section-name">断面名称</label>
-            <input type="text" id="popup-section-name" class="full-width-field" placeholder="例: H-300×300×10×15">
+            <div class="section-name-field">
+                <input type="text" id="popup-section-name" class="full-width-field" placeholder="例: H-300×300×10×15">
+                <button type="button" id="popup-section-name-clear" class="icon-button" title="断面名称をクリア" aria-label="断面名称をクリア">✕</button>
+            </div>
+
             <label for="popup-section-axis">軸方向</label>
             <select id="popup-section-axis">
                 <option value="x">強軸 (X軸)</option>
@@ -469,6 +480,7 @@
 
             <label for="popup-density-input" id="popup-density-label" class="density-field" style="display: none;">密度 ρ (kg/m³)</label>
             <div id="popup-density-container" class="density-field wide-field" style="display: none;"></div>
+
             <label id="popup-self-weight-label" class="density-field" style="display: none;">自重 (kN/m)</label>
             <div id="popup-self-weight-value" class="density-field self-weight-field" style="display: none;">-</div>
         </div>

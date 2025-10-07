@@ -2171,6 +2171,29 @@ document.addEventListener('DOMContentLoaded', () => {
         popupAreaInput.addEventListener('input', updatePopupSelfWeightDisplay);
     }
 
+    const popupSectionNameInput = document.getElementById('popup-section-name');
+    const popupSectionNameClearBtn = document.getElementById('popup-section-name-clear');
+
+    function syncPopupSectionNameClearState() {
+        if (!popupSectionNameClearBtn) return;
+        const hasValue = !!(popupSectionNameInput?.value || '').trim();
+        popupSectionNameClearBtn.disabled = !hasValue;
+    }
+
+    if (popupSectionNameInput) {
+        popupSectionNameInput.addEventListener('input', syncPopupSectionNameClearState);
+    }
+
+    if (popupSectionNameInput && popupSectionNameClearBtn) {
+        popupSectionNameClearBtn.addEventListener('click', () => {
+            popupSectionNameInput.value = '';
+            popupSectionNameInput.dispatchEvent(new Event('input', { bubbles: true }));
+            popupSectionNameInput.dispatchEvent(new Event('change', { bubbles: true }));
+            popupSectionNameInput.focus();
+        });
+        syncPopupSectionNameClearState();
+    }
+
     if (elements.projectionMode) {
         const initialProjection = elements.projectionMode.value;
         if (!initialProjection || initialProjection === 'xy') {
@@ -10426,292 +10449,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 console.error('❌ nodeContextMenu 要素が見つかりません');
             }
         } else if (selectedMemberIndex !== -1) {
-            console.log('💡 部材プロパティポップアップ表示開始 - 部材:', selectedMemberIndex + 1);
-            const memberRow = elements.membersTable.rows[selectedMemberIndex];
-            const e_select = memberRow.cells[3].querySelector('select'), e_input = memberRow.cells[3].querySelector('input[type="number"]');
-            const currentE = (e_select.value === 'custom') ? e_input.value : e_select.value;
-
-            const popupTitle = document.getElementById('member-props-title');
-            if (popupTitle) {
-                popupTitle.textContent = `部材 #${selectedMemberIndex + 1} プロパティ編集`;
-            }
-            
-            // ポップアップ内のE入力欄を生成
-            const eContainer = document.getElementById('popup-e-container');
-            eContainer.innerHTML = createEInputHTML('popup-e', currentE);
-            
-            // 現在の材料タイプと基準強度を取得
-            const strengthContainer = memberRow.cells[4].firstElementChild;
-            if (!strengthContainer) {
-                console.error('強度入力コンテナが見つかりません');
-                return;
-            }
-            const strengthType = strengthContainer.dataset.strengthType;
-            let currentStrength;
-            if (strengthType === 'wood-type') {
-                const presetSelect = strengthContainer.querySelector('select');
-                if (presetSelect.value === 'custom') {
-                    currentStrength = { baseStrengths: {} };
-                    ['ft', 'fc', 'fb', 'fs'].forEach(key => {
-                        currentStrength.baseStrengths[key] = parseFloat(strengthContainer.querySelector(`input[id*="-${key}"]`).value);
-                    });
-                } else {
-                    currentStrength = presetSelect.value;
-                }
-            } else {
-                currentStrength = strengthContainer.querySelector('input').value;
-            }
-
-            const popupFContainer = document.getElementById('popup-f-container');
-            const selectedOption = e_select.options[e_select.selectedIndex];
-            let materialType = 'steel';
-            if (selectedOption.textContent.includes('木材')) materialType = 'wood';
-            else if (selectedOption.textContent.includes('ステンレス')) materialType = 'stainless';
-            else if (selectedOption.textContent.includes('アルミニウム')) materialType = 'aluminum';
-            
-            // ポップアップ内のF入力欄を生成
-            popupFContainer.innerHTML = '';
-            popupFContainer.appendChild(createStrengthInputHTML(materialType, 'popup-f', currentStrength));
-
-            // ポップアップ内のE選択に応じてF入力欄を更新するイベントリスナーを追加
-            const popupESelect = document.getElementById('popup-e-select');
-            if (popupESelect) {
-                popupESelect.addEventListener('change', () => {
-                    const selectedOpt = popupESelect.options[popupESelect.selectedIndex];
-                    let newMaterialType = 'steel';
-                    if (selectedOpt.textContent.includes('木材')) newMaterialType = 'wood';
-                    else if (selectedOpt.textContent.includes('ステンレス')) newMaterialType = 'stainless';
-                    else if (selectedOpt.textContent.includes('アルミニウム')) newMaterialType = 'aluminum';
-                    
-                    popupFContainer.innerHTML = '';
-                    popupFContainer.appendChild(createStrengthInputHTML(newMaterialType, 'popup-f'));
-                    
-                    // 密度も更新（自重考慮がオンの場合）
-                    const hasDensityColumn = document.querySelector('.density-column') && document.querySelector('.density-column').style.display !== 'none';
-                    if (hasDensityColumn) {
-                        const popupEInput = document.getElementById('popup-e-input');
-                        const eValue = popupESelect.value === 'custom' ? popupEInput.value : popupESelect.value;
-                        const newDensity = MATERIAL_DENSITY_DATA[eValue] || MATERIAL_DENSITY_DATA['custom'];
-                        
-                        // ポップアップの密度欄を更新
-                        const densityContainer = document.getElementById('popup-density-container');
-                        if (densityContainer) {
-                            densityContainer.innerHTML = createDensityInputHTML('popup-density', newDensity);
-                            setupPopupDensityHandlers();
-                            updatePopupSelfWeightDisplay();
-                        }
-                    }
-                });
-            }
-
-            // その他のプロパティを設定
-            document.getElementById('popup-iz').value = memberRow.cells[5].querySelector('input').value;
-            document.getElementById('popup-iy').value = memberRow.cells[6].querySelector('input').value;
-            document.getElementById('popup-j').value = memberRow.cells[7].querySelector('input').value;
-            document.getElementById('popup-a').value = memberRow.cells[8].querySelector('input').value;
-            document.getElementById('popup-zz').value = memberRow.cells[9].querySelector('input').value;
-            document.getElementById('popup-zy').value = memberRow.cells[10].querySelector('input').value;
-
-            const sectionNameInput = document.getElementById('popup-section-name');
-            if (sectionNameInput) {
-                const sectionNameSpan = memberRow.querySelector('.section-name-cell');
-                const datasetLabel = (memberRow.dataset.sectionLabel || '').trim();
-                const displayLabel = (sectionNameSpan?.textContent || '').trim();
-                const resolvedName = displayLabel && displayLabel !== '-' ? displayLabel : datasetLabel;
-                sectionNameInput.value = resolvedName || '';
-            }
-
-            const sectionAxisSelect = document.getElementById('popup-section-axis');
-            if (sectionAxisSelect) {
-                const axisKey = memberRow.dataset.sectionAxisKey || deriveAxisKeyFromLabel(memberRow.querySelector('.section-axis-cell')?.textContent) || 'x';
-                sectionAxisSelect.value = ['x', 'y', 'both'].includes(axisKey) ? axisKey : 'x';
-            }
-            
-            // 密度欄の表示/非表示と値設定
-            const hasDensityColumn = document.querySelector('.density-column') && document.querySelector('.density-column').style.display !== 'none';
-            const densityLabel = document.getElementById('popup-density-label');
-            const densityContainer = document.getElementById('popup-density-container');
-            const selfWeightLabel = document.getElementById('popup-self-weight-label');
-            const selfWeightValue = document.getElementById('popup-self-weight-value');
-
-            if (densityLabel && densityContainer) {
-                if (hasDensityColumn) {
-                    let currentDensity = '7850';
-                    const densityCell = memberRow.querySelector('.density-cell');
-                    if (densityCell) {
-                        const densitySelect = densityCell.querySelector('select');
-                        const densityInput = densityCell.querySelector('input[type="number"]');
-                        currentDensity = densitySelect && densitySelect.value === 'custom'
-                            ? densityInput?.value ?? '7850'
-                            : densitySelect?.value ?? densityInput?.value ?? '7850';
-                    }
-
-                    densityLabel.style.display = '';
-                    densityContainer.style.display = '';
-                    if (selfWeightLabel) selfWeightLabel.style.display = '';
-                    if (selfWeightValue) selfWeightValue.style.display = '';
-
-                    densityContainer.innerHTML = createDensityInputHTML('popup-density', currentDensity);
-                    setupPopupDensityHandlers();
-                    updatePopupSelfWeightDisplay();
-                } else {
-                    densityLabel.style.display = 'none';
-                    densityContainer.style.display = 'none';
-                    if (selfWeightLabel) selfWeightLabel.style.display = 'none';
-                    if (selfWeightValue) {
-                        selfWeightValue.style.display = 'none';
-                        selfWeightValue.textContent = '-';
-                    }
-                }
-
-                setTimeout(() => adjustPopupPosition(elements.memberPropsPopup), 0);
-            }
-            
-            const connectionTargets = resolveMemberConnectionTargets(memberRow);
-            const popupIConn = document.getElementById('popup-i-conn');
-            const popupJConn = document.getElementById('popup-j-conn');
-
-            if (popupIConn) {
-                if (connectionTargets.i.select) {
-                    popupIConn.value = connectionTargets.i.select.value;
-                } else {
-                    console.warn('始端接合selectが見つかりません。', { rowIndex: selectedMemberIndex, connectionTargets });
-                    popupIConn.value = 'rigid';
-                }
-            }
-
-            if (popupJConn) {
-                if (connectionTargets.j.select) {
-                    popupJConn.value = connectionTargets.j.select.value;
-                } else {
-                    console.warn('終端接合selectが見つかりません。', { rowIndex: selectedMemberIndex, connectionTargets });
-                    popupJConn.value = 'rigid';
-                }
-            }
-            const memberLoadRow = findMemberLoadRow(selectedMemberIndex);
-            setPopupLoadInputs(memberLoadRow ? readMemberLoadComponents(memberLoadRow) : { wx: 0, wy: 0, wz: 0 });
-            
-            // ポップアップを部材に重ならない位置に表示（null チェック付き）
-            const popup = elements.memberPropsPopup;
-            if (!popup) {
-                console.error('❌ memberPropsPopup 要素が見つかりません');
-                return;
-            }
-            
-            popup.style.display = 'block';
-            popup.style.visibility = 'visible';
-            console.log('📦 部材プロパティポップアップ - 表示設定:', {
-                display: popup.style.display,
-                visibility: popup.style.visibility,
-                position: popup.style.position
-            });
-            
-            // ポップアップのサイズを取得（デフォルト値を設定）
-            const popupRect = popup.getBoundingClientRect();
-            const popupWidth = popupRect.width || 400;  // デフォルト幅
-            const popupHeight = popupRect.height || 350; // デフォルト高さ
-            const windowWidth = window.innerWidth;
-            const windowHeight = window.innerHeight;
-            const availableHeight = Math.min(windowHeight, document.documentElement.clientHeight);
-            const canvasRect = elements.modelCanvas.getBoundingClientRect();
-            
-            // スクロール位置を考慮
-            const scrollX = window.pageXOffset || document.documentElement.scrollLeft;
-            const scrollY = window.pageYOffset || document.documentElement.scrollTop;
-            
-            // 選択された部材の位置を取得
-            let memberBounds = null;
-            if (window.selectedMemberIndex !== null && window.selectedMemberIndex >= 0) {
-                try {
-                    const { nodes, members } = window.parseInputs();
-                    const member = members[window.selectedMemberIndex];
-                    if (member && window.lastDrawingContext) {
-                        const node1 = nodes[member.i];
-                        const node2 = nodes[member.j];
-                        if (node1 && node2) {
-                            const pos1 = window.lastDrawingContext.transform(node1.x, node1.y);
-                            const pos2 = window.lastDrawingContext.transform(node2.x, node2.y);
-                            
-                            // 部材の境界ボックスを計算（キャンバス座標系）
-                            const minX = Math.min(pos1.x, pos2.x);
-                            const maxX = Math.max(pos1.x, pos2.x);
-                            const minY = Math.min(pos1.y, pos2.y);
-                            const maxY = Math.max(pos1.y, pos2.y);
-                            
-                            // ページ座標系に変換
-                            memberBounds = {
-                                left: canvasRect.left + minX - 50,   // マージンを追加
-                                right: canvasRect.left + maxX + 50,
-                                top: canvasRect.top + minY - 50,
-                                bottom: canvasRect.top + maxY + 50
-                            };
-                        }
-                    }
-                } catch (error) {
-                    console.warn('部材位置の取得に失敗:', error);
-                }
-            }
-            
-            let left, top;
-            
-            if (memberBounds) {
-                // 部材の位置を避けてポップアップを配置
-                const margin = 20;
-                const minMargin = 10;
-                const bottomMargin = 20; // タスクバー対策
-                
-                // 右側に配置を試行
-                left = memberBounds.right + margin;
-                if (left + popupWidth > windowWidth - minMargin) {
-                    // 右側に収まらない場合は左側に配置
-                    left = memberBounds.left - popupWidth - margin;
-                    if (left < minMargin) {
-                        // 左側にも収まらない場合は上下に配置
-                        left = Math.max(minMargin, Math.min((windowWidth - popupWidth) / 2, windowWidth - popupWidth - minMargin));
-                        top = memberBounds.bottom + margin;
-                        if (top + popupHeight > availableHeight - bottomMargin) {
-                            // 下側に収まらない場合は上側に配置
-                            top = memberBounds.top - popupHeight - margin;
-                            if (top < minMargin) {
-                                // どこにも収まらない場合は画面中央（強制的に収める）
-                                left = Math.max(minMargin, (windowWidth - popupWidth) / 2);
-                                top = Math.max(minMargin, (availableHeight - popupHeight) / 2);
-                                // ウィンドウより大きい場合は調整
-                                if (left + popupWidth > windowWidth - minMargin) {
-                                    left = minMargin;
-                                }
-                                if (top + popupHeight > availableHeight - bottomMargin) {
-                                    top = minMargin;
-                                }
-                            }
-                        }
-                    } else {
-                        // 左側に配置できる場合の縦位置
-                        top = Math.max(minMargin, Math.min(memberBounds.top, availableHeight - popupHeight - bottomMargin));
-                    }
-                } else {
-                    // 右側に配置できる場合の縦位置
-                    top = Math.max(minMargin, Math.min(memberBounds.top, availableHeight - popupHeight - bottomMargin));
-                }
-            } else {
-                // 部材の位置が取得できない場合は画面中央に配置
-                left = Math.max(10, Math.min((windowWidth - popupWidth) / 2, windowWidth - popupWidth - 10));
-                top = Math.max(10, Math.min((availableHeight - popupHeight) / 2, availableHeight - popupHeight - 20));
-            }
-            
-            popup.style.left = `${left}px`;
-            popup.style.top = `${top}px`;
-            popup.style.position = 'fixed';
-            popup.style.zIndex = '10000';
-            
-            console.log('✅ 部材プロパティポップアップ表示完了:', {
-                left: popup.style.left,
-                top: popup.style.top,
-                display: popup.style.display,
-                visibility: popup.style.visibility,
-                position: popup.style.position,
-                zIndex: popup.style.zIndex
-            });
+            openMemberEditor(selectedMemberIndex);
         } else {
             console.log('❌ クリック位置に節点・部材・荷重が見つかりませんでした');
         }
@@ -10835,6 +10573,308 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
     }
     // 3Dビューから使用するためグローバルに公開
     window.adjustPopupPosition = adjustPopupPosition;
+
+    function openMemberEditor(memberIndex) {
+        if (typeof memberIndex !== 'number' || memberIndex < 0) {
+            console.warn('⚠️ 無効な部材インデックスが指定されました:', memberIndex);
+            return;
+        }
+
+        selectedMemberIndex = memberIndex;
+        window.selectedMemberIndex = memberIndex;
+
+        console.log('💡 部材プロパティポップアップ表示開始 - 部材:', memberIndex + 1);
+
+        const memberRow = elements.membersTable.rows[memberIndex];
+        if (!memberRow) {
+            console.error('❌ 部材行が見つかりません', { memberIndex });
+            return;
+        }
+
+        const popupTitle = document.getElementById('member-props-title');
+        if (popupTitle) {
+            popupTitle.textContent = `部材 #${memberIndex + 1} プロパティ編集`;
+        }
+
+        const eSelect = memberRow.cells[3]?.querySelector('select');
+        const eInput = memberRow.cells[3]?.querySelector('input[type="number"]');
+        const currentE = eSelect
+            ? (eSelect.value === 'custom' ? (eInput?.value ?? '') : eSelect.value)
+            : (eInput?.value ?? '');
+
+        const eContainer = document.getElementById('popup-e-container');
+        if (eContainer) {
+            eContainer.innerHTML = createEInputHTML('popup-e', currentE);
+        }
+
+        const strengthContainer = memberRow.cells[4]?.firstElementChild;
+        if (!strengthContainer) {
+            console.error('強度入力コンテナが見つかりません');
+            return;
+        }
+
+        const strengthType = strengthContainer.dataset.strengthType;
+        let currentStrength;
+        if (strengthType === 'wood-type') {
+            const presetSelect = strengthContainer.querySelector('select');
+            if (presetSelect && presetSelect.value === 'custom') {
+                currentStrength = { baseStrengths: {} };
+                ['ft', 'fc', 'fb', 'fs'].forEach((key) => {
+                    const input = strengthContainer.querySelector(`input[id*="-${key}"]`);
+                    currentStrength.baseStrengths[key] = input ? parseFloat(input.value || '0') : 0;
+                });
+            } else {
+                currentStrength = presetSelect ? presetSelect.value : null;
+            }
+        } else {
+            const input = strengthContainer.querySelector('input');
+            currentStrength = input ? input.value : '';
+        }
+
+        const popupFContainer = document.getElementById('popup-f-container');
+        let materialType = 'steel';
+        if (eSelect) {
+            const selectedOption = eSelect.options[eSelect.selectedIndex];
+            if (selectedOption) {
+                const label = selectedOption.textContent || '';
+                if (label.includes('木材')) materialType = 'wood';
+                else if (label.includes('ステンレス')) materialType = 'stainless';
+                else if (label.includes('アルミニウム')) materialType = 'aluminum';
+            }
+        }
+
+        if (popupFContainer) {
+            popupFContainer.innerHTML = '';
+            popupFContainer.appendChild(createStrengthInputHTML(materialType, 'popup-f', currentStrength));
+        }
+
+        const popupESelect = document.getElementById('popup-e-select');
+        if (popupESelect && popupFContainer) {
+            popupESelect.addEventListener('change', () => {
+                const selectedOpt = popupESelect.options[popupESelect.selectedIndex];
+                let newMaterialType = 'steel';
+                if (selectedOpt && selectedOpt.textContent.includes('木材')) newMaterialType = 'wood';
+                else if (selectedOpt && selectedOpt.textContent.includes('ステンレス')) newMaterialType = 'stainless';
+                else if (selectedOpt && selectedOpt.textContent.includes('アルミニウム')) newMaterialType = 'aluminum';
+
+                popupFContainer.innerHTML = '';
+                popupFContainer.appendChild(createStrengthInputHTML(newMaterialType, 'popup-f'));
+
+                const hasDensityColumn = document.querySelector('.density-column') && document.querySelector('.density-column').style.display !== 'none';
+                if (hasDensityColumn) {
+                    const popupEInput = document.getElementById('popup-e-input');
+                    const eValue = popupESelect.value === 'custom' ? popupEInput?.value : popupESelect.value;
+                    const newDensity = MATERIAL_DENSITY_DATA[eValue] || MATERIAL_DENSITY_DATA['custom'];
+                    const densityContainer = document.getElementById('popup-density-container');
+                    if (densityContainer) {
+                        densityContainer.innerHTML = createDensityInputHTML('popup-density', newDensity);
+                        setupPopupDensityHandlers();
+                        updatePopupSelfWeightDisplay();
+                    }
+                }
+            });
+        }
+
+        const assignValue = (id, tableCellIndex) => {
+            const element = document.getElementById(id);
+            const cellInput = memberRow.cells[tableCellIndex]?.querySelector('input');
+            if (element && cellInput) {
+                element.value = cellInput.value;
+            }
+        };
+
+        assignValue('popup-iz', 5);
+        assignValue('popup-iy', 6);
+        assignValue('popup-j', 7);
+        assignValue('popup-a', 8);
+        assignValue('popup-zz', 9);
+        assignValue('popup-zy', 10);
+
+        const sectionNameInput = document.getElementById('popup-section-name');
+        if (sectionNameInput) {
+            const sectionNameSpan = memberRow.querySelector('.section-name-cell');
+            const datasetLabel = (memberRow.dataset.sectionLabel || '').trim();
+            const displayLabel = (sectionNameSpan?.textContent || '').trim();
+            const resolvedName = displayLabel && displayLabel !== '-' ? displayLabel : datasetLabel;
+            sectionNameInput.value = resolvedName || '';
+            syncPopupSectionNameClearState();
+        }
+
+        const sectionAxisSelect = document.getElementById('popup-section-axis');
+        if (sectionAxisSelect) {
+            const axisKey = memberRow.dataset.sectionAxisKey || deriveAxisKeyFromLabel(memberRow.querySelector('.section-axis-cell')?.textContent) || 'x';
+            sectionAxisSelect.value = ['x', 'y', 'both'].includes(axisKey) ? axisKey : 'x';
+        }
+
+        const hasDensityColumn = document.querySelector('.density-column') && document.querySelector('.density-column').style.display !== 'none';
+        const densityLabel = document.getElementById('popup-density-label');
+        const densityContainer = document.getElementById('popup-density-container');
+        const selfWeightLabel = document.getElementById('popup-self-weight-label');
+        const selfWeightValue = document.getElementById('popup-self-weight-value');
+
+        if (densityLabel && densityContainer) {
+            if (hasDensityColumn) {
+                let currentDensity = '7850';
+                const densityCell = memberRow.querySelector('.density-cell');
+                if (densityCell) {
+                    const densitySelect = densityCell.querySelector('select');
+                    const densityInput = densityCell.querySelector('input[type="number"]');
+                    currentDensity = densitySelect && densitySelect.value === 'custom'
+                        ? densityInput?.value ?? '7850'
+                        : densitySelect?.value ?? densityInput?.value ?? '7850';
+                }
+
+                densityLabel.style.display = '';
+                densityContainer.style.display = '';
+                if (selfWeightLabel) selfWeightLabel.style.display = '';
+                if (selfWeightValue) selfWeightValue.style.display = '';
+
+                densityContainer.innerHTML = createDensityInputHTML('popup-density', currentDensity);
+                setupPopupDensityHandlers();
+                updatePopupSelfWeightDisplay();
+            } else {
+                densityLabel.style.display = 'none';
+                densityContainer.style.display = 'none';
+                if (selfWeightLabel) selfWeightLabel.style.display = 'none';
+                if (selfWeightValue) {
+                    selfWeightValue.style.display = 'none';
+                    selfWeightValue.textContent = '-';
+                }
+            }
+
+            setTimeout(() => adjustPopupPosition(elements.memberPropsPopup), 0);
+        }
+
+        const connectionTargets = resolveMemberConnectionTargets(memberRow);
+        const popupIConn = document.getElementById('popup-i-conn');
+        const popupJConn = document.getElementById('popup-j-conn');
+
+        if (popupIConn) {
+            if (connectionTargets.i.select) {
+                popupIConn.value = connectionTargets.i.select.value;
+            } else {
+                console.warn('始端接合selectが見つかりません。', { rowIndex: memberIndex, connectionTargets });
+                popupIConn.value = 'rigid';
+            }
+        }
+
+        if (popupJConn) {
+            if (connectionTargets.j.select) {
+                popupJConn.value = connectionTargets.j.select.value;
+            } else {
+                console.warn('終端接合selectが見つかりません。', { rowIndex: memberIndex, connectionTargets });
+                popupJConn.value = 'rigid';
+            }
+        }
+
+        const memberLoadRow = findMemberLoadRow(memberIndex);
+        setPopupLoadInputs(memberLoadRow ? readMemberLoadComponents(memberLoadRow) : { wx: 0, wy: 0, wz: 0 });
+
+        const popup = elements.memberPropsPopup;
+        if (!popup) {
+            console.error('❌ memberPropsPopup 要素が見つかりません');
+            return;
+        }
+
+        popup.style.display = 'block';
+        popup.style.visibility = 'visible';
+        console.log('📦 部材プロパティポップアップ - 表示設定:', {
+            display: popup.style.display,
+            visibility: popup.style.visibility,
+            position: popup.style.position
+        });
+
+        const popupRect = popup.getBoundingClientRect();
+        const popupWidth = popupRect.width || 400;
+        const popupHeight = popupRect.height || 350;
+        const windowWidth = window.innerWidth;
+        const windowHeight = window.innerHeight;
+        const availableHeight = Math.min(windowHeight, document.documentElement.clientHeight);
+        const canvasRect = elements.modelCanvas.getBoundingClientRect();
+
+        let memberBounds = null;
+        if (window.selectedMemberIndex !== null && window.selectedMemberIndex >= 0) {
+            try {
+                const { nodes, members } = window.parseInputs();
+                const member = members[window.selectedMemberIndex];
+                if (member && window.lastDrawingContext) {
+                    const node1 = nodes[member.i];
+                    const node2 = nodes[member.j];
+                    if (node1 && node2) {
+                        const pos1 = window.lastDrawingContext.transform(node1.x, node1.y);
+                        const pos2 = window.lastDrawingContext.transform(node2.x, node2.y);
+
+                        const minX = Math.min(pos1.x, pos2.x);
+                        const maxX = Math.max(pos1.x, pos2.x);
+                        const minY = Math.min(pos1.y, pos2.y);
+                        const maxY = Math.max(pos1.y, pos2.y);
+
+                        memberBounds = {
+                            left: canvasRect.left + minX - 50,
+                            right: canvasRect.left + maxX + 50,
+                            top: canvasRect.top + minY - 50,
+                            bottom: canvasRect.top + maxY + 50
+                        };
+                    }
+                }
+            } catch (error) {
+                console.warn('部材位置の取得に失敗:', error);
+            }
+        }
+
+        let left;
+        let top;
+
+        if (memberBounds) {
+            const margin = 20;
+            const minMargin = 10;
+            const bottomMargin = 20;
+
+            left = memberBounds.right + margin;
+            if (left + popupWidth > windowWidth - minMargin) {
+                left = memberBounds.left - popupWidth - margin;
+                if (left < minMargin) {
+                    left = Math.max(minMargin, Math.min((windowWidth - popupWidth) / 2, windowWidth - popupWidth - minMargin));
+                    top = memberBounds.bottom + margin;
+                    if (top + popupHeight > availableHeight - bottomMargin) {
+                        top = memberBounds.top - popupHeight - margin;
+                        if (top < minMargin) {
+                            left = Math.max(minMargin, (windowWidth - popupWidth) / 2);
+                            top = Math.max(minMargin, (availableHeight - popupHeight) / 2);
+                            if (left + popupWidth > windowWidth - minMargin) {
+                                left = minMargin;
+                            }
+                            if (top + popupHeight > availableHeight - bottomMargin) {
+                                top = minMargin;
+                            }
+                        }
+                    }
+                } else {
+                    top = Math.max(minMargin, Math.min(memberBounds.top, availableHeight - popupHeight - bottomMargin));
+                }
+            } else {
+                top = Math.max(minMargin, Math.min(memberBounds.top, availableHeight - popupHeight - bottomMargin));
+            }
+        } else {
+            left = Math.max(10, Math.min((windowWidth - popupWidth) / 2, windowWidth - popupWidth - 10));
+            top = Math.max(10, Math.min((availableHeight - popupHeight) / 2, availableHeight - popupHeight - 20));
+        }
+
+        popup.style.left = `${left}px`;
+        popup.style.top = `${top}px`;
+        popup.style.position = 'fixed';
+        popup.style.zIndex = '10000';
+
+        console.log('✅ 部材プロパティポップアップ表示完了:', {
+            left: popup.style.left,
+            top: popup.style.top,
+            display: popup.style.display,
+            visibility: popup.style.visibility,
+            position: popup.style.position,
+            zIndex: popup.style.zIndex
+        });
+    }
+    window.openMemberEditor = openMemberEditor;
 
     // ポップアップのドラッグ機能を追加する関数
     function makePopupDraggable(popup) {
@@ -15962,160 +16002,14 @@ const loadPreset = (index) => {
                 openNodeEditor(clickedNodeIndex);
                 drawOnCanvas();
             } else if (clickedMemberIndex !== -1) {
-                // 部材のプロパティ編集ポップアップを表示
                 console.log('🔧 部材ダブルクリック処理開始:', {
                     clickedMemberIndex,
                     selectedMemberIndex
                 });
-                
+
                 e.preventDefault();
                 e.stopPropagation();
-                selectedMemberIndex = clickedMemberIndex;
-                window.selectedMemberIndex = clickedMemberIndex;
-
-                // 右クリックメニューの「menu-edit-member」をクリックした時と同じ処理を実行
-                // この処理は行7025-7180付近にある
-                const memberRow = elements.membersTable.rows[selectedMemberIndex];
-                console.log('📋 部材行データ:', {
-                    memberRow: memberRow,
-                    rowExists: !!memberRow,
-                    selectedMemberIndex: selectedMemberIndex,
-                    totalRows: elements.membersTable.rows.length
-                });
-                
-                if (!memberRow) {
-                    console.error('❌ 部材行が見つかりません');
-                    return;
-                }
-                const e_select = memberRow.cells[3].querySelector('select');
-                const e_input = memberRow.cells[3].querySelector('input[type="number"]');
-                const currentE = (e_select.value === 'custom') ? e_input.value : e_select.value;
-
-                // ポップアップ内のE入力欄を生成
-                const eContainer = document.getElementById('popup-e-container');
-                eContainer.innerHTML = createEInputHTML('popup-e', currentE);
-
-                // 現在の材料タイプと基準強度を取得
-                const strengthContainer = memberRow.cells[4].firstElementChild;
-                if (!strengthContainer) {
-                    console.error('強度入力コンテナが見つかりません');
-                    return;
-                }
-                const strengthType = strengthContainer.dataset.strengthType;
-                let currentStrength;
-                if (strengthType === 'wood-type') {
-                    const presetSelect = strengthContainer.querySelector('select');
-                    if (presetSelect.value === 'custom') {
-                        currentStrength = { baseStrengths: {} };
-                        ['ft', 'fc', 'fb', 'fs'].forEach(key => {
-                            currentStrength.baseStrengths[key] = parseFloat(strengthContainer.querySelector(`input[id*="-${key}"]`).value);
-                        });
-                    } else {
-                        currentStrength = presetSelect.value;
-                    }
-                } else {
-                    currentStrength = strengthContainer.querySelector('input').value;
-                }
-
-                const popupFContainer = document.getElementById('popup-f-container');
-                const selectedOption = e_select.options[e_select.selectedIndex];
-                let materialType = 'steel';
-                if (selectedOption.textContent.includes('木材')) materialType = 'wood';
-                else if (selectedOption.textContent.includes('ステンレス')) materialType = 'stainless';
-                else if (selectedOption.textContent.includes('アルミニウム')) materialType = 'aluminum';
-
-                // ポップアップ内のF入力欄を生成
-                popupFContainer.innerHTML = '';
-                popupFContainer.appendChild(createStrengthInputHTML(materialType, 'popup-f', currentStrength));
-
-                // その他のプロパティを設定 (3D用)
-                document.getElementById('popup-iz').value = memberRow.cells[5].querySelector('input').value;
-                document.getElementById('popup-iy').value = memberRow.cells[6].querySelector('input').value;
-                document.getElementById('popup-j').value = memberRow.cells[7].querySelector('input').value;
-                document.getElementById('popup-a').value = memberRow.cells[8].querySelector('input').value;
-                document.getElementById('popup-zz').value = memberRow.cells[9].querySelector('input').value;
-                document.getElementById('popup-zy').value = memberRow.cells[10].querySelector('input').value;
-
-                // 密度欄の表示/非表示と値設定
-                const hasDensityColumn = document.querySelector('.density-column') && document.querySelector('.density-column').style.display !== 'none';
-                let existingDensityLabel = document.getElementById('popup-density-label');
-                let existingDensityContainer = document.getElementById('popup-density-container');
-
-                if (hasDensityColumn) {
-                    // 密度欄が表示されている場合の処理
-                    if (!existingDensityLabel || !existingDensityContainer) {
-                        // ポップアップ内に密度入力欄を挿入
-                        const popupZContainer = document.getElementById('popup-z').parentElement.parentElement;
-                        const densityLabel = document.createElement('label');
-                        densityLabel.textContent = '密度 (kg/m³):';
-                        densityLabel.id = 'popup-density-label';
-
-                        const densityContainer = document.createElement('div');
-                        densityContainer.id = 'popup-density-container';
-
-                        popupZContainer.parentElement.insertBefore(densityLabel, popupZContainer.nextSibling);
-                        popupZContainer.parentElement.insertBefore(densityContainer, densityLabel.nextSibling);
-
-                        existingDensityLabel = densityLabel;
-                        existingDensityContainer = densityContainer;
-                    }
-
-                    // 密度値を取得してポップアップに設定
-                    const densityCell = memberRow.cells[8];
-                    if (densityCell && densityCell.classList.contains('density-cell')) {
-                        const densitySelect = densityCell.querySelector('select');
-                        const densityInput = densityCell.querySelector('input[type="number"]');
-                        const currentDensity = (densitySelect && densitySelect.value === 'custom') ? densityInput.value : (densitySelect ? densitySelect.value : '7850');
-
-                        if (existingDensityContainer) {
-                            existingDensityContainer.innerHTML = createDensityInputHTML('popup-density', currentDensity);
-                        }
-                    }
-
-                    if (existingDensityLabel) existingDensityLabel.style.display = '';
-                    if (existingDensityContainer) existingDensityContainer.style.display = '';
-                } else {
-                    if (existingDensityLabel) existingDensityLabel.style.display = 'none';
-                    if (existingDensityContainer) existingDensityContainer.style.display = 'none';
-                }
-
-                // 接続条件を設定
-                const connectionTargets = resolveMemberConnectionTargets(memberRow);
-                const popupIConn = document.getElementById('popup-i-conn');
-                const popupJConn = document.getElementById('popup-j-conn');
-
-                if (popupIConn) {
-                    popupIConn.value = connectionTargets.i.select?.value || 'rigid';
-                }
-                if (popupJConn) {
-                    popupJConn.value = connectionTargets.j.select?.value || 'rigid';
-                }
-
-                // 部材荷重を設定
-                const memberLoadRow = Array.from(elements.memberLoadsTable.rows).find(row => parseInt(row.cells[0].querySelector('input').value)-1 === selectedMemberIndex);
-                document.getElementById('popup-w').value = memberLoadRow ? memberLoadRow.cells[1].querySelector('input').value : '0';
-
-                // ポップアップを表示
-                const popup = elements.memberPropsPopup;
-                console.log('📦 部材プロパティポップアップ表示:', {
-                    popup: popup,
-                    popupExists: !!popup,
-                    popupDisplay: popup ? popup.style.display : 'undefined'
-                });
-                
-                if (popup) {
-                    popup.style.display = 'block';
-                    console.log('✅ ポップアップ表示設定完了:', popup.style.display);
-                } else {
-                    console.error('❌ memberPropsPopup要素が見つかりません');
-                }
-
-                // ポップアップ位置を調整
-                setTimeout(() => {
-                    console.log('📍 ポップアップ位置調整実行');
-                    adjustPopupPosition(elements.memberPropsPopup);
-                }, 0);
-
+                openMemberEditor(clickedMemberIndex);
                 drawOnCanvas();
             }
         }

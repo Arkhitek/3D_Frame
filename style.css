@@ -824,15 +824,20 @@ canvas {
 .props-grid label { margin-bottom: 0; font-weight: normal; }
 .props-grid input, .props-grid select { padding: 5px; font-size: 13px; }
 
-#member-props-popup { width: 520px; max-width: 95vw; }
-#member-props-popup .member-props-grid { grid-template-columns: 120px 1fr 120px 1fr; column-gap: 12px; row-gap: 10px; }
+#member-props-popup { width: 380px; max-width: 95vw; }
+#member-props-popup .member-props-grid { grid-template-columns: 1fr; row-gap: 8px; column-gap: 0; align-items: stretch; }
+#member-props-popup .member-props-grid label { font-weight: 600; }
 #member-props-popup .member-props-grid .wide-field,
-#member-props-popup .member-props-grid .full-width-field { grid-column: 2 / span 3; }
-#member-props-popup .member-props-grid .full-width-field { width: 100%; }
+#member-props-popup .member-props-grid .full-width-field,
+#member-props-popup .member-props-grid .density-field,
 #member-props-popup .member-props-grid input,
 #member-props-popup .member-props-grid select { width: 100%; }
 #member-props-popup .member-props-grid .self-weight-field { padding: 4px 8px; background: #f5f7fa; border-radius: 4px; font-size: 12px; color: #333; }
-#member-props-popup .member-props-grid .section-check-item { grid-column: auto; }
+#member-props-popup .member-props-grid .section-name-field { display: flex; gap: 6px; align-items: center; }
+#member-props-popup .member-props-grid .section-name-field input { flex: 1; }
+#member-props-popup .member-props-grid .icon-button { flex: none; width: 28px; height: 28px; border: 1px solid #d0d5dd; border-radius: 4px; background: #f9fafb; color: #333; font-size: 16px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 0.2s, color 0.2s, border-color 0.2s; }
+#member-props-popup .member-props-grid .icon-button:hover:not(:disabled) { background: #eef2f6; color: #111; border-color: #c0c5cd; }
+#member-props-popup .member-props-grid .icon-button:disabled { cursor: not-allowed; opacity: 0.4; }
 .popup-buttons { margin-top: 15px; display: flex; justify-content: flex-end; gap: 8px; }
 .popup-buttons button { margin-top: 0; padding: 6px 12px; }
 #popup-delete-member { background-color: #d9534f; }
