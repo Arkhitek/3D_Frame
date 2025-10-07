@@ -2381,6 +2381,29 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    const clearSingleSelection = () => {
+        console.log('単一選択をクリア - 以前の状態:', {
+            selectedNodeIndex,
+            selectedMemberIndex
+        });
+        selectedNodeIndex = null;
+        selectedMemberIndex = null;
+        window.selectedNodeIndex = null;
+        window.selectedMemberIndex = null;
+        hideSelectionChoiceMenu();
+        if (typeof drawOnCanvas === 'function') {
+            drawOnCanvas();
+        }
+        console.log('単一選択クリア完了');
+    };
+    window.clearSingleSelection = clearSingleSelection;
+
+    const startCanvasPan = (mouseX, mouseY) => {
+        isDraggingCanvas = true;
+        lastMouseX = mouseX;
+        lastMouseY = mouseY;
+    };
+
     // 不安定構造の分析機能
     let unstableNodes = new Set();
     let unstableMembers = new Set();
@@ -9931,6 +9954,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         console.log('マウスクリック:', { mouseX, mouseY, selectedNodeIndex, selectedMemberIndex, isShiftPressed });
         
         if (canvasMode === 'select') {
+            const projectionMode = getCurrentProjectionMode();
             if (isShiftPressed && (selectedNodeIndex !== -1 || selectedMemberIndex !== -1)) {
                 // Shiftキーが押されている場合の複数選択
                 if (selectedNodeIndex !== -1) {
@@ -9980,15 +10004,9 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     selectedMemberIndex = null;
                     window.selectedMemberIndex = null;
                 }
-
-                const projectionMode = getCurrentProjectionMode();
-                if (projectionMode === 'iso') {
+                if (projectionMode === 'iso' && !isShiftPressed) {
                     console.info('等角投影では節点移動を無効化しています。パン操作に切り替えます。');
-                    if (!isShiftPressed) {
-                        isDraggingCanvas = true;
-                        lastMouseX = mouseX;
-                        lastMouseY = mouseY;
-                    }
+                    startCanvasPan(mouseX, mouseY);
                     if (typeof drawOnCanvas === 'function') {
                         drawOnCanvas();
                     }
@@ -10008,12 +10026,13 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     // 節点の選択をクリア（部材を選択する場合）
                     selectedNodeIndex = null;
                 }
-                const projectionMode = getCurrentProjectionMode();
                 if (projectionMode === 'iso' && !isShiftPressed) {
                     console.info('等角投影では部材移動をパン操作に切り替えます。');
-                    isDraggingCanvas = true;
-                    lastMouseX = mouseX;
-                    lastMouseY = mouseY;
+                    startCanvasPan(mouseX, mouseY);
+                    if (typeof drawOnCanvas === 'function') {
+                        drawOnCanvas();
+                    }
+                    return;
                 }
                 // 部材選択ハイライト表示
                 if (typeof drawOnCanvas === 'function') {
@@ -10036,9 +10055,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     console.log('キャンバスパンを開始します');
                     clearMultiSelection();
                     clearSingleSelection(); // 単一選択もクリア
-                    isDraggingCanvas = true;
-                    lastMouseX = mouseX;
-                    lastMouseY = mouseY;
+                    startCanvasPan(mouseX, mouseY);
                 }
             }
         }
