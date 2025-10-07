@@ -15764,6 +15764,24 @@ const loadPreset = (index) => {
         console.log('座屈解析結果シートを作成中...');
         console.log('座屈解析結果データ:', lastBucklingResults);
         
+        const toFiniteNumber = (value) => {
+            if (value === undefined || value === null) return null;
+            const num = typeof value === 'number' ? value : Number(value);
+            return Number.isFinite(num) ? num : null;
+        };
+        const formatNumber = (value, fractionDigits = 2) => {
+            const num = toFiniteNumber(value);
+            return num !== null ? num.toFixed(fractionDigits) : '-';
+        };
+        const formatRounded = (value) => {
+            const num = toFiniteNumber(value);
+            return num !== null ? Math.round(num) : '-';
+        };
+        const formatScaledNumber = (value, scale, fractionDigits = 2) => {
+            const num = toFiniteNumber(value);
+            return num !== null ? (num * scale).toFixed(fractionDigits) : '-';
+        };
+
         const data = [];
         data.push(['■ 弾性座屈解析結果']);
         data.push([]);
@@ -15772,38 +15790,48 @@ const loadPreset = (index) => {
             data.push(['部材番号', '軸力(kN)', '座屈長さ(m)', '座屈荷重(kN)', '安全率', '判定', '細長比', '座屈モード', '理論的背景']);
             
             lastBucklingResults.forEach((result, i) => {
+                const safetyFactor = toFiniteNumber(result.safetyFactor);
+                const axialForce = toFiniteNumber(result.axialForce);
+                const bucklingLength = toFiniteNumber(result.bucklingLength);
+                const bucklingLoad = toFiniteNumber(result.bucklingLoad);
+                const slendernessRatio = toFiniteNumber(result.slendernessRatio);
+                const bucklingFactor = toFiniteNumber(result.bucklingLengthFactor);
+
                 // 判定
                 let judgment = '-';
-                if (result.safetyFactor >= 2.0) {
-                    judgment = 'OK';
-                } else if (result.safetyFactor >= 1.0) {
-                    judgment = '要注意';
-                } else {
-                    judgment = 'NG';
+                if (safetyFactor !== null) {
+                    if (safetyFactor >= 2.0) {
+                        judgment = 'OK';
+                    } else if (safetyFactor >= 1.0) {
+                        judgment = '要注意';
+                    } else {
+                        judgment = 'NG';
+                    }
                 }
                 
                 // 座屈モードの決定
                 let bucklingMode = '-';
-                if (result.slendernessRatio < 50) {
-                    bucklingMode = '短柱（局部座屈）';
-                } else if (result.slendernessRatio < 200) {
-                    bucklingMode = '中間柱（全体座屈）';
-                } else {
-                    bucklingMode = '長柱（オイラー座屈）';
+                if (slendernessRatio !== null) {
+                    if (slendernessRatio < 50) {
+                        bucklingMode = '短柱（局部座屈）';
+                    } else if (slendernessRatio < 200) {
+                        bucklingMode = '中間柱（全体座屈）';
+                    } else {
+                        bucklingMode = '長柱（オイラー座屈）';
+                    }
                 }
                 
                 // 理論的背景
-                const bucklingFactor = result.bucklingLengthFactor !== undefined ? result.bucklingLengthFactor : '-';
-                const theory = `オイラー座屈理論: P_cr = π²EI/(lk)², 座屈長さ係数k=${bucklingFactor}`;
+                const theory = `オイラー座屈理論: P_cr = π²EI/(lk)², 座屈長さ係数k=${bucklingFactor !== null ? bucklingFactor : '-'}`;
                 
                 data.push([
                     i + 1,
-                    result.axialForce !== undefined ? result.axialForce.toFixed(2) : '-',
-                    result.bucklingLength !== undefined ? result.bucklingLength.toFixed(3) : '-',
-                    result.bucklingLoad !== undefined ? result.bucklingLoad.toFixed(2) : '-',
-                    result.safetyFactor !== undefined ? result.safetyFactor.toFixed(2) : '-',
+                    formatNumber(axialForce, 2),
+                    formatNumber(bucklingLength, 3),
+                    formatNumber(bucklingLoad, 2),
+                    formatNumber(safetyFactor, 2),
                     judgment,
-                    result.slendernessRatio !== undefined ? Math.round(result.slendernessRatio) : '-',
+                    formatRounded(slendernessRatio),
                     bucklingMode,
                     theory
                 ]);
@@ -15814,12 +15842,23 @@ const loadPreset = (index) => {
             data.push([]);
             
             lastBucklingResults.forEach((result, i) => {
+                const safetyFactor = toFiniteNumber(result.safetyFactor);
+                const axialForce = toFiniteNumber(result.axialForce);
+                const memberLength = toFiniteNumber(result.memberLength);
+                const bucklingFactor = toFiniteNumber(result.bucklingLengthFactor);
+                const bucklingLength = toFiniteNumber(result.bucklingLength);
+                const momentOfInertia = toFiniteNumber(result.momentOfInertia);
+                const radiusOfGyration = toFiniteNumber(result.radiusOfGyration);
+                const slendernessRatio = toFiniteNumber(result.slendernessRatio);
+                const elasticModulus = toFiniteNumber(result.elasticModulus);
+                const bucklingLoad = toFiniteNumber(result.bucklingLoad);
+
                 // 判定を再計算（詳細計算過程用）
                 let detailJudgment = '-';
-                if (result.safetyFactor !== undefined) {
-                    if (result.safetyFactor >= 2.0) {
+                if (safetyFactor !== null) {
+                    if (safetyFactor >= 2.0) {
                         detailJudgment = 'OK';
-                    } else if (result.safetyFactor >= 1.0) {
+                    } else if (safetyFactor >= 1.0) {
                         detailJudgment = '要注意';
                     } else {
                         detailJudgment = 'NG';
@@ -15828,16 +15867,16 @@ const loadPreset = (index) => {
                 
                 data.push([`部材 ${i + 1} の詳細計算`]);
                 data.push(['計算項目', '値', '単位', '式・備考']);
-                data.push(['軸力 P', result.axialForce !== undefined ? result.axialForce.toFixed(2) : '-', 'kN', '負の値が圧縮、正の値が引張']);
-                data.push(['部材長 L', result.memberLength !== undefined ? result.memberLength.toFixed(3) : '-', 'm', '']);
-                data.push(['座屈長さ係数 k', result.bucklingLengthFactor !== undefined ? result.bucklingLengthFactor.toFixed(1) : '-', '', '端部条件による']);
-                data.push(['座屈長さ lk', result.bucklingLength !== undefined ? result.bucklingLength.toFixed(3) : '-', 'm', 'lk = k × L']);
-                data.push(['断面二次モーメント I', result.momentOfInertia !== undefined ? (result.momentOfInertia * 1e12).toFixed(2) : '-', 'mm⁴', '']);
-                data.push(['回転半径 i', result.radiusOfGyration !== undefined ? (result.radiusOfGyration * 1e3).toFixed(2) : '-', 'mm', 'i = √(I/A)']);
-                data.push(['細長比 λ', result.slendernessRatio !== undefined ? Math.round(result.slendernessRatio) : '-', '', 'λ = lk/i']);
-                data.push(['弾性係数 E', result.elasticModulus !== undefined ? (result.elasticModulus / 1000).toFixed(0) : '-', 'GPa', '']);
-                data.push(['オイラー座屈荷重 P_cr', result.bucklingLoad !== undefined ? result.bucklingLoad.toFixed(2) : '-', 'kN', 'P_cr = π²EI/(lk)²']);
-                data.push(['安全率 SF', result.safetyFactor !== undefined ? result.safetyFactor.toFixed(2) : '-', '', 'SF = P_cr / P']);
+                data.push(['軸力 P', formatNumber(axialForce, 2), 'kN', '負の値が圧縮、正の値が引張']);
+                data.push(['部材長 L', formatNumber(memberLength, 3), 'm', '']);
+                data.push(['座屈長さ係数 k', formatNumber(bucklingFactor, 1), '', '端部条件による']);
+                data.push(['座屈長さ lk', formatNumber(bucklingLength, 3), 'm', 'lk = k × L']);
+                data.push(['断面二次モーメント I', formatScaledNumber(momentOfInertia, 1e12, 2), 'mm⁴', '']);
+                data.push(['回転半径 i', formatScaledNumber(radiusOfGyration, 1e3, 2), 'mm', 'i = √(I/A)']);
+                data.push(['細長比 λ', formatRounded(slendernessRatio), '', 'λ = lk/i']);
+                data.push(['弾性係数 E', formatScaledNumber(elasticModulus, 0.001, 0), 'GPa', '']);
+                data.push(['オイラー座屈荷重 P_cr', formatNumber(bucklingLoad, 2), 'kN', 'P_cr = π²EI/(lk)²']);
+                data.push(['安全率 SF', formatNumber(safetyFactor, 2), '', 'SF = P_cr / P']);
                 data.push(['座屈判定', detailJudgment, '', 'SF≥2.0:OK, 1.0≤SF<2.0:要注意, SF<1.0:NG']);
                 data.push([]);
             });
