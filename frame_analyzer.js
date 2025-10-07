@@ -80,6 +80,8 @@ const SUPPORT_ALIAS_ENTRIES = [
     { target: 'roller-z', aliases: ['roller-z', 'roller_z', 'rollerz', 'r-z', 'rz', 'ローラーz', 'ローラー(z)', 'ローラー(Z軸固定)'] }
 ];
 
+const NODE_PROPS_TITLE_BASE = '節点プロパティ編集';
+
 const SUPPORT_ALIAS_MAP = SUPPORT_ALIAS_ENTRIES.reduce((map, entry) => {
     entry.aliases.forEach(alias => {
         const key = `${alias}`.trim();
@@ -291,6 +293,92 @@ const build3DReleaseData = (kLocal3D, T3D, globalIndexMap, iConn, jConn, matrixL
         k_local_modified: kLocal3D,
         globalIndexMap
     };
+};
+
+const enablePopupDrag = (popupElement, handleElement) => {
+    if (!popupElement || !handleElement || handleElement.dataset.dragHandlerAttached === 'true') {
+        return;
+    }
+
+    handleElement.dataset.dragHandlerAttached = 'true';
+    handleElement.style.cursor = handleElement.style.cursor || 'move';
+    handleElement.style.touchAction = handleElement.style.touchAction || 'none';
+
+    let dragState = null;
+
+    const beginDrag = (event) => {
+        if (event.pointerType === 'mouse' && event.button !== 0) {
+            return;
+        }
+
+        const rect = popupElement.getBoundingClientRect();
+        dragState = {
+            pointerId: event.pointerId,
+            startX: event.clientX,
+            startY: event.clientY,
+            startLeft: rect.left,
+            startTop: rect.top
+        };
+
+        if (!popupElement.style.position) {
+            popupElement.style.position = 'fixed';
+        }
+
+        if (typeof handleElement.setPointerCapture === 'function') {
+            try {
+                handleElement.setPointerCapture(event.pointerId);
+            } catch (error) {
+                /* Pointer capture unsupported; ignore. */
+            }
+        }
+
+        event.preventDefault();
+    };
+
+    const updateDrag = (event) => {
+        if (!dragState || dragState.pointerId !== event.pointerId) {
+            return;
+        }
+
+        const deltaX = event.clientX - dragState.startX;
+        const deltaY = event.clientY - dragState.startY;
+
+        popupElement.style.left = `${dragState.startLeft + deltaX}px`;
+        popupElement.style.top = `${dragState.startTop + deltaY}px`;
+    };
+
+    const endDrag = (event) => {
+        if (!dragState || dragState.pointerId !== event.pointerId) {
+            return;
+        }
+
+        if (typeof handleElement.releasePointerCapture === 'function') {
+            try {
+                handleElement.releasePointerCapture(event.pointerId);
+            } catch (error) {
+                /* Pointer capture release failed; ignore. */
+            }
+        }
+
+        dragState = null;
+    };
+
+    handleElement.addEventListener('pointerdown', beginDrag);
+    handleElement.addEventListener('pointermove', updateDrag);
+    handleElement.addEventListener('pointerup', endDrag);
+    handleElement.addEventListener('pointercancel', endDrag);
+    window.addEventListener('pointermove', updateDrag);
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+};
+
+const setNodePropsTitle = (nodeNumber = null) => {
+    if (!elements || !elements.nodePropsTitle) {
+        return;
+    }
+    elements.nodePropsTitle.textContent = nodeNumber
+        ? `${NODE_PROPS_TITLE_BASE}（節点 ${nodeNumber}）`
+        : NODE_PROPS_TITLE_BASE;
 };
 
 function getCurrentProjectionMode() {
@@ -1874,6 +1962,7 @@ document.addEventListener('DOMContentLoaded', () => {
         nodeContextMenu: document.getElementById('node-context-menu'),
         memberPropsPopup: document.getElementById('member-props-popup'),
         nodePropsPopup: document.getElementById('node-props-popup'),
+    nodePropsTitle: document.getElementById('node-props-title'),
         nodeLoadPopup: document.getElementById('node-load-popup'),
         nodeCoordsPopup: document.getElementById('node-coords-popup'),
         addMemberPopup: document.getElementById('add-member-popup'),
@@ -1896,6 +1985,11 @@ document.addEventListener('DOMContentLoaded', () => {
         hiddenAxisCoord: document.getElementById('hidden-axis-coord'),
         hiddenAxisLabel: document.getElementById('hidden-axis-label'),
     };
+
+    if (elements.nodePropsPopup && elements.nodePropsTitle) {
+        setNodePropsTitle();
+        enablePopupDrag(elements.nodePropsPopup, elements.nodePropsTitle);
+    }
 
     const popupSupportSelect = document.getElementById('popup-support');
     if (popupSupportSelect) {
@@ -10062,6 +10156,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         if (elements.nodePropsPopup) {
             elements.nodePropsPopup.style.display='none';
             elements.nodePropsPopup.style.visibility='hidden';
+            setNodePropsTitle();
         }
         if (elements.nodeLoadPopup) {
             elements.nodeLoadPopup.style.display='none';
@@ -11021,6 +11116,8 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             console.error('❌ nodePropsPopup 要素が見つかりません');
             return;
         }
+
+        setNodePropsTitle(nodeIndex + 1);
         
         popup.style.display = 'block';
         popup.style.visibility = 'visible';
@@ -11143,6 +11240,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         }
         
         elements.nodePropsPopup.style.display = 'none';
+        setNodePropsTitle();
         runFullAnalysis();
         drawOnCanvas();
     };
@@ -11150,6 +11248,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
     // 新しい節点プロパティポップアップのキャンセルボタンの処理
     document.getElementById('popup-node-props-cancel').onclick = () => {
         elements.nodePropsPopup.style.display = 'none';
+        setNodePropsTitle();
     };
 
     document.getElementById('help-select').onclick = () => alert('【選択/移動モード】\n・節点をクリック＆ドラッグして移動します。\n・節点、部材、荷重を右クリックすると、編集メニューが表示されます。\n・Shiftキーを押しながら空白部分をドラッグすると矩形範囲で節点または部材を追加/解除選択できます。\n・Ctrl（⌘）キーを押しながら空白部分をドラッグすると範囲選択をやり直せます。\n・矩形内に節点と部材が混在する場合は、解除後にどちらを選択するかのメニューが表示されます。\n\n■複数選択機能：\n・Shiftキーを押しながら節点や部材をクリックすると複数選択できます。\n・選択された要素は赤色で強調表示されます。\n・Escapeキーで選択をクリアできます。\n・選択中の要素は一括編集が可能です。');
