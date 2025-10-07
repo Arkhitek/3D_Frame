@@ -124,6 +124,107 @@ const buildSupportOptionsMarkup = (selectedValue = 'free') => {
 
 const buildSupportSelectMarkup = (selectedValue = 'free') => `<select>${buildSupportOptionsMarkup(selectedValue)}</select>`;
 
+const resolveMemberConnectionTargets = (row) => {
+    const fallback = {
+        i: { select: null, cellIndex: -1 },
+        j: { select: null, cellIndex: -1 }
+    };
+
+    if (!(row instanceof HTMLTableRowElement) || !row.cells || typeof row.querySelector !== 'function') {
+        return fallback;
+    }
+
+    const cells = Array.from(row.cells);
+    const inferFromClass = (className) => {
+        const select = row.querySelector(`.${className}`);
+        if (!(select instanceof HTMLSelectElement)) {
+            const container = select?.closest('td');
+            const resolvedSelect = container?.querySelector('select');
+            return {
+                select: resolvedSelect instanceof HTMLSelectElement ? resolvedSelect : null,
+                cellIndex: container ? cells.indexOf(container) : -1
+            };
+        }
+        const cell = select.closest('td');
+        return {
+            select,
+            cellIndex: cell ? cells.indexOf(cell) : -1
+        };
+    };
+
+    const handles = {
+        i: inferFromClass('member-conn-select-i'),
+        j: inferFromClass('member-conn-select-j')
+    };
+
+    const deleteIndex = cells.length - 1;
+    if (deleteIndex >= 0) {
+        const fallbackIndices = {
+            j: deleteIndex - 1,
+            i: deleteIndex - 2
+        };
+
+        for (const key of ['i', 'j']) {
+            const candidateIndex = fallbackIndices[key];
+            if ((handles[key].select && handles[key].cellIndex >= 0) || candidateIndex < 0 || candidateIndex >= cells.length) {
+                continue;
+            }
+            const candidateCell = cells[candidateIndex];
+            if (!candidateCell) continue;
+            const candidateSelect = candidateCell.querySelector('select');
+            if (candidateSelect instanceof HTMLSelectElement) {
+                handles[key] = { select: candidateSelect, cellIndex: candidateIndex };
+            }
+        }
+    }
+
+    return handles;
+};
+
+const getMemberConnectionSelect = (row, endpoint = 'i') => {
+    const handles = resolveMemberConnectionTargets(row);
+    return handles?.[endpoint]?.select || null;
+};
+
+const getMemberConnectionCellIndex = (row, endpoint = 'i') => {
+    const handles = resolveMemberConnectionTargets(row);
+    return handles?.[endpoint]?.cellIndex ?? -1;
+};
+
+const zeroMatrixRowAndColumn = (matrix, index, tiny = 1e-9) => {
+    if (!Array.isArray(matrix) || !Array.isArray(matrix[index])) return;
+    const size = matrix.length;
+    for (let i = 0; i < size; i++) {
+        if (Array.isArray(matrix[index])) matrix[index][i] = 0;
+        if (Array.isArray(matrix[i])) matrix[i][index] = 0;
+    }
+    if (Array.isArray(matrix[index])) matrix[index][index] = tiny;
+};
+
+const apply3DEndReleases = (kLocal3D, iConn, jConn) => {
+    if (!Array.isArray(kLocal3D)) return kLocal3D;
+
+    const isPinned = (conn) => {
+        if (typeof conn !== 'string') return false;
+        const normalized = conn.trim().toLowerCase();
+        return normalized === 'pinned' || normalized === 'p';
+    };
+
+    if (isPinned(iConn)) {
+        // ローカルi端の回転自由度 (ry, rz) を解放
+        zeroMatrixRowAndColumn(kLocal3D, 4);
+        zeroMatrixRowAndColumn(kLocal3D, 5);
+    }
+
+    if (isPinned(jConn)) {
+        // ローカルj端の回転自由度 (ry, rz) を解放
+        zeroMatrixRowAndColumn(kLocal3D, 10);
+        zeroMatrixRowAndColumn(kLocal3D, 11);
+    }
+
+    return kLocal3D;
+};
+
 function getCurrentProjectionMode() {
     return elements?.projectionMode?.value || DEFAULT_PROJECTION_MODE;
 }
@@ -3054,19 +3155,28 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
             
-            // 接合条件の更新 - 密度列を考慮したインデックス調整
-            const hasDensityColumn = row.querySelector('.density-cell') !== null;
-            // 基本列(7) + 密度列(0or1) + 断面名称列(1) + 軸方向列(1) + 接続列(2)
-            const iConnIndex = hasDensityColumn ? 16 : 15; // 始端のインデックス
-            const jConnIndex = hasDensityColumn ? 17 : 16; // 終端のインデックス
+            // 接合条件の更新
+            const connectionTargets = resolveMemberConnectionTargets(row);
 
             if (updates.i_conn) {
-                const iConnSelect = row.cells[iConnIndex]?.querySelector('select');
-                if (iConnSelect) iConnSelect.value = updates.i_conn;
+                if (connectionTargets.i.select) {
+                    connectionTargets.i.select.value = updates.i_conn;
+                } else {
+                    console.warn('始端接合selectが見つかりません (bulk edit)', {
+                        memberIndex,
+                        value: updates.i_conn
+                    });
+                }
             }
             if (updates.j_conn) {
-                const jConnSelect = row.cells[jConnIndex]?.querySelector('select');
-                if (jConnSelect) jConnSelect.value = updates.j_conn;
+                if (connectionTargets.j.select) {
+                    connectionTargets.j.select.value = updates.j_conn;
+                } else {
+                    console.warn('終端接合selectが見つかりません (bulk edit)', {
+                        memberIndex,
+                        value: updates.j_conn
+                    });
+                }
             }
             
             // 等分布荷重の処理
@@ -3483,31 +3593,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             state.members.push(memberRecord);
             
-            // 接合条件の取得 - 動的にselect要素を検索
-            const cellCount = row.cells.length;
-            const lastCellIndex = cellCount - 1; // 削除ボタン
-            
-            let iConnIndex = -1, jConnIndex = -1;
-            let selectCount = 0;
-            for (let i = lastCellIndex - 1; i >= 0; i--) {
-                const cell = row.cells[i];
-                if (cell && cell.querySelector('select')) {
-                    selectCount++;
-                    if (selectCount === 1) {
-                        jConnIndex = i; // 最初に見つかったselectは終端接続
-                    } else if (selectCount === 2) {
-                        iConnIndex = i; // 2番目に見つかったselectは始端接続
-                        break;
-                    }
-                }
-            }
-            
             // 接合条件を追加（安全な取得）
             const currentMember = state.members[state.members.length - 1];
-            const iConnSelect = iConnIndex >= 0 ? row.cells[iConnIndex]?.querySelector('select') : null;
-            const jConnSelect = jConnIndex >= 0 ? row.cells[jConnIndex]?.querySelector('select') : null;
-            currentMember.i_conn = iConnSelect?.value || 'rigid';
-            currentMember.j_conn = jConnSelect?.value || 'rigid';
+            const connectionTargets = resolveMemberConnectionTargets(row);
+            currentMember.i_conn = connectionTargets.i.select?.value || 'rigid';
+            currentMember.j_conn = connectionTargets.j.select?.value || 'rigid';
             currentMember.Zx = row.dataset.zx;
             currentMember.ix = row.dataset.ix;
             currentMember.iy = row.dataset.iy;
@@ -4679,8 +4769,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         [0, 0, -EIy_L2, 0, EIy_L_half, 0, 0, 0, EIy_L2, 0, EIy_L, 0],
                         [0, EIz_L2, 0, 0, 0, EIz_L_half, 0, -EIz_L2, 0, 0, 0, EIz_L]
                     ];
-                    
-                    member.k_local_3d = k_local_3d;
+
+                    member.k_local_3d = apply3DEndReleases(k_local_3d, member.i_conn, member.j_conn);
                 });
             }
             let K_global = mat.create(dof, dof);
@@ -5401,111 +5491,48 @@ document.addEventListener('DOMContentLoaded', () => {
             const Zy = parseFloat(zySectionInput.value) * 1e-6;
             
             // 密度列が存在するかどうかでインデックスを調整（より安全な方法）
-            const cellCount = row.cells.length;
+            const totalCellCount = row.cells.length;
             let hasDensityColumn = false;
             
             // セル数で判定 (3D用: 密度列がある場合16列、ない場合15列)
-            if (cellCount >= 16) {
+            if (totalCellCount >= 16) {
                 hasDensityColumn = true;
-            } else if (cellCount >= 15) {
+            } else if (totalCellCount >= 15) {
                 hasDensityColumn = false;
             } else {
                 if (!window.cellCountErrorLogged || !window.cellCountErrorLogged[index]) {
                     if (!window.cellCountErrorLogged) window.cellCountErrorLogged = {};
                     window.cellCountErrorLogged[index] = true;
-                    console.warn(`部材 ${index + 1}: セル数が不足しています (${cellCount})`);
+                    console.warn(`部材 ${index + 1}: セル数が不足しています (${totalCellCount})`);
                 }
                 // デフォルトで密度列なしと仮定
                 hasDensityColumn = false;
             }
             
-            // 実際のセル構造を動的に解析してselect要素を探す
-            let iConnIndex = -1, jConnIndex = -1;
-            
-            // 後ろから2番目と3番目のセルをチェック（削除ボタンを除く）
-            // 通常の構造: [..., 始端select, 終端select, 削除ボタン] または [..., 始端select, 終端select, 断面選択ボタン, 削除ボタン]
-            const lastCellIndex = cellCount - 1; // 削除ボタン
-            
-            // 最後から逆順にselect要素を探す
-            let selectCount = 0;
-            for (let i = lastCellIndex - 1; i >= 0; i--) {
-                const cell = row.cells[i];
-                if (cell && cell.querySelector('select')) {
-                    selectCount++;
-                    if (selectCount === 1) {
-                        jConnIndex = i; // 最初に見つかったselectは終端接続
-                    } else if (selectCount === 2) {
-                        iConnIndex = i; // 2番目に見つかったselectは始端接続
-                        break;
-                    }
-                }
-            }
-            
-            // select要素が見つからない場合の処理
-            if (iConnIndex === -1 || jConnIndex === -1) {
-                if (!window.cellMissingErrorLogged || !window.cellMissingErrorLogged[index]) {
-                    if (!window.cellMissingErrorLogged) window.cellMissingErrorLogged = {};
-                    window.cellMissingErrorLogged[index] = true;
-                    console.warn(`部材 ${index + 1}: 接続条件のselect要素が見つかりません (cellCount: ${cellCount}, found selects: ${selectCount})`);
-                }
-                // デフォルト値を設定してエラーを回避
-                return {
-                    i: parseInt(row.cells[1].querySelector('input').value) - 1,
-                    j: parseInt(row.cells[2].querySelector('input').value) - 1,
-                    E: parseFloat(eInput.value),
-                    strengthProps: { Fy: parseFloat(fInput.value) },
-                    I: I,
-                    A: A,
-                    Z: Z,
-                    Zx: 0,
-                    Zy: 0,
-                    ix: Math.sqrt(I / A),
-                    iy: Math.sqrt(I / A),
-                    length: 0,
-                    c: 1,
-                    s: 0,
-                    T: [[1,0,0,0,0,0],[0,1,0,0,0,0],[0,0,1,0,0,0],[0,0,0,1,0,0],[0,0,0,0,1,0],[0,0,0,0,0,1]],
-                    i_conn: 'rigid',
-                    j_conn: 'rigid',
-                    k_local: [[1,0,0,0,0,0],[0,1,0,0,0,0],[0,0,1,0,0,0],[0,0,0,1,0,0],[0,0,0,0,1,0],[0,0,0,0,0,1]],
-                    material: 'steel'
-                };
-            }
-            
-            // 安全な値取得（nullチェック付き）
-            const iConnSelect = iConnIndex >= 0 ? row.cells[iConnIndex]?.querySelector('select') : null;
-            const jConnSelect = jConnIndex >= 0 ? row.cells[jConnIndex]?.querySelector('select') : null;
-            
-            let i_conn, j_conn;
+            // 接合条件の取得・検証
+            const connectionTargets = resolveMemberConnectionTargets(row);
+            const iConnSelect = connectionTargets.i.select;
+            const jConnSelect = connectionTargets.j.select;
+
             if (!iConnSelect || !jConnSelect) {
-                // エラー状況の詳細ログを一度だけ出力（デバッグのため一時的に制限解除）
                 if (!window.memberErrorLogged || !window.memberErrorLogged[index] || window.memberErrorLogged[index] < 2) {
                     if (!window.memberErrorLogged) window.memberErrorLogged = {};
                     window.memberErrorLogged[index] = (window.memberErrorLogged[index] || 0) + 1;
                     console.warn(`部材 ${index + 1}: 接続条件のselect要素にアクセスできません`, {
-                        cellCount: cellCount,
-                        hasDensityColumn: hasDensityColumn,
-                        iConnIndex: iConnIndex,
-                        jConnIndex: jConnIndex,
-                        hasIConnCell: iConnIndex >= 0 ? !!row.cells[iConnIndex] : false,
-                        hasJConnCell: jConnIndex >= 0 ? !!row.cells[jConnIndex] : false,
-                        hasIConnSelect: !!iConnSelect,
-                        hasJConnSelect: !!jConnSelect,
-                        selectCount: selectCount,
+                        cellCount: totalCellCount,
+                        hasDensityColumn,
+                        connectionTargets,
                         cellsWithSelects: Array.from(row.cells).map((cell, i) => ({
                             index: i,
                             hasSelect: !!cell.querySelector('select'),
-                            innerHTML: cell.innerHTML.substring(0, 50) + '...'
+                            innerHTML: cell.innerHTML.substring(0, 80) + '...'
                         })).filter(c => c.hasSelect)
                     });
                 }
-                // デフォルト値を設定
-                i_conn = iConnSelect?.value || 'rigid';
-                j_conn = jConnSelect?.value || 'rigid';
-            } else {
-                i_conn = iConnSelect.value;
-                j_conn = jConnSelect.value;
             }
+
+            const i_conn = iConnSelect?.value || 'rigid';
+            const j_conn = jConnSelect?.value || 'rigid';
             // 2D互換性: dataset から追加の断面性能を読み取る (3Dでは不要だが残す)
             // const Zx_dataset = parseFloat(row.dataset.zx) * 1e-6, Zy_dataset = parseFloat(row.dataset.zy) * 1e-6;
             const ix = parseFloat(row.dataset.ix) * 1e-2 || Math.sqrt(Iz / A), iy = parseFloat(row.dataset.iy) * 1e-2 || Math.sqrt(Iy / A);
@@ -9671,13 +9698,9 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 const Zy_m3 = parseFloat(memberRow.cells[10].querySelector('input').value)*1e-6;
 
                 // Dynamic cell index calculation for connections
-                const hasDensityColumn = document.querySelector('.density-column') && document.querySelector('.density-column').style.display !== 'none';
-                // 基本列11(#,i,j,E,F,Ix,Iy,J,A,Zx,Zy) + 密度列(0or1) + 断面名称列(1) + 軸方向列(1) + 部材断面選択(1) + 接続列(2)
-                const iConnIndex = hasDensityColumn ? 16 : 15;
-                const jConnIndex = hasDensityColumn ? 17 : 16;
-
-                const iConnSelect = memberRow.cells[iConnIndex]?.querySelector('select');
-                const jConnSelect = memberRow.cells[jConnIndex]?.querySelector('select');
+                const connectionTargets = resolveMemberConnectionTargets(memberRow);
+                const iConnSelect = connectionTargets.i.select;
+                const jConnSelect = connectionTargets.j.select;
                 const props = {E:E_val, F:F_val, Iz:Iz_m4, Iy:Iy_m4, J:J_m4, A:A_m2, Zz:Zz_m3, Zy:Zy_m3, i_conn: iConnSelect ? iConnSelect.value : 'rigid', j_conn: jConnSelect ? jConnSelect.value : 'rigid'};
                 memberRow.querySelector('.delete-row-btn').onclick.apply(memberRow.querySelector('.delete-row-btn'));
                 const newNodeRow = addNodeToTable(nodeX, nodeY, nodeZ, 'free');
@@ -10053,27 +10076,26 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 setTimeout(() => adjustPopupPosition(elements.memberPropsPopup), 0);
             }
             
-            // Dynamic cell index calculation for connections
-            // 基本列: #(0), i(1), j(2), E(3), F(4), Ix(5), Iy(6), J(7), A(8), Zx(9), Zy(10)
-            // 密度列(11 - 非表示の場合あり), 断面名称(12), 軸方向(13), 部材断面選択(14), 始端(15), 終端(16), 削除(17)
-            const iConnIndex = hasDensityColumn ? 16 : 15;
-            const jConnIndex = hasDensityColumn ? 17 : 16;
+            const connectionTargets = resolveMemberConnectionTargets(memberRow);
+            const popupIConn = document.getElementById('popup-i-conn');
+            const popupJConn = document.getElementById('popup-j-conn');
 
-            const iConnSelect = memberRow.cells[iConnIndex]?.querySelector('select');
-            const jConnSelect = memberRow.cells[jConnIndex]?.querySelector('select');
-
-            if (iConnSelect) {
-                document.getElementById('popup-i-conn').value = iConnSelect.value;
-            } else {
-                console.warn('始端接合selectが見つかりません。インデックス:', iConnIndex);
-                document.getElementById('popup-i-conn').value = 'rigid';
+            if (popupIConn) {
+                if (connectionTargets.i.select) {
+                    popupIConn.value = connectionTargets.i.select.value;
+                } else {
+                    console.warn('始端接合selectが見つかりません。', { rowIndex: selectedMemberIndex, connectionTargets });
+                    popupIConn.value = 'rigid';
+                }
             }
 
-            if (jConnSelect) {
-                document.getElementById('popup-j-conn').value = jConnSelect.value;
-            } else {
-                console.warn('終端接合selectが見つかりません。インデックス:', jConnIndex);
-                document.getElementById('popup-j-conn').value = 'rigid';
+            if (popupJConn) {
+                if (connectionTargets.j.select) {
+                    popupJConn.value = connectionTargets.j.select.value;
+                } else {
+                    console.warn('終端接合selectが見つかりません。', { rowIndex: selectedMemberIndex, connectionTargets });
+                    popupJConn.value = 'rigid';
+                }
             }
             const memberLoadRow = Array.from(elements.memberLoadsTable.rows).find(row => parseInt(row.cells[0].querySelector('input').value)-1 === selectedMemberIndex);
             document.getElementById('popup-w').value = memberLoadRow ? memberLoadRow.cells[1].querySelector('input').value : '0';
@@ -10586,19 +10608,19 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             }
         }
         
-        // Dynamic cell index calculation for connections
-        // 3Dモード時は列番号が異なる（鋼材データツールボタンが1列前にある）
-        // 3D: セル[14]=始端接合, セル[15]=終端接合
-        // 2D (密度なし): セル[15]=始端接合, セル[16]=終端接合
-        // 2D (密度あり): セル[16]=始端接合, セル[17]=終端接合
-        const is3D = window.is3DMode === true;
-        const iConnIndex = is3D ? 14 : (hasDensityColumn ? 16 : 15);
-        const jConnIndex = is3D ? 15 : (hasDensityColumn ? 17 : 16);
-
-        const iConnSelect = memberRow.cells[iConnIndex]?.querySelector('select');
-        const jConnSelect = memberRow.cells[jConnIndex]?.querySelector('select');
-        if (iConnSelect) iConnSelect.value = document.getElementById('popup-i-conn').value;
-        if (jConnSelect) jConnSelect.value = document.getElementById('popup-j-conn').value;
+        const connectionTargets = resolveMemberConnectionTargets(memberRow);
+        const popupIConnValue = document.getElementById('popup-i-conn').value;
+        const popupJConnValue = document.getElementById('popup-j-conn').value;
+        if (connectionTargets.i.select) {
+            connectionTargets.i.select.value = popupIConnValue;
+        } else {
+            console.warn('始端接合selectが見つかりません (popup apply)', { rowIndex: selectedMemberIndex, popupValue: popupIConnValue });
+        }
+        if (connectionTargets.j.select) {
+            connectionTargets.j.select.value = popupJConnValue;
+        } else {
+            console.warn('終端接合selectが見つかりません (popup apply)', { rowIndex: selectedMemberIndex, popupValue: popupJConnValue });
+        }
         const wValue = parseFloat(document.getElementById('popup-w').value) || 0;
         const memberLoadRow = Array.from(elements.memberLoadsTable.rows).find(row => parseInt(row.cells[0].querySelector('input').value) - 1 === selectedMemberIndex);
         if (wValue !== 0) {
@@ -11324,8 +11346,8 @@ const createEInputHTML = (idPrefix, currentE = '205000') => {
         baseColumns.push(`<span class="section-axis-cell">${sectionAxis || '-'}</span>`);
 
         // 接続条件列を追加
-        baseColumns.push(`<select><option value="rigid" ${i_conn === 'rigid' ? 'selected' : ''}>剛</option><option value="pinned" ${i_conn === 'pinned' || i_conn === 'p' ? 'selected' : ''}>ピン</option></select>`);
-        baseColumns.push(`<select><option value="rigid" ${j_conn === 'rigid' ? 'selected' : ''}>剛</option><option value="pinned" ${j_conn === 'pinned' || j_conn === 'p' ? 'selected' : ''}>ピン</option></select>`);
+        baseColumns.push(`<select class="member-conn-select member-conn-select-i" data-conn="i"><option value="rigid" ${i_conn === 'rigid' ? 'selected' : ''}>剛</option><option value="pinned" ${i_conn === 'pinned' || i_conn === 'p' ? 'selected' : ''}>ピン</option></select>`);
+        baseColumns.push(`<select class="member-conn-select member-conn-select-j" data-conn="j"><option value="rigid" ${j_conn === 'rigid' ? 'selected' : ''}>剛</option><option value="pinned" ${j_conn === 'pinned' || j_conn === 'p' ? 'selected' : ''}>ピン</option></select>`);
 
         return baseColumns;
     };
@@ -15527,19 +15549,15 @@ const loadPreset = (index) => {
                 }
 
                 // 接続条件を設定
-                const iConnIndex = hasDensityColumn ? 16 : 15;
-                const jConnIndex = hasDensityColumn ? 17 : 16;
-                const iConnSelect = memberRow.cells[iConnIndex]?.querySelector('select');
-                const jConnSelect = memberRow.cells[jConnIndex]?.querySelector('select');
-                if (iConnSelect) {
-                    document.getElementById('popup-i-conn').value = iConnSelect.value;
-                } else {
-                    document.getElementById('popup-i-conn').value = 'rigid';
+                const connectionTargets = resolveMemberConnectionTargets(memberRow);
+                const popupIConn = document.getElementById('popup-i-conn');
+                const popupJConn = document.getElementById('popup-j-conn');
+
+                if (popupIConn) {
+                    popupIConn.value = connectionTargets.i.select?.value || 'rigid';
                 }
-                if (jConnSelect) {
-                    document.getElementById('popup-j-conn').value = jConnSelect.value;
-                } else {
-                    document.getElementById('popup-j-conn').value = 'rigid';
+                if (popupJConn) {
+                    popupJConn.value = connectionTargets.j.select?.value || 'rigid';
                 }
 
                 // 部材荷重を設定
@@ -16480,30 +16498,15 @@ window.showMemberProperties = function(memberIndex) {
     }
 
     // 接合条件の設定
-    const is3D = window.is3DMode === true;
+    const connectionTargets = resolveMemberConnectionTargets(memberRow);
+    const popupIConn = document.getElementById('popup-i-conn');
+    const popupJConn = document.getElementById('popup-j-conn');
 
-    // 3Dモード時は列番号が異なる（鋼材データツールボタンが1列前にある）
-    // 3D: セル[14]=始端接合, セル[15]=終端接合
-    // 2D (密度なし): セル[15]=始端接合, セル[16]=終端接合
-    // 2D (密度あり): セル[16]=始端接合, セル[17]=終端接合
-    const iConnIndex = is3D ? 14 : (hasDensityColumn ? 16 : 15);
-    const jConnIndex = is3D ? 15 : (hasDensityColumn ? 17 : 16);
-
-    const iConnSelect = memberRow.cells[iConnIndex]?.querySelector('select');
-    const jConnSelect = memberRow.cells[jConnIndex]?.querySelector('select');
-
-    if (iConnSelect) {
-        document.getElementById('popup-i-conn').value = iConnSelect.value;
-    } else {
-        console.warn('始端接合selectが見つかりません。インデックス:', iConnIndex);
-        document.getElementById('popup-i-conn').value = 'rigid';
+    if (popupIConn) {
+        popupIConn.value = connectionTargets.i.select?.value || 'rigid';
     }
-
-    if (jConnSelect) {
-        document.getElementById('popup-j-conn').value = jConnSelect.value;
-    } else {
-        console.warn('終端接合selectが見つかりません。インデックス:', jConnIndex);
-        document.getElementById('popup-j-conn').value = 'rigid';
+    if (popupJConn) {
+        popupJConn.value = connectionTargets.j.select?.value || 'rigid';
     }
 
     // 部材荷重の設定
