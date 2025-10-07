@@ -9983,7 +9983,12 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
 
                 const projectionMode = getCurrentProjectionMode();
                 if (projectionMode === 'iso') {
-                    console.info('等角投影では節点移動を無効化しています。');
+                    console.info('等角投影では節点移動を無効化しています。パン操作に切り替えます。');
+                    if (!isShiftPressed) {
+                        isDraggingCanvas = true;
+                        lastMouseX = mouseX;
+                        lastMouseY = mouseY;
+                    }
                     if (typeof drawOnCanvas === 'function') {
                         drawOnCanvas();
                     }
@@ -10002,6 +10007,13 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     clearMultiSelection();
                     // 節点の選択をクリア（部材を選択する場合）
                     selectedNodeIndex = null;
+                }
+                const projectionMode = getCurrentProjectionMode();
+                if (projectionMode === 'iso' && !isShiftPressed) {
+                    console.info('等角投影では部材移動をパン操作に切り替えます。');
+                    isDraggingCanvas = true;
+                    lastMouseX = mouseX;
+                    lastMouseY = mouseY;
                 }
                 // 部材選択ハイライト表示
                 if (typeof drawOnCanvas === 'function') {
