@@ -729,7 +729,11 @@ const drawDisplacementDiagram = (nodes, members, D_global, memberForces, manualS
         dispScale = clampDispScale(dispScale);
     }
 
-    lastDisplacementScale = dispScale;
+    if (typeof window.updateAnimationAutoScale === 'function') {
+        window.updateAnimationAutoScale(dispScale);
+    } else {
+        window.lastDisplacementScale = dispScale;
+    }
     if (elements.dispScaleInput) {
         elements.dispScaleInput.value = dispScale.toFixed(2);
     }

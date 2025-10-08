@@ -2205,7 +2205,40 @@ document.addEventListener('DOMContentLoaded', () => {
     let lastResults = null;
     let lastAnalysisResult = null;
     let lastSectionCheckResults = null;
-    let lastDisplacementScale = 0;
+    let internalLastDisplacementScale = 0;
+
+    const applyAnimationAutoScale = (scale, { updatePlaceholder = true } = {}) => {
+        const numericScale = Number(scale);
+        if (!Number.isFinite(numericScale) || numericScale <= 0) {
+            internalLastDisplacementScale = 0;
+            return internalLastDisplacementScale;
+        }
+
+        internalLastDisplacementScale = numericScale;
+
+        if (updatePlaceholder && elements?.animScaleInput) {
+            const target = elements.animScaleInput;
+            const placeholderText = `自動(${numericScale.toFixed(2)})`;
+            target.placeholder = placeholderText;
+            target.dataset.autoScale = numericScale.toString();
+        }
+
+        return internalLastDisplacementScale;
+    };
+
+    window.updateAnimationAutoScale = (scale, options) => applyAnimationAutoScale(scale, options);
+
+    const previousDisplacementScale = Number(window.lastDisplacementScale ?? 0);
+
+    Object.defineProperty(window, 'lastDisplacementScale', {
+        get: () => internalLastDisplacementScale,
+        set: (value) => applyAnimationAutoScale(value),
+        configurable: true
+    });
+
+    if (Number.isFinite(previousDisplacementScale) && previousDisplacementScale > 0) {
+        applyAnimationAutoScale(previousDisplacementScale);
+    }
 
     if (elements.addMemberPopup) {
                 const highlightNode = (nodeIndex) => {
@@ -9422,11 +9455,12 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         window.lastDrawingContext = drawingCtx;
 
         let dispScale = parseFloat(elements.animScaleInput.value);
+        const storedAutoScale = window.lastDisplacementScale;
 
         if (isNaN(dispScale)) {
-            // 自動倍率計算: lastDisplacementScaleがあればそれを使用
-            if (lastDisplacementScale && lastDisplacementScale > 0) {
-                dispScale = lastDisplacementScale;
+            // 自動倍率計算: displacement図で求めた倍率があればそれを使用
+            if (storedAutoScale && storedAutoScale > 0) {
+                dispScale = storedAutoScale;
             } else {
                 // lastDisplacementScaleが無い場合は独自に計算
                 // 2D/3D判定（自由度数から判定）
@@ -9476,7 +9510,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     dispScale = 100;
                 }
             }
-            elements.animScaleInput.placeholder = `自動(${dispScale.toFixed(2)})`;
+            applyAnimationAutoScale(dispScale);
         }
 
         console.log('アニメーション開始:', { dispScale, nodesCount: nodes.length, membersCount: members.length });
