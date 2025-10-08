@@ -131,10 +131,7 @@ const calculateMemberAxial = (memberForce, xi) => {
     const { Ni, Nj } = getAxialComponents(memberForce);
     const start = toNumber(Ni, 0);
     const end = toNumber(Nj, start);
-    const rawValue = start + (end - start) * xi;
-    const targetStart = convertAxialForDiagram(start, 'i');
-    const targetEnd = convertAxialForDiagram(end, 'j');
-    return adjustValueForEndpoints(rawValue, start, end, targetStart, targetEnd, xi);
+    return start + (end - start) * xi;
 };
 
 const calculateMemberMoment = (memberForce, L, xi, axis = 'y', w = null) => {
@@ -170,12 +167,7 @@ const calculateMemberMoment = (memberForce, L, xi, axis = 'y', w = null) => {
         }
     }
 
-    const rawStart = M_i;
-    const rawEnd = M_j;
-    const targetStart = convertMomentForDiagram(rawStart, 'i');
-    const targetEnd = convertMomentForDiagram(rawEnd, 'j');
-
-    return adjustValueForEndpoints(moment, rawStart, rawEnd, targetStart, targetEnd, xi);
+    return moment;
 };
 
 /**
@@ -207,12 +199,7 @@ const calculateMemberShear = (memberForce, L, xi, axis = 'y', w = null) => {
 
     const shear = Q_i - equivalentW * x_m;
 
-    const rawStart = Q_i;
-    const rawEnd = Q_j;
-    const targetStart = convertShearForDiagram(rawStart, 'i');
-    const targetEnd = convertShearForDiagram(rawEnd, 'j');
-
-    return adjustValueForEndpoints(shear, rawStart, rawEnd, targetStart, targetEnd, xi);
+    return shear;
 };
 
 const toNumber = (value, fallback = 0) => (Number.isFinite(value) ? value : fallback);
@@ -302,33 +289,35 @@ const getDistributedLoadForAxis = (memberForce, axis) => {
     return null;
 };
 
-const convertMomentForDiagram = (value, position) => {
-    const v = toNumber(value, 0);
-    return position === 'i' ? -v : v;
+const getMomentDiagramFactor = (axis) => {
+    switch (axis) {
+        case 'y':
+        case 'z':
+            return -1;
+        case 'x':
+        default:
+            return 1;
+    }
 };
 
-const convertShearForDiagram = (value, position) => {
-    const v = toNumber(value, 0);
-    return position === 'i' ? v : -v;
+const getShearDiagramFactor = (axis) => {
+    switch (axis) {
+        case 'y':
+        case 'z':
+            return 1;
+        case 'x':
+        default:
+            return 1;
+    }
 };
 
-const convertAxialForDiagram = (value, position) => {
-    const v = toNumber(value, 0);
-    return position === 'i' ? -v : v;
-};
+const getAxialDiagramFactor = (axis) => 1;
 
-const adjustValueForEndpoints = (rawValue, rawStart, rawEnd, targetStart, targetEnd, xi) => {
-    const rs = toNumber(rawStart, 0);
-    const re = toNumber(rawEnd, rs);
-    const ts = toNumber(targetStart, rs);
-    const te = toNumber(targetEnd, re);
+const convertMomentForDiagram = (value, axis) => toNumber(value, 0) * getMomentDiagramFactor(axis);
 
-    const startDiff = ts - rs;
-    const endDiff = te - re;
-    const correction = startDiff * (1 - xi) + endDiff * xi;
-    const adjusted = toNumber(rawValue, 0) + correction;
-    return Number.isFinite(adjusted) ? adjusted : 0;
-};
+const convertShearForDiagram = (value, axis) => toNumber(value, 0) * getShearDiagramFactor(axis);
+
+const convertAxialForDiagram = (value, axis) => toNumber(value, 0) * getAxialDiagramFactor(axis);
 
 // 3D座標を2D投影する関数
 const project3DTo2D = (node, projectionMode) => {
@@ -1104,18 +1093,18 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
                             let stress = 0;
                             if (stressType === 'moment') {
                                 const { Mi, Mj } = getMomentComponentsForAxis(forces, axis);
-                                const start = convertMomentForDiagram(Mi, 'i');
-                                const end = convertMomentForDiagram(Mj, 'j');
+                                const start = convertMomentForDiagram(Mi, axis);
+                                const end = convertMomentForDiagram(Mj, axis);
                                 stress = Math.max(Math.abs(start), Math.abs(end));
                             } else if (stressType === 'axial') {
                                 const { Ni, Nj } = getAxialComponents(forces);
-                                const start = convertAxialForDiagram(Ni, 'i');
-                                const end = convertAxialForDiagram(Nj, 'j');
+                                const start = convertAxialForDiagram(Ni, axis);
+                                const end = convertAxialForDiagram(Nj, axis);
                                 stress = Math.max(Math.abs(start), Math.abs(end));
                             } else if (stressType === 'shear') {
                                 const { Qi, Qj } = getShearComponentsForAxis(forces, axis);
-                                const start = convertShearForDiagram(Qi, 'i');
-                                const end = convertShearForDiagram(Qj, 'j');
+                                const start = convertShearForDiagram(Qi, axis);
+                                const end = convertShearForDiagram(Qj, axis);
                                 stress = Math.max(Math.abs(start), Math.abs(end));
                             }
 
@@ -1171,18 +1160,18 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
         axesForFrames.forEach(axis => {
             if (stressType === 'moment') {
                 const { Mi, Mj } = getMomentComponentsForAxis(forces, axis);
-                const start = convertMomentForDiagram(Mi, 'i');
-                const end = convertMomentForDiagram(Mj, 'j');
+                const start = convertMomentForDiagram(Mi, axis);
+                const end = convertMomentForDiagram(Mj, axis);
                 maxStress = Math.max(maxStress, Math.abs(start), Math.abs(end));
             } else if (stressType === 'axial') {
                 const { Ni, Nj } = getAxialComponents(forces);
-                const start = convertAxialForDiagram(Ni, 'i');
-                const end = convertAxialForDiagram(Nj, 'j');
+                const start = convertAxialForDiagram(Ni, axis);
+                const end = convertAxialForDiagram(Nj, axis);
                 maxStress = Math.max(maxStress, Math.abs(start), Math.abs(end));
             } else if (stressType === 'shear') {
                 const { Qi, Qj } = getShearComponentsForAxis(forces, axis);
-                const start = convertShearForDiagram(Qi, 'i');
-                const end = convertShearForDiagram(Qj, 'j');
+                const start = convertShearForDiagram(Qi, axis);
+                const end = convertShearForDiagram(Qj, axis);
                 maxStress = Math.max(maxStress, Math.abs(start), Math.abs(end));
             }
         });
@@ -1331,11 +1320,20 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
                 let stressValue = 0;
 
                 if (stressType === 'moment') {
-                    stressValue = calculateMemberMoment(forces, L, xi, frameAxis, distributedLoad);
+                    stressValue = convertMomentForDiagram(
+                        calculateMemberMoment(forces, L, xi, frameAxis, distributedLoad),
+                        frameAxis
+                    );
                 } else if (stressType === 'axial') {
-                    stressValue = calculateMemberAxial(forces, xi);
+                    stressValue = convertAxialForDiagram(
+                        calculateMemberAxial(forces, xi),
+                        frameAxis
+                    );
                 } else if (stressType === 'shear') {
-                    stressValue = calculateMemberShear(forces, L, xi, frameAxis, distributedLoad);
+                    stressValue = convertShearForDiagram(
+                        calculateMemberShear(forces, L, xi, frameAxis, distributedLoad),
+                        frameAxis
+                    );
                 }
 
                 const absStress = Math.abs(stressValue);
@@ -1441,13 +1439,22 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
 
                 if (stressType === 'moment') {
                     // 曲げモーメント（等分布荷重を考慮）
-                    stressValue = calculateMemberMoment(forces, L, xi, frameAxis, distributedLoad);
+                    stressValue = convertMomentForDiagram(
+                        calculateMemberMoment(forces, L, xi, frameAxis, distributedLoad),
+                        frameAxis
+                    );
                 } else if (stressType === 'axial') {
                     // 軸力（線形分布を想定）
-                    stressValue = calculateMemberAxial(forces, xi);
+                    stressValue = convertAxialForDiagram(
+                        calculateMemberAxial(forces, xi),
+                        frameAxis
+                    );
                 } else if (stressType === 'shear') {
                     // せん断力（等分布荷重を考慮）
-                    stressValue = calculateMemberShear(forces, L, xi, frameAxis, distributedLoad);
+                    stressValue = convertShearForDiagram(
+                        calculateMemberShear(forces, L, xi, frameAxis, distributedLoad),
+                        frameAxis
+                    );
                 }
                 
                 // 部材上の位置（2D投影）
