@@ -6018,6 +6018,51 @@ document.addEventListener('DOMContentLoaded', () => {
             };
         };
 
+        const rotateAxisPropertiesBy90 = (properties) => {
+            if (!properties || typeof properties !== 'object') {
+                return properties;
+            }
+
+            const local = properties.local || {};
+            const inertia = local.inertia || {};
+            const sectionModulus = local.sectionModulus || {};
+            const radius = local.radius || {};
+
+            const rotatedLocal = {
+                ...local,
+                inertia: {
+                    ...inertia,
+                    y: inertia.z,
+                    z: inertia.y
+                },
+                sectionModulus: {
+                    ...sectionModulus,
+                    y: sectionModulus.z,
+                    z: sectionModulus.y
+                },
+                radius: {
+                    ...radius,
+                    y: radius.z,
+                    z: radius.y
+                }
+            };
+
+            return {
+                ...properties,
+                local: rotatedLocal,
+                bendingInertia: rotatedLocal.inertia?.z ?? properties.bendingInertia,
+                bendingSectionModulus: rotatedLocal.sectionModulus?.z ?? properties.bendingSectionModulus,
+                bendingRadius: rotatedLocal.radius?.z ?? properties.bendingRadius,
+                orthogonal: {
+                    ...(properties.orthogonal || {}),
+                    inertia: rotatedLocal.inertia?.y ?? properties.orthogonal?.inertia,
+                    sectionModulus: rotatedLocal.sectionModulus?.y ?? properties.orthogonal?.sectionModulus,
+                    radius: rotatedLocal.radius?.y ?? properties.orthogonal?.radius
+                },
+                rotationOverride: 'horizontal-90'
+            };
+        };
+
     const nodeRows = Array.from(elements.nodesTable.rows);
     nodeRows.forEach(clearRowValidationState);
 
@@ -6054,6 +6099,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 dz_forced: dz_forced_mm / 1000
             };
         });
+    const coordinateTolerance = 1e-6;
+    const orientationToleranceRatio = 1e-3;
+    const modelIsEffectively2D = nodes.every(node => Math.abs(node.z || 0) <= coordinateTolerance);
+
     const members = membersRows.map((row, index) => {
             // 安全な節点番号取得
             const iNodeInput = row.cells[1]?.querySelector('input');
@@ -6218,17 +6267,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const ixStrongRadius = ixDataset ?? deriveRadiusFrom(Iz, A);
             const iyWeakRadius = iyDataset ?? deriveRadiusFrom(Iy, A);
 
-            const axisProps = computeAxisProperties(
-                { inertia: Iz, modulus: Zz, radius: ixStrongRadius },
-                { inertia: Iy, modulus: Zy, radius: iyWeakRadius },
-                sectionAxis?.key,
-                A
-            );
-
-            const fallbackRadiusZ = axisProps?.local?.radius?.z ?? deriveRadiusFrom(axisProps?.bendingInertia, A) ?? ixStrongRadius ?? iyWeakRadius ?? 0;
-            const fallbackRadiusY = axisProps?.local?.radius?.y ?? deriveRadiusFrom(axisProps?.orthogonal?.inertia, A) ?? iyWeakRadius ?? ixStrongRadius ?? 0;
-            const ix = selectWithFallback(ixStrongRadius, axisProps?.local?.radius?.z, fallbackRadiusZ);
-            const iy = selectWithFallback(iyWeakRadius, axisProps?.local?.radius?.y, fallbackRadiusY);
             if (isNaN(E) || isNaN(Iz) || isNaN(Iy) || isNaN(J) || isNaN(A) || isNaN(Zz) || isNaN(Zy)) {
                 const message = `部材 ${index + 1} の物性値が無効です。`;
                 markRowValidationError(row, message);
@@ -6244,12 +6282,37 @@ document.addEventListener('DOMContentLoaded', () => {
                 markRowValidationError(row, message);
                 throw new Error(message);
             }
-            const ni = nodes[i], nj = nodes[j], dx = nj.x - ni.x, dy = nj.y - ni.y, dz = nj.z - ni.z, L = Math.sqrt(dx**2 + dy**2 + dz**2);
-            if(L === 0) {
+            const ni = nodes[i];
+            const nj = nodes[j];
+            const dx = nj.x - ni.x;
+            const dy = nj.y - ni.y;
+            const dz = (nj.z ?? 0) - (ni.z ?? 0);
+            const L = Math.sqrt(dx**2 + dy**2 + dz**2);
+            if (L === 0) {
                 const message = `部材 ${index + 1}: 節点 ${i + 1} と節点 ${j + 1} の座標が同じため長さが0です。節点位置を見直してください。`;
                 markRowValidationError(row, message);
                 throw new Error(message);
             }
+
+            let axisProps = computeAxisProperties(
+                { inertia: Iz, modulus: Zz, radius: ixStrongRadius },
+                { inertia: Iy, modulus: Zy, radius: iyWeakRadius },
+                sectionAxis?.key,
+                A
+            );
+
+            const verticalComponent = modelIsEffectively2D ? Math.abs(dy) : Math.abs(dz);
+            const horizontalThreshold = Math.max(coordinateTolerance, orientationToleranceRatio * L);
+            const isHorizontalMember = verticalComponent <= horizontalThreshold;
+
+            if (isHorizontalMember) {
+                axisProps = rotateAxisPropertiesBy90(axisProps);
+            }
+
+            const fallbackRadiusZ = axisProps?.local?.radius?.z ?? deriveRadiusFrom(axisProps?.bendingInertia, A) ?? ixStrongRadius ?? iyWeakRadius ?? 0;
+            const fallbackRadiusY = axisProps?.local?.radius?.y ?? deriveRadiusFrom(axisProps?.orthogonal?.inertia, A) ?? iyWeakRadius ?? ixStrongRadius ?? 0;
+            const ix = selectWithFallback(ixStrongRadius, axisProps?.local?.radius?.z, fallbackRadiusZ);
+            const iy = selectWithFallback(iyWeakRadius, axisProps?.local?.radius?.y, fallbackRadiusY);
             
             // 3D用の剛性マトリックスと変換マトリックスは frame_analyzer_3d.js で計算されるため、
             // ここでは2D互換の値を保持 (将来的に統合予定)
