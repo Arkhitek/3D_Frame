@@ -2321,10 +2321,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const forcedDx = options.dx_forced ?? options.dx ?? 0;
         const forcedDy = options.dy_forced ?? options.dy ?? 0;
         const forcedDz = options.dz_forced ?? options.dz ?? 0;
-        const forcedRx = options.rx_forced ?? options.rx ?? 0;
-        const forcedRy = options.ry_forced ?? options.ry ?? 0;
-        const forcedRz = options.rz_forced ?? options.rz ?? options.r_forced ?? 0;
-
         const nodeCells = [
             '#',
             `<input type="number" step="0.001" value="${formatCoord(x)}">`,
@@ -2333,10 +2329,7 @@ document.addEventListener('DOMContentLoaded', () => {
             buildSupportSelectMarkup(normalizedSupport),
             `<input type="number" value="${formatForced(forcedDx, 3)}" step="0.1" title="強制変位 δx (mm)">`,
             `<input type="number" value="${formatForced(forcedDy, 3)}" step="0.1" title="強制変位 δy (mm)">`,
-            `<input type="number" value="${formatForced(forcedDz, 3)}" step="0.1" title="強制変位 δz (mm)">`,
-            `<input type="number" value="${formatForced(forcedRx, 3)}" step="0.001" title="強制回転 θx (rad)">`,
-            `<input type="number" value="${formatForced(forcedRy, 3)}" step="0.001" title="強制回転 θy (rad)">`,
-            `<input type="number" value="${formatForced(forcedRz, 3)}" step="0.001" title="強制回転 θz (rad)">`
+            `<input type="number" value="${formatForced(forcedDz, 3)}" step="0.1" title="強制変位 δz (mm)">`
         ];
 
         return addRow(tableBody, nodeCells, saveHistory);
@@ -2487,8 +2480,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (isEffectivelyZeroConstraint(node.dx_forced)) dofs.add('dx');
             if (isEffectivelyZeroConstraint(node.dy_forced)) dofs.add('dy');
-            const rotationForced = node.rz_forced !== undefined ? node.rz_forced : node.r_forced;
-            if (isEffectivelyZeroConstraint(rotationForced)) dofs.add('rz');
         } else {
             if (support === 'fixed') {
                 ['dx', 'dy', 'dz', 'rx', 'ry', 'rz'].forEach(dof => dofs.add(dof));
@@ -2505,10 +2496,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (isEffectivelyZeroConstraint(node.dx_forced)) dofs.add('dx');
             if (isEffectivelyZeroConstraint(node.dy_forced)) dofs.add('dy');
             if (isEffectivelyZeroConstraint(node.dz_forced)) dofs.add('dz');
-            if (isEffectivelyZeroConstraint(node.rx_forced)) dofs.add('rx');
-            if (isEffectivelyZeroConstraint(node.ry_forced)) dofs.add('ry');
-            const rotationForced = node.rz_forced !== undefined ? node.rz_forced : node.r_forced;
-            if (isEffectivelyZeroConstraint(rotationForced)) dofs.add('rz');
         }
 
         return dofs;
@@ -3988,10 +3975,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 support: normalizeSupportValue(supportSelectValue),
                 dx_forced: row.cells[5]?.querySelector('input')?.value || 0,
                 dy_forced: row.cells[6]?.querySelector('input')?.value || 0,
-                dz_forced: row.cells[7]?.querySelector('input')?.value || 0,
-                rx_forced: row.cells[8]?.querySelector('input')?.value || 0,
-                ry_forced: row.cells[9]?.querySelector('input')?.value || 0,
-                rz_forced: row.cells[10]?.querySelector('input')?.value || 0
+                dz_forced: row.cells[7]?.querySelector('input')?.value || 0
             });
         });
         Array.from(elements.membersTable.rows).forEach(row => {
@@ -4088,14 +4072,11 @@ document.addEventListener('DOMContentLoaded', () => {
             currentMember.sectionAxisLabel = sectionAxis?.label || '';
         });
         Array.from(elements.nodeLoadsTable.rows).forEach(row => {
-            state.nodeLoads.push({ 
-                node: row.cells[0]?.querySelector('input')?.value || 1, 
-                px: row.cells[1]?.querySelector('input')?.value || 0, 
-                py: row.cells[2]?.querySelector('input')?.value || 0, 
-                pz: row.cells[3]?.querySelector('input')?.value || 0,
-                mx: row.cells[4]?.querySelector('input')?.value || 0,
-                my: row.cells[5]?.querySelector('input')?.value || 0,
-                mz: row.cells[6]?.querySelector('input')?.value || 0
+            state.nodeLoads.push({
+                node: row.cells[0]?.querySelector('input')?.value || 1,
+                px: row.cells[1]?.querySelector('input')?.value || 0,
+                py: row.cells[2]?.querySelector('input')?.value || 0,
+                pz: row.cells[3]?.querySelector('input')?.value || 0
             });
         });
         Array.from(elements.memberLoadsTable.rows).forEach(row => {
@@ -4203,10 +4184,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 buildSupportSelect(normalizedSupport),
                 `<input type="number" value="${getNumberValue(n.dx_forced, 0)}" step="0.1">`,
                 `<input type="number" value="${getNumberValue(n.dy_forced, 0)}" step="0.1">`,
-                `<input type="number" value="${getNumberValue(n.dz_forced, 0)}" step="0.1">`,
-                `<input type="number" value="${getNumberValue(n.rx_forced, 0)}" step="0.001">`,
-                `<input type="number" value="${getNumberValue(n.ry_forced, 0)}" step="0.001">`,
-                `<input type="number" value="${getNumberValue(n.rz_forced, 0)}" step="0.001">`
+                `<input type="number" value="${getNumberValue(n.dz_forced, 0)}" step="0.1">`
             ], false);
             });
             
@@ -4324,10 +4302,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 `<input type="number" value="${getNumberValue(l.node ?? l.n, 1)}">`,
                 `<input type="number" value="${getNumberValue(l.px, 0)}">`,
                 `<input type="number" value="${getNumberValue(l.py, 0)}">`,
-                `<input type="number" value="${getNumberValue(l.pz, 0)}">`,
-                `<input type="number" value="${getNumberValue(l.mx, 0)}">`,
-                `<input type="number" value="${getNumberValue(l.my, 0)}">`,
-                `<input type="number" value="${getNumberValue(l.mz, 0)}">`
+                `<input type="number" value="${getNumberValue(l.pz, 0)}">`
             ], false));
             
             // 部材荷重復元
@@ -4769,9 +4744,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 nodes.forEach(node => {
                     node.dz_forced = 0; // 面外変位（元のY方向）を拘束
                     node.dy_forced = undefined; // Y方向（現在は垂直方向）は自由
-                    node.rx_forced = 0; // X軸周り回転（面外）を拘束
-                    node.ry_forced = 0; // Y軸周り回転（面外）を拘束
-                    node.rz_forced = undefined; // Z軸周り回転（面内）は自由
                 });
             }
             
@@ -5053,9 +5025,6 @@ document.addEventListener('DOMContentLoaded', () => {
                             existing.px = (existing.px || 0) + (load.px || 0);
                             existing.py = (existing.py || 0) + (load.py || 0);
                             existing.pz = (existing.pz || 0) + (load.pz || 0);
-                            existing.mx = (existing.mx || 0) + (load.mx || 0);
-                            existing.my = (existing.my || 0) + (load.my || 0);
-                            existing.mz = (existing.mz || 0) + (load.mz || 0);
                             if (load.isFromSelfWeight) existing.isFromSelfWeight = true;
                         } else {
                             combinedNodeLoads.push(load);
@@ -5085,13 +5054,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         nodeIndex: selfWeightLoad.nodeIndex,
                         px: 0,
                         py: 0,
-                        pz: 0,
-                        mx: 0,
-                        my: 0,
-                        mz: 0
+                        pz: 0
                     };
 
-                    ['px', 'py', 'pz', 'mx', 'my', 'mz'].forEach(key => {
+                    ['px', 'py', 'pz'].forEach(key => {
                         if (typeof selfWeightLoad[key] === 'number') {
                             target[key] = (target[key] || 0) + selfWeightLoad[key];
                         }
@@ -5402,7 +5368,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     const base = load.nodeIndex * 3; 
                     addForceWithSignFlip(base, load.px || 0); 
                     addForceWithSignFlip(base + 1, load.py || 0); 
-                    F_global[base + 2][0] += load.mz || 0; 
                 });
             } else {
                 // 3D: 6自由度
@@ -5412,9 +5377,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     addForceWithSignFlip(base + 1, load.py || 0); 
                     const pzContribution = (load.pz || 0) * (loadCalcMultipliers.z ?? 1);
                     F_global[base + 2][0] += pzContribution; 
-                    F_global[base + 3][0] += load.mx || 0; 
-                    F_global[base + 4][0] += load.my || 0; 
-                    F_global[base + 5][0] += load.mz || 0; 
                 });
             }
             
@@ -5544,7 +5506,7 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             
             if (is2DFrame) {
-                // 2D: dx, dy, θz
+                // 2D: dx, dy
                 nodes.forEach((node, i) => {
                     if (node.dx_forced !== undefined && node.dx_forced !== null && node.dx_forced !== 0) {
                         assignForcedDisplacement(i * 3, node.dx_forced);
@@ -5552,13 +5514,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (node.dy_forced !== undefined && node.dy_forced !== null && node.dy_forced !== 0) {
                         assignForcedDisplacement(i * 3 + 1, node.dy_forced);
                     }
-                    const rotationForced = node.rz_forced !== undefined ? node.rz_forced : node.r_forced;
-                    if (rotationForced !== undefined && rotationForced !== null && rotationForced !== 0) {
-                        assignForcedDisplacement(i * 3 + 2, rotationForced);
-                    }
                 });
             } else {
-                // 3D: dx, dy, dz, θx, θy, θz
+                // 3D: dx, dy, dz
                 nodes.forEach((node, i) => {
                     if (node.dx_forced !== undefined && node.dx_forced !== null && node.dx_forced !== 0) {
                         assignForcedDisplacement(i * 6, node.dx_forced);
@@ -5568,15 +5526,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     if (node.dz_forced !== undefined && node.dz_forced !== null && node.dz_forced !== 0) {
                         assignForcedDisplacement(i * 6 + 2, node.dz_forced);
-                    }
-                    if (node.rx_forced !== undefined && node.rx_forced !== null && node.rx_forced !== 0) {
-                        assignForcedDisplacement(i * 6 + 3, node.rx_forced);
-                    }
-                    if (node.ry_forced !== undefined && node.ry_forced !== null && node.ry_forced !== 0) {
-                        assignForcedDisplacement(i * 6 + 4, node.ry_forced);
-                    }
-                    if (node.rz_forced !== undefined && node.rz_forced !== null && node.rz_forced !== 0) {
-                        assignForcedDisplacement(i * 6 + 5, node.rz_forced);
                     }
                 });
             }
@@ -5919,9 +5868,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const dx_forced_mm = parseFloat(row.cells[5]?.querySelector('input')?.value) || 0;
             const dy_forced_mm = parseFloat(row.cells[6]?.querySelector('input')?.value) || 0;
             const dz_forced_mm = parseFloat(row.cells[7]?.querySelector('input')?.value) || 0;
-            const rx_forced_rad = parseFloat(row.cells[8]?.querySelector('input')?.value) || 0;
-            const ry_forced_rad = parseFloat(row.cells[9]?.querySelector('input')?.value) || 0;
-            const rz_forced_rad = parseFloat(row.cells[10]?.querySelector('input')?.value) || 0;
 
             const supportValue = normalizeSupportValue(supportSelect.value);
 
@@ -5934,10 +5880,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // 強制変位を基本単位(m, rad)で格納
                 dx_forced: dx_forced_mm / 1000,
                 dy_forced: dy_forced_mm / 1000,
-                dz_forced: dz_forced_mm / 1000,
-                rx_forced: rx_forced_rad,
-                ry_forced: ry_forced_rad,
-                rz_forced: rz_forced_rad
+                dz_forced: dz_forced_mm / 1000
             };
         });
     const members = membersRows.map((row, index) => {
@@ -6139,9 +6082,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 px:parseFloat(r.cells[1].querySelector('input').value)||0, 
                 py:parseFloat(r.cells[2].querySelector('input').value)||0, 
                 pz:parseFloat(r.cells[3].querySelector('input').value)||0,
-                mx:parseFloat(r.cells[4].querySelector('input').value)||0,
-                my:parseFloat(r.cells[5].querySelector('input').value)||0,
-                mz:parseFloat(r.cells[6].querySelector('input').value)||0
+                mx:0,
+                my:0,
+                mz:0
             }; 
         });
         const memberLoads = Array.from(elements.memberLoadsTable.rows).map((r, i) => { 
@@ -7723,92 +7666,127 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // ==========================================================
-        // ▼▼▼ ここからが強制変位を描画するための追加コードです ▼▼▼
+        // ▼▼▼ 強制変位を描画（節点荷重と同じルールで方向決定） ▼▼▼
         // ==========================================================
-        const dispArrowSize = 8;
-        const dispScale = 2.5;
-
-        // 強制変位用に色と線の太さを設定 (紫)
-        ctx.strokeStyle = '#8e44ad';
-        ctx.fillStyle = '#8e44ad';
-        ctx.lineWidth = 2.0;
+        const forcedArrowScale = 2.2;
+        const forcedColor = '#8e44ad';
+        const forcedLineWidth = 2.4;
+        const forcedLabelPrefix = { x: 'ΔX', y: 'ΔY', z: 'ΔZ' };
+        const forcedEPS = 1e-9;
 
         nodes.forEach((node, i) => {
-            const dx = node.dx_forced || 0; // m
-            const dy = node.dy_forced || 0; // m
-            const r = node.r_forced || 0;  // rad
-
-            if (dx === 0 && dy === 0 && r === 0) return;
-
-            const pos = transform(node.x, node.y);
-
-            // X方向の強制変位を描画
-            if (dx !== 0) {
-                const dir = Math.sign(dx);
-                const text = `${(dx * 1000).toFixed(1)}mm`;
-                ctx.beginPath();
-                ctx.moveTo(pos.x - dispArrowSize * dispScale * dir, pos.y);
-                ctx.lineTo(pos.x, pos.y);
-                ctx.stroke();
-                // 荷重と区別するための二重矢印
-                ctx.beginPath();
-                ctx.moveTo(pos.x - dispArrowSize * dir, pos.y - dispArrowSize / 2);
-                ctx.lineTo(pos.x, pos.y);
-                ctx.lineTo(pos.x - dispArrowSize * dir, pos.y + dispArrowSize / 2);
-                ctx.moveTo(pos.x - dispArrowSize * 0.5 * dir, pos.y - dispArrowSize * 0.3);
-                ctx.lineTo(pos.x, pos.y);
-                ctx.lineTo(pos.x - dispArrowSize * 0.5 * dir, pos.y + dispArrowSize * 0.3);
-                ctx.stroke();
-                const textX = pos.x - (dispArrowSize * dispScale * 0.7) * dir;
-                labelManager.draw(ctx, text, textX, pos.y, loadObstacles);
+            if (!visibleNodeIndices.has(i)) {
+                return;
             }
 
-            // Y方向の強制変位を描画
-            if (dy !== 0) {
-                const dir = Math.sign(dy);
-                const text = `${(dy * 1000).toFixed(1)}mm`;
-                ctx.beginPath();
-                ctx.moveTo(pos.x, pos.y + dispArrowSize * dispScale * dir);
-                ctx.lineTo(pos.x, pos.y);
-                ctx.stroke();
-                // 荷重と区別するための二重矢印
-                ctx.beginPath();
-                ctx.moveTo(pos.x - dispArrowSize / 2, pos.y + dispArrowSize * dir);
-                ctx.lineTo(pos.x, pos.y);
-                ctx.lineTo(pos.x + dispArrowSize / 2, pos.y + dispArrowSize * dir);
-                ctx.moveTo(pos.x - dispArrowSize * 0.3, pos.y + dispArrowSize * 0.5 * dir);
-                ctx.lineTo(pos.x, pos.y);
-                ctx.lineTo(pos.x + dispArrowSize * 0.3, pos.y + dispArrowSize * 0.5 * dir);
-                ctx.stroke();
-                const textY = pos.y + (dispArrowSize * dispScale * 0.8) * dir;
-                labelManager.draw(ctx, text, pos.x, textY, loadObstacles);
+            const components = [
+                { axis: 'x', value: node.dx_forced ?? 0, rule: displayRules?.px },
+                { axis: 'y', value: node.dy_forced ?? 0, rule: displayRules?.py },
+                { axis: 'z', value: node.dz_forced ?? 0, rule: displayRules?.pz }
+            ].filter(component => Math.abs(component.value) > forcedEPS && (component.rule?.show !== false));
+
+            if (components.length === 0) {
+                return;
             }
 
-            // 強制回転を描画
-            if (r !== 0) {
-                const dir = -Math.sign(r);
-                const radius = dispArrowSize * 1.8;
-                const arrowHeadSize = 6;
-                const startAngle = Math.PI, endAngle = Math.PI * 2.5;
-                ctx.beginPath();
-                ctx.arc(pos.x, pos.y, radius, startAngle, endAngle, dir < 0);
-                ctx.stroke();
-                const endX = pos.x + radius * Math.cos(endAngle), endY = pos.y + radius * Math.sin(endAngle);
-                const smallAngleOffset = 0.05 * (dir > 0 ? -1 : 1);
-                const beforeX = pos.x + radius * Math.cos(endAngle + smallAngleOffset), beforeY = pos.y + radius * Math.sin(endAngle + smallAngleOffset);
-                const tangentAngle = Math.atan2(endY - beforeY, endX - beforeX);
-                ctx.beginPath();
-                ctx.moveTo(endX, endY);
-                ctx.lineTo(endX - arrowHeadSize * Math.cos(tangentAngle - Math.PI / 4), endY - arrowHeadSize * Math.sin(tangentAngle - Math.PI / 4));
-                ctx.moveTo(endX, endY);
-                ctx.lineTo(endX - arrowHeadSize * Math.cos(tangentAngle + Math.PI / 4), endY - arrowHeadSize * Math.sin(tangentAngle + Math.PI / 4));
-                ctx.stroke();
-                const textY = pos.y - radius * 1.2;
-                labelManager.draw(ctx, `${r.toFixed(3)}rad`, pos.x, textY, loadObstacles);
+            const projected = projectedNodes[i];
+            if (!projected) {
+                return;
             }
+
+            const pos = transform(projected.x, projected.y);
+
+            components.forEach(component => {
+                const axisVector = AXIS_VECTORS[component.axis];
+                if (!axisVector) {
+                    return;
+                }
+
+                let projectedDir = projectGlobalDirection(node, axisVector);
+                if (!projectedDir && projectionMode === 'yz' && component.axis === 'x') {
+                    projectedDir = { x: 1, y: 0 };
+                }
+                const dirNorm = projectedDir ? normalizeVec2(projectedDir) : null;
+                if (!dirNorm) {
+                    return;
+                }
+
+                const directionMultiplier = component.rule?.directionMultiplier ?? 1;
+                const sign = component.value >= 0 ? 1 : -1;
+                const direction = {
+                    x: dirNorm.x * directionMultiplier * sign,
+                    y: dirNorm.y * directionMultiplier * sign
+                };
+
+                const arrowLength = arrowSize * forcedArrowScale;
+                const tailX = pos.x - direction.x * arrowLength;
+                const tailY = pos.y - direction.y * arrowLength;
+
+                ctx.save();
+                ctx.strokeStyle = forcedColor;
+                ctx.fillStyle = forcedColor;
+                ctx.lineWidth = forcedLineWidth;
+
+                ctx.beginPath();
+                ctx.moveTo(tailX, tailY);
+                ctx.lineTo(pos.x, pos.y);
+                ctx.stroke();
+
+                const headAngle = Math.atan2(pos.y - tailY, pos.x - tailX);
+                const headLength = arrowSize * 0.9;
+                const headWidth = arrowSize * 0.6;
+
+                ctx.beginPath();
+                ctx.moveTo(pos.x, pos.y);
+                ctx.lineTo(
+                    pos.x - headLength * Math.cos(headAngle - Math.PI / 6),
+                    pos.y - headLength * Math.sin(headAngle - Math.PI / 6)
+                );
+                ctx.moveTo(pos.x, pos.y);
+                ctx.lineTo(
+                    pos.x - headLength * Math.cos(headAngle + Math.PI / 6),
+                    pos.y - headLength * Math.sin(headAngle + Math.PI / 6)
+                );
+                ctx.stroke();
+
+                const textOffset = arrowLength * 0.35;
+                const textX = pos.x - direction.x * textOffset;
+                const textY = pos.y - direction.y * textOffset;
+                const valueText = `${forcedLabelPrefix[component.axis] || component.axis.toUpperCase()}=${(component.value * 1000).toFixed(1)}mm`;
+                labelManager.draw(ctx, valueText, textX, textY, loadObstacles, {
+                    type: `forced-displacement-${component.axis}`,
+                    index: i,
+                    value: component.value
+                });
+
+                const textMetrics = ctx.measureText(valueText);
+                const textWidth = textMetrics.width;
+                const textHeight = 12;
+                const padding = 6;
+                loadObstacles.push({
+                    x1: textX - textWidth / 2 - padding,
+                    y1: textY - textHeight - padding,
+                    x2: textX + textWidth / 2 + padding,
+                    y2: textY + padding
+                });
+
+                const arrowMinX = Math.min(tailX, pos.x);
+                const arrowMaxX = Math.max(tailX, pos.x);
+                const arrowMinY = Math.min(tailY, pos.y);
+                const arrowMaxY = Math.max(tailY, pos.y);
+                const arrowPadding = 5;
+                loadObstacles.push({
+                    x1: arrowMinX - arrowPadding,
+                    y1: arrowMinY - arrowPadding,
+                    x2: arrowMaxX + arrowPadding,
+                    y2: arrowMaxY + arrowPadding
+                });
+
+                ctx.restore();
+            });
         });
         // ==========================================================
-        // ▲▲▲ ここまでが追加コードです ▲▲▲
+        // ▲▲▲ 強制変位描画ここまで ▲▲▲
         // ==========================================================
     };
     // 表示対象の節点インデックスを取得する関数
@@ -9326,6 +9304,100 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         const dofPerNode = D_global.length / nodes.length;
         const is3D = dofPerNode === 6;
 
+        const EPS = 1e-9;
+        const toFiniteNumber = (value) => {
+            if (typeof value === 'number') {
+                return Number.isFinite(value) ? value : 0;
+            }
+            if (typeof value === 'string' && value.trim() !== '') {
+                const parsed = parseFloat(value);
+                return Number.isFinite(parsed) ? parsed : 0;
+            }
+            return 0;
+        };
+        const getHermiteCoefficients = (x, L) => {
+            const xi = L > EPS ? x / L : 0;
+            const xi2 = xi * xi;
+            const xi3 = xi2 * xi;
+            const N1 = 1 - 3 * xi2 + 2 * xi3;
+            const N3 = 3 * xi2 - 2 * xi3;
+            const N2 = x * (1 - xi) * (1 - xi);
+            const N4 = L > EPS ? (x * x / L) * (xi - 1) : 0;
+            return { N1, N2, N3, N4, xi };
+        };
+        const computeUniformLoadParticular = (w, x, L, E, I, connI, connJ) => {
+            if (!w || !E || !I || !(L > EPS)) {
+                return 0;
+            }
+            if (connI === 'rigid' && connJ === 'rigid') {
+                return (w * x * x * Math.pow(L - x, 2)) / (24 * E * I);
+            } else if (connI === 'pinned' && connJ === 'pinned') {
+                return (w * x * (Math.pow(L, 3) - 2 * L * x * x + x * x * x)) / (24 * E * I);
+            } else if (connI === 'rigid' && connJ === 'pinned') {
+                return (w * x * x * (3 * L * L - 5 * L * x + 2 * x * x)) / (48 * E * I);
+            } else if (connI === 'pinned' && connJ === 'rigid') {
+                return (w * x * (Math.pow(L, 3) - 3 * L * x * x + 2 * x * x * x)) / (48 * E * I);
+            }
+            return 0;
+        };
+        const vecLength3 = (v) => Math.sqrt((v?.x ?? 0) ** 2 + (v?.y ?? 0) ** 2 + (v?.z ?? 0) ** 2);
+        const vecNormalize3 = (v) => {
+            const len = vecLength3(v);
+            if (!(len > EPS)) {
+                return { x: 0, y: 0, z: 0 };
+            }
+            return { x: v.x / len, y: v.y / len, z: v.z / len };
+        };
+        const vecCross3 = (a, b) => ({
+            x: (a?.y ?? 0) * (b?.z ?? 0) - (a?.z ?? 0) * (b?.y ?? 0),
+            y: (a?.z ?? 0) * (b?.x ?? 0) - (a?.x ?? 0) * (b?.z ?? 0),
+            z: (a?.x ?? 0) * (b?.y ?? 0) - (a?.y ?? 0) * (b?.x ?? 0)
+        });
+        const computeLocalBasis = (member) => {
+            const ni = nodes[member.i];
+            const nj = nodes[member.j];
+            if (!ni || !nj) {
+                return null;
+            }
+            const dx = (nj.x ?? 0) - (ni.x ?? 0);
+            const dy = (nj.y ?? 0) - (ni.y ?? 0);
+            const dz = (nj.z ?? 0) - (ni.z ?? 0);
+            const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (!(length > EPS)) {
+                return null;
+            }
+
+            let localX = { x: dx / length, y: dy / length, z: dz / length };
+            let localY = null;
+            let localZ = null;
+
+            if (member.T3D && member.T3D.length >= 3) {
+                localX = vecNormalize3({ x: member.T3D[0][0], y: member.T3D[0][1], z: member.T3D[0][2] });
+                localY = vecNormalize3({ x: member.T3D[1][0], y: member.T3D[1][1], z: member.T3D[1][2] });
+                localZ = vecNormalize3({ x: member.T3D[2][0], y: member.T3D[2][1], z: member.T3D[2][2] });
+            }
+
+            if (!localY || vecLength3(localY) <= EPS || !localZ || vecLength3(localZ) <= EPS) {
+                const reference = Math.abs(localX.z) < 0.9 ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
+                localY = vecNormalize3(vecCross3(reference, localX));
+                if (vecLength3(localY) <= EPS) {
+                    localY = { x: 0, y: 1, z: 0 };
+                }
+                localZ = vecNormalize3(vecCross3(localX, localY));
+            }
+
+            return { localX, localY, localZ, length, origin: { x: ni.x ?? 0, y: ni.y ?? 0, z: ni.z ?? 0 } };
+        };
+
+        const memberLoadMap = new Map();
+        if (Array.isArray(memberLoads)) {
+            memberLoads.forEach(load => {
+                if (load && typeof load.memberIndex === 'number' && !memberLoadMap.has(load.memberIndex)) {
+                    memberLoadMap.set(load.memberIndex, load);
+                }
+            });
+        }
+
         // 非表示軸の座標値を取得
         const hiddenAxisCoord = parseFloat(elements.hiddenAxisCoord ? elements.hiddenAxisCoord.value : 0) || 0;
 
@@ -9387,7 +9459,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             let drawnMembers = 0;
             visibleMembers.forEach((m) => {
                 // 元の部材インデックスを取得
-                const originalIdx = members.findIndex(mem => mem.i === m.i && mem.j === m.j);
+                const originalIdx = members.indexOf(m);
                 if (originalIdx === -1) return;
 
                 const L = m.length;
@@ -9400,20 +9472,25 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     const d_global_member_vec = [ ...D_global.slice(m.i * 3, m.i * 3 + 3), ...D_global.slice(m.j * 3, m.j * 3 + 3) ];
                     const d_local_vec = mat.multiply(m.T, d_global_member_vec);
                     const [ui, vi, thi, uj, vj, thj] = d_local_vec.map(v => v[0]);
-                    const load = memberLoads.find(l => l.memberIndex === originalIdx), w = load ? load.w : 0, E = m.E, I = m.I;
+                    const load = memberLoadMap.get(originalIdx);
+                    const wLocal = load ? toFiniteNumber(load.wy ?? load.w) : 0;
+                    const E = m.E;
+                    const I = m.I;
                     
                     ctx.beginPath();
                     for (let k = 0; k <= 20; k++) {
                         const x = (k / 20) * L, xi = x / L;
                         const N1 = 1 - 3*xi**2 + 2*xi**3, N2 = x * (1 - xi)**2, N3 = 3*xi**2 - 2*xi**3, N4 = (x**2 / L) * (xi - 1);
                         const u_local = (1 - xi) * ui + xi * uj, v_homogeneous = N1*vi + N2*thi + N3*vj + N4*thj;
-                        let v_particular = 0;
-                        if (w !== 0 && E > 0 && I > 0) {
-                            if (m.i_conn === 'rigid' && m.j_conn === 'rigid') v_particular = (w * x**2 * (L - x)**2) / (24 * E * I);
-                            else if (m.i_conn === 'pinned' && m.j_conn === 'pinned') v_particular = (w * x * (L**3 - 2 * L * x**2 + x**3)) / (24 * E * I);
-                            else if (m.i_conn === 'rigid' && m.j_conn === 'pinned') v_particular = (w * x**2 * (3 * L**2 - 5 * L * x + 2 * x**2)) / (48 * E * I);
-                            else if (m.i_conn === 'pinned' && m.j_conn === 'rigid') v_particular = (w * x * (L**3 - 3 * L * x**2 + 2 * x**3)) / (48 * E * I);
-                        }
+                        const v_particular = computeUniformLoadParticular(
+                            wLocal,
+                            x,
+                            L,
+                            E,
+                            I,
+                            m.i_conn,
+                            m.j_conn
+                        );
                         const v_local = v_homogeneous - v_particular;
                         
                         // グローバル座標での変形後位置
@@ -9430,7 +9507,76 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     ctx.stroke();
                     drawnMembers++;
                 } else {
-                    // 3Dの場合は線形補間で簡易表示
+                    const basis = computeLocalBasis(m);
+                    const T_member = m.T3D;
+                    if (is3D && basis && T_member && T_member.length === 12 && T_member[0].length === 12) {
+                        let d_local = null;
+                        try {
+                            const d_global_member = [
+                                ...D_global.slice(m.i * 6, m.i * 6 + 6),
+                                ...D_global.slice(m.j * 6, m.j * 6 + 6)
+                            ];
+                            d_local = mat.multiply(T_member, d_global_member);
+                        } catch (error) {
+                            console.warn('3D変形復元で変換に失敗しました', { memberIndex: originalIdx, error });
+                        }
+
+                        if (d_local) {
+                            const load = memberLoadMap.get(originalIdx);
+                            const wyUniform = load ? toFiniteNumber(load.wy ?? load.w) : 0;
+                            const wzUniform = load ? toFiniteNumber(load.wz) : 0;
+                            const connI = m.i_conn || 'rigid';
+                            const connJ = m.j_conn || 'rigid';
+                            const E = m.E;
+                            const Iy = m.Iy || m.I;
+                            const Iz = m.Iz || m.I;
+
+                            const u_ix = d_local[0][0];
+                            const v_iy = d_local[1][0];
+                            const w_iz = d_local[2][0];
+                            const theta_iy = d_local[4][0];
+                            const theta_iz = d_local[5][0];
+                            const u_jx = d_local[6][0];
+                            const v_jy = d_local[7][0];
+                            const w_jz = d_local[8][0];
+                            const theta_jy = d_local[10][0];
+                            const theta_jz = d_local[11][0];
+
+                            ctx.beginPath();
+                            const sampleCount = 20;
+                            for (let k = 0; k <= sampleCount; k++) {
+                                const x = (k / sampleCount) * L;
+                                const { N1, N2, N3, N4, xi } = getHermiteCoefficients(x, L);
+
+                                const axialDisp = (1 - xi) * u_ix + xi * u_jx;
+                                const vShape = N1 * v_iy + N2 * theta_iz + N3 * v_jy + N4 * theta_jz;
+                                const wShape = N1 * w_iz - N2 * theta_iy + N3 * w_jz - N4 * theta_jy;
+
+                                const vParticular = computeUniformLoadParticular(wyUniform, x, L, E, Iz, connI, connJ);
+                                const wParticular = computeUniformLoadParticular(wzUniform, x, L, E, Iy, connI, connJ);
+
+                                const localXOffset = x + axialDisp * dispScale * progress;
+                                const localYOffset = (vShape - vParticular) * dispScale * progress;
+                                const localZOffset = (wShape - wParticular) * dispScale * progress;
+
+                                const globalPoint = {
+                                    x: basis.origin.x + basis.localX.x * localXOffset + basis.localY.x * localYOffset + basis.localZ.x * localZOffset,
+                                    y: basis.origin.y + basis.localX.y * localXOffset + basis.localY.y * localYOffset + basis.localZ.y * localZOffset,
+                                    z: basis.origin.z + basis.localX.z * localXOffset + basis.localY.z * localYOffset + basis.localZ.z * localZOffset
+                                };
+
+                                const projected = project3DTo2D(globalPoint, projectionMode);
+                                const p = transform(projected.x, projected.y);
+
+                                if (k === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+                            }
+                            ctx.stroke();
+                            drawnMembers++;
+                            return;
+                        }
+                    }
+
+                    // 3Dの補助情報が不足する場合は線形補間にフォールバック
                     const d_i = {
                         dx: D_global[m.i * 6][0],
                         dy: D_global[m.i * 6 + 1][0],
@@ -9441,30 +9587,27 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                         dy: D_global[m.j * 6 + 1][0],
                         dz: D_global[m.j * 6 + 2][0]
                     };
-                    
+
                     ctx.beginPath();
                     for (let k = 0; k <= 20; k++) {
                         const xi = k / 20;
-                        
-                        // 線形補間で中間点の変位を計算
+
                         const dx = d_i.dx + (d_j.dx - d_i.dx) * xi;
                         const dy = d_i.dy + (d_j.dy - d_i.dy) * xi;
                         const dz = d_i.dz + (d_j.dz - d_i.dz) * xi;
-                        
-                        // 元の位置 + 変位
+
                         const original_x = ni.x + (nj.x - ni.x) * xi;
                         const original_y = (ni.y || 0) + ((nj.y || 0) - (ni.y || 0)) * xi;
                         const original_z = (ni.z || 0) + ((nj.z || 0) - (ni.z || 0)) * xi;
-                        
+
                         const deformed_x = original_x + dx * dispScale * progress;
                         const deformed_y = original_y + dy * dispScale * progress;
                         const deformed_z = original_z + dz * dispScale * progress;
-                        
-                        // 投影を適用
+
                         const deformedNode = { x: deformed_x, y: deformed_y, z: deformed_z };
                         const projected = project3DTo2D(deformedNode, projectionMode);
                         const p = transform(projected.x, projected.y);
-                        
+
                         if (k === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
                     }
                     ctx.stroke();
@@ -11254,7 +11397,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         const numericInputs = Array.from(nodeRow.querySelectorAll('input[type="number"]') || []);
         const getInput = (index) => numericInputs[index] || null;
 
-        const inferred3D = window.is3DMode === true || numericInputs.length >= 9 || supportCellIndex > 3;
+        const inferred3D = window.is3DMode === true || numericInputs.length >= 6 || supportCellIndex > 3;
 
         return {
             is3D: inferred3D,
@@ -11267,10 +11410,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 z: inferred3D ? getInput(2) : null,
                 dx: inferred3D ? getInput(3) : getInput(2),
                 dy: inferred3D ? getInput(4) : getInput(3),
-                dz: inferred3D ? getInput(5) : null,
-                rx: inferred3D ? getInput(6) : null,
-                ry: inferred3D ? getInput(7) : null,
-                rz: inferred3D ? getInput(8) : getInput(4)
+                dz: inferred3D ? getInput(5) : null
             }
         };
     };
@@ -11313,15 +11453,9 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             px: getNodePopupField('popup-px'),
             py: getNodePopupField('popup-py'),
             pz: getNodePopupField('popup-pz', { required: layoutInfo.is3D }),
-            mx: getNodePopupField('popup-mx', { required: layoutInfo.is3D }),
-            my: getNodePopupField('popup-my', { required: layoutInfo.is3D }),
-            mz: getNodePopupField('popup-mz', { required: layoutInfo.is3D }),
             dx: getNodePopupField('popup-dx'),
             dy: getNodePopupField('popup-dy'),
-            dz: getNodePopupField('popup-dz', { required: layoutInfo.is3D }),
-            rx: getNodePopupField('popup-rx', { required: layoutInfo.is3D }),
-            ry: getNodePopupField('popup-ry', { required: layoutInfo.is3D }),
-            rz: getNodePopupField('popup-rz', { required: layoutInfo.is3D })
+            dz: getNodePopupField('popup-dz', { required: layoutInfo.is3D })
         };
 
         for (const [key, element] of Object.entries(popupElements)) {
@@ -11353,9 +11487,6 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             popupElements.dx.value = readInputValue(nodeInputs.dx);
             popupElements.dy.value = readInputValue(nodeInputs.dy);
             popupElements.dz.value = readInputValue(nodeInputs.dz);
-            popupElements.rx.value = readInputValue(nodeInputs.rx);
-            popupElements.ry.value = readInputValue(nodeInputs.ry);
-            popupElements.rz.value = readInputValue(nodeInputs.rz);
         } else {
             // 2Dモード (Z, dz, rx, ry, rzは0固定)
             popupElements.x.value = readInputValue(nodeInputs.x);
@@ -11365,9 +11496,6 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             popupElements.dx.value = readInputValue(nodeInputs.dx);
             popupElements.dy.value = readInputValue(nodeInputs.dy);
             popupElements.dz.value = '0';
-            popupElements.rx.value = '0';
-            popupElements.ry.value = '0';
-            popupElements.rz.value = readInputValue(nodeInputs.rz);
         }
 
         // 荷重行から安全に値を取得
@@ -11380,9 +11508,6 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         popupElements.px.value = getLoadValue(1);
         popupElements.py.value = getLoadValue(2);
         popupElements.pz.value = getLoadValue(3);
-        popupElements.mx.value = getLoadValue(4);
-        popupElements.my.value = getLoadValue(5);
-        popupElements.mz.value = getLoadValue(6);
         
         const popup = elements.nodePropsPopup;
         if (!popup) {
@@ -11445,15 +11570,9 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             px: getNodePopupField('popup-px'),
             py: getNodePopupField('popup-py'),
             pz: getNodePopupField('popup-pz', { required: is3D }),
-            mx: getNodePopupField('popup-mx', { required: is3D }),
-            my: getNodePopupField('popup-my', { required: is3D }),
-            mz: getNodePopupField('popup-mz', { required: is3D }),
             dx: getNodePopupField('popup-dx'),
             dy: getNodePopupField('popup-dy'),
-            dz: getNodePopupField('popup-dz', { required: is3D }),
-            rx: getNodePopupField('popup-rx', { required: is3D }),
-            ry: getNodePopupField('popup-ry', { required: is3D }),
-            rz: getNodePopupField('popup-rz', { required: is3D })
+            dz: getNodePopupField('popup-dz', { required: is3D })
         };
 
         const missingFields = Object.entries(popupValues)
@@ -11474,9 +11593,6 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             if (nodeInputs.dx) nodeInputs.dx.value = popupValues.dx.value;
             if (nodeInputs.dy) nodeInputs.dy.value = popupValues.dy.value;
             if (nodeInputs.dz) nodeInputs.dz.value = popupValues.dz.value;
-            if (nodeInputs.rx) nodeInputs.rx.value = popupValues.rx.value;
-            if (nodeInputs.ry) nodeInputs.ry.value = popupValues.ry.value;
-            if (nodeInputs.rz) nodeInputs.rz.value = popupValues.rz.value;
         } else {
             // 2Dモード (Z座標と回転は無視)
             nodeInputs.x.value = popupValues.x.value;
@@ -11484,31 +11600,24 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             supportSelect.value = popupValues.support.value;
             if (nodeInputs.dx) nodeInputs.dx.value = popupValues.dx.value;
             if (nodeInputs.dy) nodeInputs.dy.value = popupValues.dy.value;
-            if (nodeInputs.rz) nodeInputs.rz.value = popupValues.rz.value || '0';
         }
 
         // 節点荷重テーブルの値を更新または作成/削除
         const px = popupValues.px.value || 0;
         const py = popupValues.py.value || 0;
         const pz = (popupValues.pz && popupValues.pz.value) || 0;
-        const mx = (popupValues.mx && popupValues.mx.value) || 0;
-        const my = (popupValues.my && popupValues.my.value) || 0;
-        const mz = (popupValues.mz && popupValues.mz.value) || 0;
 
         let loadRow = Array.from(elements.nodeLoadsTable.rows).find(row => parseInt(row.cells[0].querySelector('input').value) - 1 === selectedNodeIndex);
 
-        if (parseFloat(px) === 0 && parseFloat(py) === 0 && parseFloat(pz) === 0 && parseFloat(mx) === 0 && parseFloat(my) === 0 && parseFloat(mz) === 0) {
+        if (parseFloat(px) === 0 && parseFloat(py) === 0 && parseFloat(pz) === 0) {
             if (loadRow) loadRow.remove(); // 全ての荷重が0なら行を削除
         } else {
             if (loadRow) { // 既存の行があれば更新
                 loadRow.cells[1].querySelector('input').value = px;
                 loadRow.cells[2].querySelector('input').value = py;
                 loadRow.cells[3].querySelector('input').value = pz;
-                loadRow.cells[4].querySelector('input').value = mx;
-                loadRow.cells[5].querySelector('input').value = my;
-                loadRow.cells[6].querySelector('input').value = mz;
             } else { // なければ新規作成
-                addRow(elements.nodeLoadsTable, [`<input type="number" value="${selectedNodeIndex + 1}">`, `<input type="number" value="${px}">`, `<input type="number" value="${py}">`, `<input type="number" value="${pz}">`, `<input type="number" value="${mx}">`, `<input type="number" value="${my}">`, `<input type="number" value="${mz}">`]);
+                addRow(elements.nodeLoadsTable, [`<input type="number" value="${selectedNodeIndex + 1}">`, `<input type="number" value="${px}">`, `<input type="number" value="${py}">`, `<input type="number" value="${pz}">`]);
             }
         }
         
@@ -13847,10 +13956,7 @@ const loadPreset = (index) => {
             `<input type="number" value="${l.n || l.node}">`, 
             `<input type="number" value="${l.px||0}">`, 
             `<input type="number" value="${l.py||0}">`, 
-            `<input type="number" value="${l.pz||0}">`, 
-            `<input type="number" value="${l.mx||0}">`, 
-            `<input type="number" value="${l.my||0}">`, 
-            `<input type="number" value="${l.mz||0}">`
+            `<input type="number" value="${l.pz||0}">`
         ], false));
         p.ml.forEach(l => addRow(elements.memberLoadsTable, [
             `<input type="number" value="${l.m || l.member}">`, 
@@ -13914,7 +14020,7 @@ const loadPreset = (index) => {
             newZ = nodeAtMaxX.z || 0;
         }
     const defaultSupportSelect = buildSupportSelectMarkup('free');
-    addRow(elements.nodesTable, [`#`, `<input type="number" value="${newX.toFixed(2)}">`, `<input type="number" value="${newY.toFixed(2)}">`, `<input type="number" value="${newZ.toFixed(2)}">`, defaultSupportSelect, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.001">`, `<input type="number" value="0" step="0.001">`, `<input type="number" value="0" step="0.001">`]);
+    addRow(elements.nodesTable, [`#`, `<input type="number" value="${newX.toFixed(2)}">`, `<input type="number" value="${newY.toFixed(2)}">`, `<input type="number" value="${newZ.toFixed(2)}">`, defaultSupportSelect, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.1">`]);
     };
     elements.addMemberBtn.onclick = () => {
         const nodeCount = elements.nodesTable.rows.length;
@@ -13944,7 +14050,7 @@ const loadPreset = (index) => {
         }
         alert('接続可能なすべての節点ペアは既に接続されています。');
     };
-    elements.addNodeLoadBtn.onclick = () => { addRow(elements.nodeLoadsTable, ['<input type="number" value="1">', '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">']); };
+    elements.addNodeLoadBtn.onclick = () => { addRow(elements.nodeLoadsTable, ['<input type="number" value="1">', '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">']); };
     elements.addMemberLoadBtn.onclick = () => { addRow(elements.memberLoadsTable, ['<input type="number" value="1">', '<input type="number" value="0">', '<input type="number" value="0">', '<input type="number" value="0">']); };
     
     const saveInputData = () => {
@@ -13957,7 +14063,7 @@ const loadPreset = (index) => {
             };
             const csvSections = [];
             if (state.nodes.length > 0) {
-                const header = 'x,y,z,support,dx_forced,dy_forced,dz_forced,rx_forced,ry_forced,rz_forced';
+                const header = 'x,y,z,support,dx_forced,dy_forced,dz_forced';
                 const rows = state.nodes.map(n => [
                     toCsvValue(n.x),
                     toCsvValue(n.y),
@@ -13965,10 +14071,7 @@ const loadPreset = (index) => {
                     toCsvValue(n.support),
                     toCsvValue(n.dx_forced),
                     toCsvValue(n.dy_forced),
-                    toCsvValue(n.dz_forced),
-                    toCsvValue(n.rx_forced),
-                    toCsvValue(n.ry_forced),
-                    toCsvValue(n.rz_forced)
+                    toCsvValue(n.dz_forced)
                 ].join(','));
                 csvSections.push('#NODES\n' + header + '\n' + rows.join('\n'));
             }
@@ -14016,15 +14119,12 @@ const loadPreset = (index) => {
                 csvSections.push('#MEMBERS\n' + header + '\n' + rows.join('\n'));
             }
             if (state.nodeLoads.length > 0) {
-                const header = 'node,px,py,pz,mx,my,mz';
+                const header = 'node,px,py,pz';
                 const rows = state.nodeLoads.map(l => [
                     toCsvValue(l.node),
                     toCsvValue(l.px),
                     toCsvValue(l.py),
-                    toCsvValue(l.pz),
-                    toCsvValue(l.mx),
-                    toCsvValue(l.my),
-                    toCsvValue(l.mz)
+                    toCsvValue(l.pz)
                 ].join(','));
                 csvSections.push('#NODELOADS\n' + header + '\n' + rows.join('\n'));
             }

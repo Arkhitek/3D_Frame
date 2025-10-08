@@ -232,9 +232,6 @@
                                     <th>X方向荷重 Px (kN)</th>
                                     <th>Y方向荷重 Py (kN)</th>
                                     <th>Z方向荷重 Pz (kN)</th>
-                                    <th>X軸周りモーメント Mx (kN・m)</th>
-                                    <th>Y軸周りモーメント My (kN・m)</th>
-                                    <th>Z軸周りモーメント Mz (kN・m)</th>
                                     <th></th>
                                 </tr>
                             </thead>
@@ -272,13 +269,10 @@
                                     <th style="width:12%">Y座標 (m)</th>
                                     <th style="width:12%">Z座標 (m)</th>
                                     <th style="width:15%">境界条件</th>
-                                    <th style="width:10%">強制変位 δx (mm)</th>
-                                    <th style="width:10%">強制変位 δy (mm)</th>
-                                    <th style="width:10%">強制変位 δz (mm)</th>
-                                    <th style="width:8%">強制回転 θx (rad)</th>
-                                    <th style="width:8%">強制回転 θy (rad)</th>
-                                    <th style="width:8%">強制回転 θz (rad)</th>
-                                    <th style="width:10%"></th>
+                                    <th style="width:12%">強制変位 δx (mm)</th>
+                                    <th style="width:12%">強制変位 δy (mm)</th>
+                                    <th style="width:12%">強制変位 δz (mm)</th>
+                                    <th style="width:12%"></th>
                                 </tr>
                             </thead>
                             <tbody></tbody>
@@ -517,12 +511,6 @@
             <input type="number" id="popup-py" step="0.1">
             <label for="popup-pz">荷重 Pz (kN)</label>
             <input type="number" id="popup-pz" step="0.1">
-            <label for="popup-mx">モーメント Mx (kN・m)</label>
-            <input type="number" id="popup-mx" step="0.1">
-            <label for="popup-my">モーメント My (kN・m)</label>
-            <input type="number" id="popup-my" step="0.1">
-            <label for="popup-mz">モーメント Mz (kN・m)</label>
-            <input type="number" id="popup-mz" step="0.1">
             
             <label for="popup-dx">強制変位 δx (mm)</label>
             <input type="number" id="popup-dx" step="0.1">
@@ -530,12 +518,6 @@
             <input type="number" id="popup-dy" step="0.1">
             <label for="popup-dz">強制変位 δz (mm)</label>
             <input type="number" id="popup-dz" step="0.1">
-            <label for="popup-rx">強制回転 θx (rad)</label>
-            <input type="number" id="popup-rx" step="0.001">
-            <label for="popup-ry">強制回転 θy (rad)</label>
-            <input type="number" id="popup-ry" step="0.001">
-            <label for="popup-rz">強制回転 θz (rad)</label>
-            <input type="number" id="popup-rz" step="0.001">
         </div>
         <div class="popup-buttons">
             <button id="popup-node-props-cancel">キャンセル</button>
