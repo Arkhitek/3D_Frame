@@ -131,7 +131,10 @@ const calculateMemberAxial = (memberForce, xi) => {
     const { Ni, Nj } = getAxialComponents(memberForce);
     const start = toNumber(Ni, 0);
     const end = toNumber(Nj, start);
-    return start + (end - start) * xi;
+    const rawValue = start + (end - start) * xi;
+    const targetStart = convertAxialForDiagram(start, 'i');
+    const targetEnd = convertAxialForDiagram(end, 'j');
+    return adjustValueForEndpoints(rawValue, start, end, targetStart, targetEnd, xi);
 };
 
 const calculateMemberMoment = (memberForce, L, xi, axis = 'y', w = null) => {
@@ -167,7 +170,12 @@ const calculateMemberMoment = (memberForce, L, xi, axis = 'y', w = null) => {
         }
     }
 
-    return moment;
+    const rawStart = M_i;
+    const rawEnd = M_j;
+    const targetStart = convertMomentForDiagram(rawStart, 'i');
+    const targetEnd = convertMomentForDiagram(rawEnd, 'j');
+
+    return adjustValueForEndpoints(moment, rawStart, rawEnd, targetStart, targetEnd, xi);
 };
 
 /**
@@ -199,7 +207,12 @@ const calculateMemberShear = (memberForce, L, xi, axis = 'y', w = null) => {
 
     const shear = Q_i - equivalentW * x_m;
 
-    return shear;
+    const rawStart = Q_i;
+    const rawEnd = Q_j;
+    const targetStart = convertShearForDiagram(rawStart, 'i');
+    const targetEnd = convertShearForDiagram(rawEnd, 'j');
+
+    return adjustValueForEndpoints(shear, rawStart, rawEnd, targetStart, targetEnd, xi);
 };
 
 const toNumber = (value, fallback = 0) => (Number.isFinite(value) ? value : fallback);
@@ -289,35 +302,33 @@ const getDistributedLoadForAxis = (memberForce, axis) => {
     return null;
 };
 
-const getMomentDiagramFactor = (axis) => {
-    switch (axis) {
-        case 'y':
-        case 'z':
-            return -1;
-        case 'x':
-        default:
-            return 1;
-    }
+const convertMomentForDiagram = (value, position) => {
+    const v = toNumber(value, 0);
+    return position === 'i' ? -v : v;
 };
 
-const getShearDiagramFactor = (axis) => {
-    switch (axis) {
-        case 'y':
-        case 'z':
-            return 1;
-        case 'x':
-        default:
-            return 1;
-    }
+const convertShearForDiagram = (value, position) => {
+    const v = toNumber(value, 0);
+    return position === 'i' ? v : -v;
 };
 
-const getAxialDiagramFactor = (axis) => 1;
+const convertAxialForDiagram = (value, position) => {
+    const v = toNumber(value, 0);
+    return position === 'i' ? -v : v;
+};
 
-const convertMomentForDiagram = (value, axis) => toNumber(value, 0) * getMomentDiagramFactor(axis);
+const adjustValueForEndpoints = (rawValue, rawStart, rawEnd, targetStart, targetEnd, xi) => {
+    const rs = toNumber(rawStart, 0);
+    const re = toNumber(rawEnd, rs);
+    const ts = toNumber(targetStart, rs);
+    const te = toNumber(targetEnd, re);
 
-const convertShearForDiagram = (value, axis) => toNumber(value, 0) * getShearDiagramFactor(axis);
-
-const convertAxialForDiagram = (value, axis) => toNumber(value, 0) * getAxialDiagramFactor(axis);
+    const startDiff = ts - rs;
+    const endDiff = te - re;
+    const correction = startDiff * (1 - xi) + endDiff * xi;
+    const adjusted = toNumber(rawValue, 0) + correction;
+    return Number.isFinite(adjusted) ? adjusted : 0;
+};
 
 // 3D座標を2D投影する関数
 const project3DTo2D = (node, projectionMode) => {
@@ -1093,18 +1104,18 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
                             let stress = 0;
                             if (stressType === 'moment') {
                                 const { Mi, Mj } = getMomentComponentsForAxis(forces, axis);
-                                const start = convertMomentForDiagram(Mi, axis);
-                                const end = convertMomentForDiagram(Mj, axis);
+                                const start = convertMomentForDiagram(Mi, 'i');
+                                const end = convertMomentForDiagram(Mj, 'j');
                                 stress = Math.max(Math.abs(start), Math.abs(end));
                             } else if (stressType === 'axial') {
                                 const { Ni, Nj } = getAxialComponents(forces);
-                                const start = convertAxialForDiagram(Ni, axis);
-                                const end = convertAxialForDiagram(Nj, axis);
+                                const start = convertAxialForDiagram(Ni, 'i');
+                                const end = convertAxialForDiagram(Nj, 'j');
                                 stress = Math.max(Math.abs(start), Math.abs(end));
                             } else if (stressType === 'shear') {
                                 const { Qi, Qj } = getShearComponentsForAxis(forces, axis);
-                                const start = convertShearForDiagram(Qi, axis);
-                                const end = convertShearForDiagram(Qj, axis);
+                                const start = convertShearForDiagram(Qi, 'i');
+                                const end = convertShearForDiagram(Qj, 'j');
                                 stress = Math.max(Math.abs(start), Math.abs(end));
                             }
 
@@ -1160,18 +1171,18 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
         axesForFrames.forEach(axis => {
             if (stressType === 'moment') {
                 const { Mi, Mj } = getMomentComponentsForAxis(forces, axis);
-                const start = convertMomentForDiagram(Mi, axis);
-                const end = convertMomentForDiagram(Mj, axis);
+                const start = convertMomentForDiagram(Mi, 'i');
+                const end = convertMomentForDiagram(Mj, 'j');
                 maxStress = Math.max(maxStress, Math.abs(start), Math.abs(end));
             } else if (stressType === 'axial') {
                 const { Ni, Nj } = getAxialComponents(forces);
-                const start = convertAxialForDiagram(Ni, axis);
-                const end = convertAxialForDiagram(Nj, axis);
+                const start = convertAxialForDiagram(Ni, 'i');
+                const end = convertAxialForDiagram(Nj, 'j');
                 maxStress = Math.max(maxStress, Math.abs(start), Math.abs(end));
             } else if (stressType === 'shear') {
                 const { Qi, Qj } = getShearComponentsForAxis(forces, axis);
-                const start = convertShearForDiagram(Qi, axis);
-                const end = convertShearForDiagram(Qj, axis);
+                const start = convertShearForDiagram(Qi, 'i');
+                const end = convertShearForDiagram(Qj, 'j');
                 maxStress = Math.max(maxStress, Math.abs(start), Math.abs(end));
             }
         });
@@ -1320,20 +1331,11 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
                 let stressValue = 0;
 
                 if (stressType === 'moment') {
-                    stressValue = convertMomentForDiagram(
-                        calculateMemberMoment(forces, L, xi, frameAxis, distributedLoad),
-                        frameAxis
-                    );
+                    stressValue = calculateMemberMoment(forces, L, xi, frameAxis, distributedLoad);
                 } else if (stressType === 'axial') {
-                    stressValue = convertAxialForDiagram(
-                        calculateMemberAxial(forces, xi),
-                        frameAxis
-                    );
+                    stressValue = calculateMemberAxial(forces, xi);
                 } else if (stressType === 'shear') {
-                    stressValue = convertShearForDiagram(
-                        calculateMemberShear(forces, L, xi, frameAxis, distributedLoad),
-                        frameAxis
-                    );
+                    stressValue = calculateMemberShear(forces, L, xi, frameAxis, distributedLoad);
                 }
 
                 const absStress = Math.abs(stressValue);
@@ -1439,23 +1441,16 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
 
                 if (stressType === 'moment') {
                     // 曲げモーメント（等分布荷重を考慮）
-                    stressValue = convertMomentForDiagram(
-                        calculateMemberMoment(forces, L, xi, frameAxis, distributedLoad),
-                        frameAxis
-                    );
+                    stressValue = calculateMemberMoment(forces, L, xi, frameAxis, distributedLoad);
                 } else if (stressType === 'axial') {
                     // 軸力（線形分布を想定）
-                    stressValue = convertAxialForDiagram(
-                        calculateMemberAxial(forces, xi),
-                        frameAxis
-                    );
+                    stressValue = calculateMemberAxial(forces, xi);
                 } else if (stressType === 'shear') {
                     // せん断力（等分布荷重を考慮）
-                    stressValue = convertShearForDiagram(
-                        calculateMemberShear(forces, L, xi, frameAxis, distributedLoad),
-                        frameAxis
-                    );
+                    stressValue = calculateMemberShear(forces, L, xi, frameAxis, distributedLoad);
                 }
+
+                const finiteStressValue = Number.isFinite(stressValue) ? stressValue : 0;
                 
                 // 部材上の位置（2D投影）
                 const pos_x = pi.x + (pj.x - pi.x) * xi;
@@ -1465,25 +1460,85 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
                 stressPoints.push({
                     x: p.x,
                     y: p.y,
-                    value: stressValue,
-                    offset: stressValue * stressScale
+                    value: finiteStressValue,
+                    offset: finiteStressValue * stressScale
                 });
             }
 
             // 応力図を塗りつぶし（複数のセグメントに分割）
-            for (let k = 0; k < numDivisions; k++) {
+            const positiveFillColor = 'rgba(255, 100, 100, 0.5)';
+            const negativeFillColor = 'rgba(100, 100, 255, 0.5)';
+
+            const SIGN_EPS = 1e-9;
+            const getSign = (value) => {
+                if (!Number.isFinite(value) || Math.abs(value) < SIGN_EPS) return 0;
+                return value > 0 ? 1 : -1;
+            };
+
+            const createZeroPoint = (startPoint, endPoint) => {
+                const denom = endPoint.value - startPoint.value;
+                if (Math.abs(denom) < SIGN_EPS) {
+                    return {
+                        x: (startPoint.x + endPoint.x) / 2,
+                        y: (startPoint.y + endPoint.y) / 2,
+                        value: 0,
+                        offset: 0
+                    };
+                }
+                let t = -startPoint.value / denom;
+                if (!Number.isFinite(t)) t = 0.5;
+                t = Math.min(Math.max(t, 0), 1);
+                return {
+                    x: startPoint.x + (endPoint.x - startPoint.x) * t,
+                    y: startPoint.y + (endPoint.y - startPoint.y) * t,
+                    value: 0,
+                    offset: 0
+                };
+            };
+
+            for (let k = 0; k < stressPoints.length - 1; k++) {
                 const p1 = stressPoints[k];
                 const p2 = stressPoints[k + 1];
-                const avgValue = (p1.value + p2.value) / 2;
-                
-                ctx.fillStyle = avgValue >= 0 ? 'rgba(255, 100, 100, 0.5)' : 'rgba(100, 100, 255, 0.5)';
-                ctx.beginPath();
-                ctx.moveTo(p1.x, p1.y);
-                ctx.lineTo(p1.x + perpX * p1.offset, p1.y - perpY * p1.offset);
-                ctx.lineTo(p2.x + perpX * p2.offset, p2.y - perpY * p2.offset);
-                ctx.lineTo(p2.x, p2.y);
-                ctx.closePath();
-                ctx.fill();
+
+                const pairPoints = [p1];
+                const sign1 = getSign(p1.value);
+                const sign2 = getSign(p2.value);
+
+                if (sign1 !== 0 && sign2 !== 0 && sign1 !== sign2) {
+                    pairPoints.push(createZeroPoint(p1, p2));
+                }
+
+                pairPoints.push(p2);
+
+                for (let idx = 0; idx < pairPoints.length - 1; idx++) {
+                    const start = pairPoints[idx];
+                    const end = pairPoints[idx + 1];
+
+                    const avgSign = getSign((start.value + end.value) / 2);
+                    if (avgSign === 0) continue;
+
+                    const baseStartX = start.x;
+                    const baseStartY = start.y;
+                    const baseEndX = end.x;
+                    const baseEndY = end.y;
+
+                    const offsetStart = Number.isFinite(start.offset) ? start.offset : 0;
+                    const offsetEnd = Number.isFinite(end.offset) ? end.offset : 0;
+
+                    const offsetStartX = baseStartX + perpX * offsetStart;
+                    const offsetStartY = baseStartY - perpY * offsetStart;
+                    const offsetEndX = baseEndX + perpX * offsetEnd;
+                    const offsetEndY = baseEndY - perpY * offsetEnd;
+
+                    ctx.fillStyle = avgSign > 0 ? positiveFillColor : negativeFillColor;
+                    ctx.beginPath();
+                    ctx.moveTo(baseStartX, baseStartY);
+                    ctx.lineTo(baseEndX, baseEndY);
+                    ctx.lineTo(offsetEndX, offsetEndY);
+                    ctx.lineTo(offsetStartX, offsetStartY);
+                    ctx.closePath();
+                    ctx.fill();
+                }
             }
 
             // 応力図の輪郭を描画（滑らかな曲線）
