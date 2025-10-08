@@ -748,6 +748,28 @@ function updateModel3DView(nodes, members, loadData = {}) {
         const midpoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
         const baseMaterial = (modelSelectedMember === index) ? selectedMemberMaterial.clone() : memberMaterial.clone();
 
+        const resolveAxisKey = () => {
+            const rawKey = (member.sectionAxis && member.sectionAxis.key)
+                || member.sectionAxisKey
+                || (member.sectionInfo && member.sectionInfo.axis && member.sectionInfo.axis.key)
+                || '';
+            const rawMode = (member.sectionAxis && member.sectionAxis.mode)
+                || member.sectionAxisMode
+                || (member.sectionInfo && member.sectionInfo.axis && member.sectionInfo.axis.mode)
+                || '';
+            const normalizedKey = typeof rawKey === 'string' ? rawKey.trim().toLowerCase() : '';
+            const normalizedMode = typeof rawMode === 'string' ? rawMode.trim().toLowerCase() : '';
+
+            if (normalizedKey === 'both' || normalizedMode === 'both') return 'both';
+            if (normalizedKey === 'y' || normalizedMode === 'weak') return 'y';
+            if (normalizedKey === 'x' || normalizedMode === 'strong') return 'x';
+            if (normalizedKey === 'weak') return 'y';
+            if (normalizedKey === 'strong') return 'x';
+            return 'x';
+        };
+
+        const axisKey = resolveAxisKey();
+
         let memberMesh = null;
         const sectionShape = createSectionShapeFromInfo(member.sectionInfo, member);
 
@@ -773,10 +795,12 @@ function updateModel3DView(nodes, members, loadData = {}) {
                 memberMesh.up.set(isVertical ? 1 : 0, isVertical ? 0 : 1, 0);
                 memberMesh.lookAt(p2);
 
-                // 垂直部材の場合は90度回転、それ以外はsectionAxisに従う
                 if (isVertical) {
                     memberMesh.rotateZ(Math.PI / 2);
-                } else if (member.sectionAxis && member.sectionAxis.key === 'y') {
+                    if (axisKey === 'y') {
+                        memberMesh.rotateZ(Math.PI / 2);
+                    }
+                } else if (axisKey === 'y') {
                     memberMesh.rotateZ(Math.PI / 2);
                 }
             } catch (error) {

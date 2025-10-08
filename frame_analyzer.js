@@ -3402,10 +3402,31 @@ document.addEventListener('DOMContentLoaded', () => {
         // 一括編集の断面情報表示を更新
         const updateBulkSectionInfo = (properties) => {
             const infoElement = document.getElementById('bulk-section-info');
-            if (infoElement && properties) {
-                infoElement.textContent = `選択済み: I=${properties.I}cm⁴, A=${properties.A}cm², Z=${properties.Z}cm³`;
-                infoElement.style.color = '#28a745';
-            }
+            if (!infoElement || !properties) return;
+
+            const formatValue = (value, unit) => {
+                if (value === undefined || value === null || value === '') return '-';
+                const numeric = Number(value);
+                if (!Number.isFinite(numeric)) return value;
+                return `${numeric.toLocaleString()}${unit}`;
+            };
+
+            const axisInfo = normalizeAxisInfo(properties.sectionAxis || properties.sectionInfo?.axis);
+            const ixValue = properties.Ix ?? properties.Iz ?? (axisInfo?.key === 'y' ? undefined : properties.I);
+            const iyValue = properties.Iy ?? (axisInfo?.key === 'y' ? properties.I : undefined);
+            const zxValue = properties.Zx ?? properties.Zz ?? (axisInfo?.key === 'y' ? undefined : properties.Z);
+            const zyValue = properties.Zy ?? (axisInfo?.key === 'y' ? properties.Z : undefined);
+
+            const parts = [
+                `Ix=${formatValue(ixValue, 'cm⁴')}`,
+                `Iy=${formatValue(iyValue, 'cm⁴')}`,
+                `Zx=${formatValue(zxValue, 'cm³')}`,
+                `Zy=${formatValue(zyValue, 'cm³')}`,
+                `A=${formatValue(properties.A, 'cm²')}`
+            ];
+
+            infoElement.textContent = `選択済み: ${parts.join(' / ')}`;
+            infoElement.style.color = '#28a745';
         };
         
         // 適用ボタンのイベント
@@ -3477,50 +3498,42 @@ document.addEventListener('DOMContentLoaded', () => {
             const row = elements.membersTable.rows[memberIndex];
             if (!row) continue;
             
-            // E値の更新
-            if (updates.E) {
-                const eSelect = row.cells[3].querySelector('select');
-                const eInput = row.cells[3].querySelector('input[type="number"]');
-                if (eSelect && eInput) {
-                    eSelect.value = Array.from(eSelect.options).some(opt => opt.value === updates.E) ? updates.E : 'custom';
-                    eInput.value = updates.E;
-                    eInput.readOnly = eSelect.value !== 'custom';
-                    eSelect.dispatchEvent(new Event('change'));
-                }
-            }
-            
-            // 断面性能の更新 (3D用)
-            if (updates.Iz || updates.I) row.cells[5].querySelector('input').value = updates.Iz || updates.I;
-            if (updates.Iy) row.cells[6].querySelector('input').value = updates.Iy;
-            if (updates.J) row.cells[7].querySelector('input').value = updates.J;
-            if (updates.A) row.cells[8].querySelector('input').value = updates.A;
-            if (updates.Zz || updates.Z) row.cells[9].querySelector('input').value = updates.Zz || updates.Z;
-            if (updates.Zy) row.cells[10].querySelector('input').value = updates.Zy;
-            
-            // 断面選択による断面性能の一括更新 (3D用)
+            const mergedProps = {};
+
             if (updates.sectionProperties) {
-                if (updates.sectionProperties.Iz || updates.sectionProperties.I) row.cells[5].querySelector('input').value = updates.sectionProperties.Iz || updates.sectionProperties.I;
-                if (updates.sectionProperties.Iy) row.cells[6].querySelector('input').value = updates.sectionProperties.Iy;
-                if (updates.sectionProperties.J) row.cells[7].querySelector('input').value = updates.sectionProperties.J;
-                if (updates.sectionProperties.A) row.cells[8].querySelector('input').value = updates.sectionProperties.A;
-                if (updates.sectionProperties.Zz || updates.sectionProperties.Z) row.cells[9].querySelector('input').value = updates.sectionProperties.Zz || updates.sectionProperties.Z;
-                if (updates.sectionProperties.Zy) row.cells[10].querySelector('input').value = updates.sectionProperties.Zy;
-                
-                // 追加の断面性能をデータ属性として保存 (2D互換性のため残す)
-                if (updates.sectionProperties.Zx) row.dataset.zx = updates.sectionProperties.Zx;
-                if (updates.sectionProperties.Zy) row.dataset.zy = updates.sectionProperties.Zy;
-                if (updates.sectionProperties.ix) row.dataset.ix = updates.sectionProperties.ix;
-                if (updates.sectionProperties.iy) row.dataset.iy = updates.sectionProperties.iy;
+                Object.assign(mergedProps, updates.sectionProperties);
+            }
 
-                if (updates.sectionProperties.sectionInfo) {
-                    setRowSectionInfo(row, updates.sectionProperties.sectionInfo);
-                }
+            if (updates.E) {
+                mergedProps.E = updates.E;
+            }
+            if (updates.I) {
+                mergedProps.I = updates.I;
+            }
+            if (updates.A) {
+                mergedProps.A = updates.A;
+            }
+            if (updates.Z) {
+                mergedProps.Z = updates.Z;
+            }
+            if (updates.Iz && mergedProps.Ix === undefined) {
+                mergedProps.Ix = updates.Iz;
+            }
+            if (updates.Iy && mergedProps.Iy === undefined) {
+                mergedProps.Iy = updates.Iy;
+            }
+            if (updates.J && mergedProps.J === undefined) {
+                mergedProps.J = updates.J;
+            }
+            if (updates.Zz && mergedProps.Zx === undefined) {
+                mergedProps.Zx = updates.Zz;
+            }
+            if (updates.Zy && mergedProps.Zy === undefined) {
+                mergedProps.Zy = updates.Zy;
+            }
 
-                if (Object.prototype.hasOwnProperty.call(updates.sectionProperties, 'sectionAxis')) {
-                    applySectionAxisDataset(row, updates.sectionProperties.sectionAxis);
-                } else if (updates.sectionProperties.sectionInfo && updates.sectionProperties.sectionInfo.axis) {
-                    applySectionAxisDataset(row, updates.sectionProperties.sectionInfo.axis);
-                }
+            if (Object.keys(mergedProps).length > 0) {
+                updateMemberProperties(memberIndex, mergedProps);
             }
             
             // 接合条件の更新
@@ -4692,7 +4705,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     // 局所剛性マトリックスを再計算
                     const E = member.E;
                     const A = member.A;
-                    const I = member.Iz; // 2D解析ではIzを使用
+                    const axisProps2D = member.axisProperties || null;
+                    const I = axisProps2D?.bendingInertia ?? member.I ?? member.Iz; // 選択軸に応じた断面二次モーメント
                     const EAL = E * A / L;
                     const EIL = E * I / L;
                     const EIL2 = E * I / (L ** 2);
@@ -5149,8 +5163,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     const E = member.E;
                     const G = E / (2 * (1 + 0.3)); // ポアソン比0.3を仮定
                     const A = member.A;
-                    const Iy = member.Iy;
-                    const Iz = member.Iz;
+                    const axisProps3D = member.axisProperties || null;
+                    const Iy = axisProps3D?.local?.inertia?.y ?? member.Iy;
+                    const Iz = axisProps3D?.local?.inertia?.z ?? member.Iz;
                     const J = member.J;
                     
                     const EA_L = E * A / L;
@@ -5847,6 +5862,129 @@ document.addEventListener('DOMContentLoaded', () => {
             elements.errorMessage.textContent = '';
         }
         
+        const toPositiveNumber = (value) => {
+            const num = Number(value);
+            return Number.isFinite(num) && num > 0 ? num : null;
+        };
+
+        const deriveRadiusFrom = (moment, area) => {
+            if (!Number.isFinite(moment) || moment <= 0 || !Number.isFinite(area) || area <= 0) {
+                return null;
+            }
+            const radius = Math.sqrt(moment / area);
+            return Number.isFinite(radius) && radius > 0 ? radius : null;
+        };
+
+        const combineApproximate = (a, b) => {
+            if (a !== null && b !== null) {
+                const diff = Math.abs(a - b);
+                const tolerance = Math.max(1e-9, Math.abs(a) * 1e-5, Math.abs(b) * 1e-5);
+                if (diff <= tolerance) {
+                    return (a + b) / 2;
+                }
+                return (a + b) / 2;
+            }
+            return a !== null ? a : b;
+        };
+
+        const selectWithFallback = (primary, secondary, fallback) => {
+            if (primary !== null && Number.isFinite(primary)) return primary;
+            if (secondary !== null && Number.isFinite(secondary)) return secondary;
+            return fallback;
+        };
+
+        const computeAxisProperties = (strongAxis, weakAxis, axisKey, area) => {
+            const normalizedKey = axisKey === 'y' ? 'y' : axisKey === 'both' ? 'both' : 'x';
+
+            const strong = {
+                inertia: toPositiveNumber(strongAxis?.inertia),
+                modulus: toPositiveNumber(strongAxis?.modulus),
+                radius: toPositiveNumber(strongAxis?.radius)
+            };
+            const weak = {
+                inertia: toPositiveNumber(weakAxis?.inertia),
+                modulus: toPositiveNumber(weakAxis?.modulus),
+                radius: toPositiveNumber(weakAxis?.radius)
+            };
+
+            strong.radius = strong.radius ?? deriveRadiusFrom(strong.inertia, area);
+            weak.radius = weak.radius ?? deriveRadiusFrom(weak.inertia, area);
+
+            const fallbackInertia = (() => {
+                const combined = combineApproximate(strong.inertia, weak.inertia);
+                if (combined !== null && Number.isFinite(combined)) return combined;
+                return strong.inertia ?? weak.inertia ?? 1e-12;
+            })();
+
+            const fallbackModulus = (() => {
+                const combined = combineApproximate(strong.modulus, weak.modulus);
+                if (combined !== null && Number.isFinite(combined)) return combined;
+                return strong.modulus ?? weak.modulus ?? 1e-6;
+            })();
+
+            const fallbackRadius = (() => {
+                const combined = combineApproximate(strong.radius, weak.radius);
+                if (combined !== null && Number.isFinite(combined)) return combined;
+                return deriveRadiusFrom(fallbackInertia, area) ?? 0.01;
+            })();
+
+            let localInertiaZ;
+            let localInertiaY;
+            let localModulusZ;
+            let localModulusY;
+            let localRadiusZ;
+            let localRadiusY;
+
+            if (normalizedKey === 'y') {
+                localInertiaZ = selectWithFallback(weak.inertia, strong.inertia, fallbackInertia);
+                localInertiaY = selectWithFallback(strong.inertia, weak.inertia, fallbackInertia);
+                localModulusZ = selectWithFallback(weak.modulus, strong.modulus, fallbackModulus);
+                localModulusY = selectWithFallback(strong.modulus, weak.modulus, fallbackModulus);
+                localRadiusZ = selectWithFallback(weak.radius, strong.radius, fallbackRadius);
+                localRadiusY = selectWithFallback(strong.radius, weak.radius, fallbackRadius);
+            } else if (normalizedKey === 'both') {
+                const sharedInertia = combineApproximate(strong.inertia, weak.inertia) ?? fallbackInertia;
+                const sharedModulus = combineApproximate(strong.modulus, weak.modulus) ?? fallbackModulus;
+                const sharedRadius = combineApproximate(strong.radius, weak.radius) ?? deriveRadiusFrom(sharedInertia, area) ?? fallbackRadius;
+                localInertiaZ = sharedInertia;
+                localInertiaY = sharedInertia;
+                localModulusZ = sharedModulus;
+                localModulusY = sharedModulus;
+                localRadiusZ = sharedRadius;
+                localRadiusY = sharedRadius;
+            } else {
+                localInertiaZ = selectWithFallback(strong.inertia, weak.inertia, fallbackInertia);
+                localInertiaY = selectWithFallback(weak.inertia, strong.inertia, fallbackInertia);
+                localModulusZ = selectWithFallback(strong.modulus, weak.modulus, fallbackModulus);
+                localModulusY = selectWithFallback(weak.modulus, strong.modulus, fallbackModulus);
+                localRadiusZ = selectWithFallback(strong.radius, weak.radius, fallbackRadius);
+                localRadiusY = selectWithFallback(weak.radius, strong.radius, fallbackRadius);
+            }
+
+            const bendingInertia = localInertiaZ;
+            const bendingModulus = localModulusZ;
+            const bendingRadius = localRadiusZ;
+
+            return {
+                selectedKey: normalizedKey,
+                strong,
+                weak,
+                local: {
+                    inertia: { y: localInertiaY, z: localInertiaZ },
+                    sectionModulus: { y: localModulusY, z: localModulusZ },
+                    radius: { y: localRadiusY, z: localRadiusZ }
+                },
+                bendingInertia,
+                bendingSectionModulus: bendingModulus,
+                bendingRadius,
+                orthogonal: {
+                    inertia: localInertiaY,
+                    sectionModulus: localModulusY,
+                    radius: localRadiusY
+                }
+            };
+        };
+
     const nodeRows = Array.from(elements.nodesTable.rows);
     nodeRows.forEach(clearRowValidationState);
 
@@ -5993,6 +6131,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 hasDensityColumn = false;
             }
             
+            // 断面情報を取得（3Dビューア用）
+            let sectionInfo = null;
+            let sectionAxis = null;
+            if (row.dataset.sectionInfo) {
+                try {
+                    sectionInfo = JSON.parse(decodeURIComponent(row.dataset.sectionInfo));
+                } catch (error) {
+                    console.warn(`部材 ${index + 1}: 断面情報のパースに失敗`, error);
+                }
+            }
+
+            // 軸情報を取得（3つの個別属性から構築）
+            if (row.dataset.sectionAxisKey || row.dataset.sectionAxisMode || row.dataset.sectionAxisLabel) {
+                sectionAxis = {
+                    key: row.dataset.sectionAxisKey,
+                    mode: row.dataset.sectionAxisMode,
+                    label: row.dataset.sectionAxisLabel
+                };
+            }
+
             // 接合条件の取得・検証
             const connectionTargets = resolveMemberConnectionTargets(row);
             const iConnSelect = connectionTargets.i.select;
@@ -6017,9 +6175,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const i_conn = iConnSelect?.value || 'rigid';
             const j_conn = jConnSelect?.value || 'rigid';
-            // 2D互換性: dataset から追加の断面性能を読み取る (3Dでは不要だが残す)
-            // const Zx_dataset = parseFloat(row.dataset.zx) * 1e-6, Zy_dataset = parseFloat(row.dataset.zy) * 1e-6;
-            const ix = parseFloat(row.dataset.ix) * 1e-2 || Math.sqrt(Iz / A), iy = parseFloat(row.dataset.iy) * 1e-2 || Math.sqrt(Iy / A);
+            const parseRadiusDataset = (value) => {
+                const num = Number(value);
+                return Number.isFinite(num) && num > 0 ? num * 1e-2 : null;
+            };
+
+            const ixDataset = parseRadiusDataset(row.dataset.ix);
+            const iyDataset = parseRadiusDataset(row.dataset.iy);
+            const ixStrongRadius = ixDataset ?? deriveRadiusFrom(Iz, A);
+            const iyWeakRadius = iyDataset ?? deriveRadiusFrom(Iy, A);
+
+            const axisProps = computeAxisProperties(
+                { inertia: Iz, modulus: Zz, radius: ixStrongRadius },
+                { inertia: Iy, modulus: Zy, radius: iyWeakRadius },
+                sectionAxis?.key,
+                A
+            );
+
+            const fallbackRadiusZ = axisProps?.local?.radius?.z ?? deriveRadiusFrom(axisProps?.bendingInertia, A) ?? ixStrongRadius ?? iyWeakRadius ?? 0;
+            const fallbackRadiusY = axisProps?.local?.radius?.y ?? deriveRadiusFrom(axisProps?.orthogonal?.inertia, A) ?? iyWeakRadius ?? ixStrongRadius ?? 0;
+            const ix = selectWithFallback(ixStrongRadius, axisProps?.local?.radius?.z, fallbackRadiusZ);
+            const iy = selectWithFallback(iyWeakRadius, axisProps?.local?.radius?.y, fallbackRadiusY);
             if (isNaN(E) || isNaN(Iz) || isNaN(Iy) || isNaN(J) || isNaN(A) || isNaN(Zz) || isNaN(Zy)) {
                 const message = `部材 ${index + 1} の物性値が無効です。`;
                 markRowValidationError(row, message);
@@ -6045,34 +6221,42 @@ document.addEventListener('DOMContentLoaded', () => {
             // 3D用の剛性マトリックスと変換マトリックスは frame_analyzer_3d.js で計算されるため、
             // ここでは2D互換の値を保持 (将来的に統合予定)
             const c = dx/L, s = dy/L, T = [ [c,s,0,0,0,0], [-s,c,0,0,0,0], [0,0,1,0,0,0], [0,0,0,c,s,0], [0,0,0,-s,c,0], [0,0,0,0,0,1] ];
-            const EAL=E*A/L, EIL=E*Iz/L, EIL2=E*Iz/L**2, EIL3=E*Iz/L**3;
+            const bendingInertia = axisProps?.bendingInertia ?? Iz;
+            const EAL=E*A/L, EIL=E*bendingInertia/L, EIL2=E*bendingInertia/L**2, EIL3=E*bendingInertia/L**3;
             let k_local;
             if (i_conn === 'rigid' && j_conn === 'rigid') k_local = [[EAL,0,0,-EAL,0,0],[0,12*EIL3,6*EIL2,0,-12*EIL3,6*EIL2],[0,6*EIL2,4*EIL,0,-6*EIL2,2*EIL],[-EAL,0,0,EAL,0,0],[0,-12*EIL3,-6*EIL2,0,12*EIL3,-6*EIL2],[0,6*EIL2,2*EIL,0,-6*EIL2,4*EIL]];
             else if (i_conn === 'pinned' && j_conn === 'rigid') k_local = [[EAL,0,0,-EAL,0,0],[0,3*EIL3,0,0,-3*EIL3,3*EIL2],[0,0,0,0,0,0],[-EAL,0,0,EAL,0,0],[0,-3*EIL3,0,0,3*EIL3,-3*EIL2],[0,3*EIL2,0,0,-3*EIL2,3*EIL]];
             else if (i_conn === 'rigid' && j_conn === 'pinned') k_local = [[EAL,0,0,-EAL,0,0],[0,3*EIL3,3*EIL2,0,-3*EIL3,0],[0,3*EIL2,3*EIL,0,-3*EIL2,0],[-EAL,0,0,EAL,0,0],[0,-3*EIL3,-3*EIL2,0,3*EIL3,0],[0,0,0,0,0,0]];
             else k_local = [[EAL,0,0,-EAL,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0],[-EAL,0,0,EAL,0,0],[0,0,0,0,0,0],[0,0,0,0,0,0]];
+            const bendingSectionModulus = axisProps?.bendingSectionModulus ?? Zz;
 
-            // 断面情報を取得（3Dビューア用）
-            let sectionInfo = null;
-            let sectionAxis = null;
-            if (row.dataset.sectionInfo) {
-                try {
-                    sectionInfo = JSON.parse(decodeURIComponent(row.dataset.sectionInfo));
-                } catch (error) {
-                    console.warn(`部材 ${index + 1}: 断面情報のパースに失敗`, error);
-                }
-            }
-
-            // 軸情報を取得（3つの個別属性から構築）
-            if (row.dataset.sectionAxisKey || row.dataset.sectionAxisMode || row.dataset.sectionAxisLabel) {
-                sectionAxis = {
-                    key: row.dataset.sectionAxisKey,
-                    mode: row.dataset.sectionAxisMode,
-                    label: row.dataset.sectionAxisLabel
-                };
-            }
-
-            return { i,j,E,strengthProps,I:Iz, Z:Zz, Iz,Iy,J,A,Zz,Zy,ix,iy,length:L,c,s,T,i_conn,j_conn,k_local,material,sectionInfo,sectionAxis };
+            return {
+                i,
+                j,
+                E,
+                strengthProps,
+                I: bendingInertia,
+                Z: bendingSectionModulus,
+                Iz,
+                Iy,
+                J,
+                A,
+                Zz,
+                Zy,
+                ix,
+                iy,
+                length: L,
+                c,
+                s,
+                T,
+                i_conn,
+                j_conn,
+                k_local,
+                material,
+                sectionInfo,
+                sectionAxis,
+                axisProperties: axisProps
+            };
         });
         const nodeLoads = Array.from(elements.nodeLoadsTable.rows).map((r, i) => { 
             const n = parseInt(r.cells[0].querySelector('input').value) - 1; 
@@ -14924,14 +15108,13 @@ const loadPreset = (index) => {
     }
 
     function setRowSectionInfo(row, sectionInfo) {
-        if (!(row instanceof HTMLTableRowElement) || !row.cells || typeof row.querySelector !== 'function') {
+        if (!(row instanceof HTMLTableRowElement) || typeof row.querySelector !== 'function') {
             console.warn('setRowSectionInfo called with invalid row element:', row);
             return;
         }
 
-        const hasDensityColumn = row.querySelector('.density-cell') !== null;
-        const sectionNameCellIndex = hasDensityColumn ? 9 : 8;
-        const sectionAxisCellIndex = hasDensityColumn ? 10 : 9;
+        const sectionNameSpan = row.querySelector('.section-name-cell');
+        const sectionAxisSpan = row.querySelector('.section-axis-cell');
 
         if (sectionInfo) {
             const enrichedInfo = ensureSectionSvgMarkup(sectionInfo);
@@ -14946,52 +15129,26 @@ const loadPreset = (index) => {
             row.dataset.sectionSource = enrichedInfo.source || '';
             applySectionAxisDataset(row, enrichedInfo.axis);
 
-            // 断面名称セルを更新
-            const sectionNameCell = row.cells[sectionNameCellIndex];
-            if (sectionNameCell) {
-                const nameSpan = sectionNameCell.querySelector('.section-name-cell');
-                if (nameSpan) {
-                    // 断面名称を板厚まで含んだ形式で表示
-                    // 例: H形鋼（広幅） 200×200×8×12
-                    let displayName = enrichedInfo.label || '-';
-                    
-                    // デバッグ情報
-                    if (!window.sectionNameDebugLogged) {
-                        console.log('=== 断面名称表示デバッグ ===');
-                        console.log('enrichedInfo:', enrichedInfo);
-                        console.log('label:', enrichedInfo.label);
-                        console.log('typeLabel:', enrichedInfo.typeLabel);
-                        console.log('designation:', enrichedInfo.designation);
-                        console.log('rawDims:', enrichedInfo.rawDims);
-                        window.sectionNameDebugLogged = true;
-                    }
-                    
-                    if (enrichedInfo.rawDims) {
-                        const dims = enrichedInfo.rawDims;
-                        // 寸法文字列を生成（H×B×t1×t2形式）
-                        const dimParts = [];
-                        if (dims.H !== undefined) dimParts.push(dims.H);
-                        if (dims.B !== undefined) dimParts.push(dims.B);
-                        if (dims.t1 !== undefined) dimParts.push(dims.t1);
-                        if (dims.t2 !== undefined) dimParts.push(dims.t2);
-                        
-                        if (dimParts.length > 0) {
-                            // 型式名 + 寸法の形式で表示
-                            const baseName = enrichedInfo.typeLabel || enrichedInfo.label.split(' ')[0];
-                            displayName = `${baseName} ${dimParts.join('×')}`;
-                        }
-                    }
-                    nameSpan.textContent = displayName;
+            let displayName = enrichedInfo.label || '-';
+            if (enrichedInfo.rawDims) {
+                const dims = enrichedInfo.rawDims;
+                const dimParts = [];
+                if (dims.H !== undefined) dimParts.push(dims.H);
+                if (dims.B !== undefined) dimParts.push(dims.B);
+                if (dims.t1 !== undefined) dimParts.push(dims.t1);
+                if (dims.t2 !== undefined) dimParts.push(dims.t2);
+                if (dimParts.length > 0) {
+                    const baseName = enrichedInfo.typeLabel || (enrichedInfo.label ? enrichedInfo.label.split(' ')[0] : '');
+                    displayName = `${baseName} ${dimParts.join('×')}`.trim();
                 }
             }
 
-            // 軸方向セルを更新
-            const sectionAxisCell = row.cells[sectionAxisCellIndex];
-            if (sectionAxisCell) {
-                const axisSpan = sectionAxisCell.querySelector('.section-axis-cell');
-                if (axisSpan) {
-                    axisSpan.textContent = enrichedInfo.axis?.label || '-';
-                }
+            if (sectionNameSpan) {
+                sectionNameSpan.textContent = displayName || '-';
+            }
+
+            if (sectionAxisSpan) {
+                sectionAxisSpan.textContent = enrichedInfo.axis?.label || '-';
             }
         } else {
             delete row.dataset.sectionInfo;
@@ -15000,22 +15157,12 @@ const loadPreset = (index) => {
             delete row.dataset.sectionSource;
             applySectionAxisDataset(row, null);
 
-            // 断面名称セルをクリア
-            const sectionNameCell = row.cells[sectionNameCellIndex];
-            if (sectionNameCell) {
-                const nameSpan = sectionNameCell.querySelector('.section-name-cell');
-                if (nameSpan) {
-                    nameSpan.textContent = '-';
-                }
+            if (sectionNameSpan) {
+                sectionNameSpan.textContent = '-';
             }
 
-            // 軸方向セルをクリア
-            const sectionAxisCell = row.cells[sectionAxisCellIndex];
-            if (sectionAxisCell) {
-                const axisSpan = sectionAxisCell.querySelector('.section-axis-cell');
-                if (axisSpan) {
-                    axisSpan.textContent = '-';
-                }
+            if (sectionAxisSpan) {
+                sectionAxisSpan.textContent = '-';
             }
         }
     }
