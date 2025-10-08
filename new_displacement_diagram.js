@@ -1465,81 +1465,74 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
                 });
             }
 
-            // 応力図を塗りつぶし（複数のセグメントに分割）
+            // 応力図を塗りつぶし - セグメント別に確実に塗る方式
             const positiveFillColor = 'rgba(255, 100, 100, 0.5)';
             const negativeFillColor = 'rgba(100, 100, 255, 0.5)';
 
-            const SIGN_EPS = 1e-9;
-            const getSign = (value) => {
-                if (!Number.isFinite(value) || Math.abs(value) < SIGN_EPS) return 0;
-                return value > 0 ? 1 : -1;
-            };
+            // Canvas状態を保存
+            ctx.save();
+            
+            // グローバルアルファを明示的に設定
+            ctx.globalAlpha = 1.0;
+            ctx.globalCompositeOperation = 'source-over';
+            
+            // デバッグ: 最初の部材のセグメントをログ出力
+            if (window.DEBUG_STRESS_FILL && stressPoints.length > 0) {
+                console.log(`部材 ${memberIndex + 1}: ${stressPoints.length}点, 値範囲=[${Math.min(...stressPoints.map(p => p.value)).toFixed(2)}, ${Math.max(...stressPoints.map(p => p.value)).toFixed(2)}], scale=${stressScale.toFixed(2)}, perp=(${perpX.toFixed(3)}, ${perpY.toFixed(3)})`);
+            }
 
-            const createZeroPoint = (startPoint, endPoint) => {
-                const denom = endPoint.value - startPoint.value;
-                if (Math.abs(denom) < SIGN_EPS) {
-                    return {
-                        x: (startPoint.x + endPoint.x) / 2,
-                        y: (startPoint.y + endPoint.y) / 2,
-                        value: 0,
-                        offset: 0
-                    };
-                }
-                let t = -startPoint.value / denom;
-                if (!Number.isFinite(t)) t = 0.5;
-                t = Math.min(Math.max(t, 0), 1);
-                return {
-                    x: startPoint.x + (endPoint.x - startPoint.x) * t,
-                    y: startPoint.y + (endPoint.y - startPoint.y) * t,
-                    value: 0,
-                    offset: 0
-                };
-            };
-
+            // 各セグメント（隣接2点）ごとに台形を描画
+            let segmentsFilled = 0;
             for (let k = 0; k < stressPoints.length - 1; k++) {
                 const p1 = stressPoints[k];
                 const p2 = stressPoints[k + 1];
-
-                const pairPoints = [p1];
-                const sign1 = getSign(p1.value);
-                const sign2 = getSign(p2.value);
-
-                if (sign1 !== 0 && sign2 !== 0 && sign1 !== sign2) {
-                    pairPoints.push(createZeroPoint(p1, p2));
+                
+                // 両方とも値がほぼゼロの場合はスキップ
+                if (Math.abs(p1.value) < 1e-9 && Math.abs(p2.value) < 1e-9) {
+                    continue;
                 }
-
-                pairPoints.push(p2);
-
-                for (let idx = 0; idx < pairPoints.length - 1; idx++) {
-                    const start = pairPoints[idx];
-                    const end = pairPoints[idx + 1];
-
-                    const avgSign = getSign((start.value + end.value) / 2);
-                    if (avgSign === 0) continue;
-
-                    const baseStartX = start.x;
-                    const baseStartY = start.y;
-                    const baseEndX = end.x;
-                    const baseEndY = end.y;
-
-                    const offsetStart = Number.isFinite(start.offset) ? start.offset : 0;
-                    const offsetEnd = Number.isFinite(end.offset) ? end.offset : 0;
-
-                    const offsetStartX = baseStartX + perpX * offsetStart;
-                    const offsetStartY = baseStartY - perpY * offsetStart;
-                    const offsetEndX = baseEndX + perpX * offsetEnd;
-                    const offsetEndY = baseEndY - perpY * offsetEnd;
-
-                    ctx.fillStyle = avgSign > 0 ? positiveFillColor : negativeFillColor;
-                    ctx.beginPath();
-                    ctx.moveTo(baseStartX, baseStartY);
-                    ctx.lineTo(baseEndX, baseEndY);
-                    ctx.lineTo(offsetEndX, offsetEndY);
-                    ctx.lineTo(offsetStartX, offsetStartY);
-                    ctx.closePath();
-                    ctx.fill();
+                
+                // 平均値で色を決定
+                const avgValue = (p1.value + p2.value) / 2;
+                const fillColor = avgValue >= 0 ? positiveFillColor : negativeFillColor;
+                
+                // 台形の4点を時計回りに定義
+                const base1X = p1.x;
+                const base1Y = p1.y;
+                const base2X = p2.x;
+                const base2Y = p2.y;
+                
+                const offset1 = Number.isFinite(p1.offset) ? p1.offset : 0;
+                const offset2 = Number.isFinite(p2.offset) ? p2.offset : 0;
+                
+                const off1X = p1.x + perpX * offset1;
+                const off1Y = p1.y - perpY * offset1;
+                const off2X = p2.x + perpX * offset2;
+                const off2Y = p2.y - perpY * offset2;
+                
+                // デバッグ: 最初のセグメントの座標をログ出力
+                if (window.DEBUG_STRESS_FILL && k === 0 && memberIndex === 0) {
+                    console.log(`  セグメント0: base=(${base1X.toFixed(1)},${base1Y.toFixed(1)})→(${base2X.toFixed(1)},${base2Y.toFixed(1)}), offset=(${off1X.toFixed(1)},${off1Y.toFixed(1)})→(${off2X.toFixed(1)},${off2Y.toFixed(1)}), color=${fillColor}`);
                 }
+                
+                // 台形を描画（時計回り）
+                ctx.fillStyle = fillColor;
+                ctx.beginPath();
+                ctx.moveTo(base1X, base1Y);
+                ctx.lineTo(base2X, base2Y);
+                ctx.lineTo(off2X, off2Y);
+                ctx.lineTo(off1X, off1Y);
+                ctx.closePath();
+                ctx.fill();
+                segmentsFilled++;
             }
+            
+            if (window.DEBUG_STRESS_FILL) {
+                console.log(`  → ${segmentsFilled}個のセグメントを塗りつぶしました`);
+            }
+            
+            // Canvas状態を復元
+            ctx.restore();
 
             // 応力図の輪郭を描画（滑らかな曲線）
             ctx.strokeStyle = 'red';
@@ -1952,12 +1945,17 @@ const drawCapacityRatioDiagram = (canvas, nodes, members, sectionCheckResults) =
             const numPoints = result.ratios.length;
             console.log(`部材${memberIndex + 1}: ${numPoints}箇所の検定比データを使用して分布描画`);
 
-            // 検定比分布を塗りつぶしで描画
+            // 検定比分布を塗りつぶしで描画（確実に塗るためパス構築を明示的に）
+            ctx.globalAlpha = 0.6;
+            ctx.fillStyle = getRatioColor(result.maxRatio);
             ctx.beginPath();
+            
+            // ベースライン（部材）
             ctx.moveTo(p1.x, p1.y);
-
-            // 上側の曲線（検定比分布）
-            for (let k = 0; k < numPoints; k++) {
+            ctx.lineTo(p2.x, p2.y);
+            
+            // オフセットライン（検定比分布）を逆順で
+            for (let k = numPoints - 1; k >= 0; k--) {
                 const t = k / (numPoints - 1);
                 const ratio = result.ratios[k];
                 const baseX = p1.x + t * (p2.x - p1.x);
@@ -1967,14 +1965,8 @@ const drawCapacityRatioDiagram = (canvas, nodes, members, sectionCheckResults) =
                 const py = baseY + perpY * offset;
                 ctx.lineTo(px, py);
             }
-
-            // 下側の線（部材に戻る）
-            ctx.lineTo(p2.x, p2.y);
+            
             ctx.closePath();
-
-            // 最大検定比に応じた色で塗りつぶし
-            ctx.fillStyle = getRatioColor(result.maxRatio);
-            ctx.globalAlpha = 0.6;
             ctx.fill();
             ctx.globalAlpha = 1.0;
 
