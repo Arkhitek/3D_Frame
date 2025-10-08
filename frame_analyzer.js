@@ -8388,6 +8388,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // 変位図描画関数はnew_displacement_diagram.jsで定義されています
 
+const getMemberDistributedLoadY = (memberLoad) => {
+    if (!memberLoad) return 0;
+    const value = memberLoad.wy ?? memberLoad.w ?? 0;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+};
+
 const drawMomentDiagram = (nodes, members, forces, memberLoads) => { 
         const drawingCtx = getDrawingContext(elements.momentCanvas); 
         if (!drawingCtx) return; 
@@ -8408,7 +8415,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         forces.forEach((f, idx) => { 
             const member = members[idx]; 
             const load = memberLoads.find(l => l.memberIndex === idx); 
-            const w = load ? load.w : 0; 
+            const w = getMemberDistributedLoadY(load); 
             const L = member.length; 
             let localMax = Math.max(Math.abs(f.M_i), Math.abs(f.M_j)); 
             if (w !== 0 && Math.abs(f.Q_i) > 1e-9) { 
@@ -8429,7 +8436,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         members.forEach((m, idx) => { 
             const force = forces[idx]; 
             const load = memberLoads.find(l => l.memberIndex === idx); 
-            const w = load ? load.w : 0; 
+            const w = getMemberDistributedLoadY(load); 
             const n_i = nodes[m.i], n_j = nodes[m.j]; 
             ctx.beginPath(); 
             const startNode = { x: n_i.x, y: n_i.y || 0, z: n_i.z || 0 };
@@ -8541,83 +8548,306 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             } 
         }); 
     };
-    const drawShearForceDiagram = (nodes, members, forces, memberLoads) => { 
-        const drawingCtx = getDrawingContext(elements.shearCanvas); 
-        if (!drawingCtx) return; 
-    const { ctx, transform, scale } = drawingCtx; 
-    const labelManager = LabelManager(); 
-    const projectionMode = getCurrentProjectionMode();
-        
+    const getProjectionPlaneBasis = (projectionMode) => {
+        switch (projectionMode) {
+            case 'xy':
+                return {
+                    u: { x: 1, y: 0, z: 0 },
+                    v: { x: 0, y: 1, z: 0 }
+                };
+            case 'yz':
+                return {
+                    u: { x: 0, y: 1, z: 0 },
+                    v: { x: 0, y: 0, z: 1 }
+                };
+            case 'xz':
+            default:
+                return {
+                    u: { x: 1, y: 0, z: 0 },
+                    v: { x: 0, y: 0, z: 1 }
+                };
+        }
+    };
+
+    const vecDot = (a, b) =>
+        ((a?.x || 0) * (b?.x || 0)) +
+        ((a?.y || 0) * (b?.y || 0)) +
+        ((a?.z || 0) * (b?.z || 0));
+
+    const vecCross = (a, b) => ({
+        x: (a?.y || 0) * (b?.z || 0) - (a?.z || 0) * (b?.y || 0),
+        y: (a?.z || 0) * (b?.x || 0) - (a?.x || 0) * (b?.z || 0),
+        z: (a?.x || 0) * (b?.y || 0) - (a?.y || 0) * (b?.x || 0)
+    });
+
+    const vecMagnitude = (v) => Math.sqrt(vecDot(v, v));
+
+    const vecNormalize = (v) => {
+        const mag = vecMagnitude(v);
+        if (!(mag > 1e-9)) return null;
+        return { x: v.x / mag, y: v.y / mag, z: v.z / mag };
+    };
+
+    const vecScale = (v, scalar) => ({
+        x: (v?.x || 0) * scalar,
+        y: (v?.y || 0) * scalar,
+        z: (v?.z || 0) * scalar
+    });
+
+    const vecAdd = (a, b) => ({
+        x: (a?.x || 0) + (b?.x || 0),
+        y: (a?.y || 0) + (b?.y || 0),
+        z: (a?.z || 0) + (b?.z || 0)
+    });
+
+    const computeMemberFrameForDiagram = (member, nodes) => {
+        const nodeI = nodes[member.i];
+        const nodeJ = nodes[member.j];
+        if (!nodeI || !nodeJ) return null;
+
+        const dx = (nodeJ.x ?? 0) - (nodeI.x ?? 0);
+        const dy = (nodeJ.y ?? 0) - (nodeI.y ?? 0);
+        const dz = (nodeJ.z ?? 0) - (nodeI.z ?? 0);
+
+        const localX = vecNormalize({ x: dx, y: dy, z: dz });
+        if (!localX) return null;
+
+        let reference = Math.abs(localX.z) < 0.9
+            ? { x: 0, y: 0, z: 1 }
+            : { x: 0, y: 1, z: 0 };
+
+        let localY = vecNormalize(vecCross(reference, localX));
+        if (!localY) {
+            reference = { x: 1, y: 0, z: 0 };
+            localY = vecNormalize(vecCross(reference, localX));
+        }
+        if (!localY) return null;
+
+        let localZ = vecNormalize(vecCross(localX, localY));
+        if (!localZ) {
+            localZ = { x: 0, y: 0, z: 1 };
+            localY = vecNormalize(vecCross(localZ, localX)) || { x: 0, y: 1, z: 0 };
+            localZ = vecNormalize(vecCross(localX, localY)) || localZ;
+        }
+
+        const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        return { localX, localY, localZ, length };
+    };
+
+    const computePlaneProjectionData = (frame, planeBasis) => {
+        if (!frame || !planeBasis) return null;
+        const dirU = vecDot(frame.localX, planeBasis.u);
+        const dirV = vecDot(frame.localX, planeBasis.v);
+        const planarMagnitude = Math.hypot(dirU, dirV);
+        if (!(planarMagnitude > 1e-6)) return null;
+
+        const dirPlane = { u: dirU / planarMagnitude, v: dirV / planarMagnitude };
+        const perpPlane = { u: -dirPlane.v, v: dirPlane.u };
+
+        const perpGlobal = {
+            x: perpPlane.u * planeBasis.u.x + perpPlane.v * planeBasis.v.x,
+            y: perpPlane.u * planeBasis.u.y + perpPlane.v * planeBasis.v.y,
+            z: perpPlane.u * planeBasis.u.z + perpPlane.v * planeBasis.v.z
+        };
+        const planarDirGlobal = {
+            x: dirPlane.u * planeBasis.u.x + dirPlane.v * planeBasis.v.x,
+            y: dirPlane.u * planeBasis.u.y + dirPlane.v * planeBasis.v.y,
+            z: dirPlane.u * planeBasis.u.z + dirPlane.v * planeBasis.v.z
+        };
+
+        return { perpGlobal, planarDirGlobal };
+    };
+
+    const computeShearVectorsGlobal = (force, frame) => {
+        if (!force || !frame) {
+            return {
+                i: { x: 0, y: 0, z: 0 },
+                j: { x: 0, y: 0, z: 0 }
+            };
+        }
+
+        const Qy_i = Number.isFinite(force.Qy_i) ? force.Qy_i : 0;
+        const Qz_i = Number.isFinite(force.Qz_i) ? force.Qz_i : (Number.isFinite(force.Q_i) ? force.Q_i : 0);
+        const Qy_j = Number.isFinite(force.Qy_j) ? force.Qy_j : 0;
+        const Qz_j = Number.isFinite(force.Qz_j) ? force.Qz_j : (Number.isFinite(force.Q_j) ? force.Q_j : 0);
+
+        const shearI = vecAdd(
+            vecScale(frame.localY, Qy_i),
+            vecScale(frame.localZ, Qz_i)
+        );
+        const shearJ = vecAdd(
+            vecScale(frame.localY, Qy_j),
+            vecScale(frame.localZ, Qz_j)
+        );
+
+        return { i: shearI, j: shearJ };
+    };
+
+    const computeDistributedLoadComponent = (load, perpGlobal) => {
+        if (!load || !perpGlobal) {
+            return 0;
+        }
+        const wx = Number.isFinite(load.wx) ? load.wx : 0;
+        const wy = Number.isFinite(load.wy) ? load.wy : (Number.isFinite(load.w) ? load.w : 0);
+        const wz = Number.isFinite(load.wz) ? load.wz : 0;
+        return wx * perpGlobal.x + wy * perpGlobal.y + wz * perpGlobal.z;
+    };
+
+    const drawShearForceDiagram = (nodes, members, forces, memberLoads) => {
+        const drawingCtx = getDrawingContext(elements.shearCanvas);
+        if (!drawingCtx) return;
+        const { ctx, transform, scale } = drawingCtx;
+        const labelManager = LabelManager();
+        const projectionMode = getCurrentProjectionMode();
+        const planeBasis = getProjectionPlaneBasis(projectionMode);
+
         // 部材番号も表示する
-        drawStructure(ctx, transform, nodes, members, '#ccc', false, true); 
-        
-        const nodeObstacles = nodes.map(n => { 
+        drawStructure(ctx, transform, nodes, members, '#ccc', false, true);
+
+        const nodeObstacles = nodes.map(n => {
             const node3D = { x: n.x, y: n.y || 0, z: n.z || 0 };
             const projected = project3DTo2D(node3D, projectionMode);
-            const pos = transform(projected.x, projected.y); 
-            return {x1: pos.x - 12, y1: pos.y - 12, x2: pos.x + 12, y2: pos.y + 12}; 
-        }); 
-        let maxShear = 0; 
-        forces.forEach(f => maxShear = Math.max(maxShear, Math.abs(f.Q_i), Math.abs(f.Q_j))); 
-        const maxOffsetPixels = 50; 
-        let shearScale = 0; 
-        if (scale > 0 && maxShear > 0) { 
-            const maxOffsetModelUnits = maxOffsetPixels / scale; 
-            shearScale = maxOffsetModelUnits / maxShear; 
-        } 
-        members.forEach((m, idx) => { 
-            const Q_i = forces[idx].Q_i, Q_j = -forces[idx].Q_j; 
-            const load=memberLoads.find(l=>l.memberIndex===idx), w=load?load.w:0; 
-            const n_i=nodes[m.i], n_j=nodes[m.j]; 
-            const offset_i=-Q_i*shearScale; 
-            const p1_offset_x=-offset_i*m.s, p1_offset_y=offset_i*m.c; 
-            
-            const n_i_offset = { x: n_i.x+p1_offset_x, y: (n_i.y || 0)+p1_offset_y, z: n_i.z || 0 };
-            const n_i_3d = { x: n_i.x, y: n_i.y || 0, z: n_i.z || 0 };
-            const n_j_3d = { x: n_j.x, y: n_j.y || 0, z: n_j.z || 0 };
-            
-            const p1_proj = project3DTo2D(n_i_offset, projectionMode);
+            const pos = transform(projected.x, projected.y);
+            return { x1: pos.x - 12, y1: pos.y - 12, x2: pos.x + 12, y2: pos.y + 12 };
+        });
+
+        const memberLoadMap = new Map();
+        memberLoads.forEach(load => {
+            if (Number.isInteger(load.memberIndex)) {
+                memberLoadMap.set(load.memberIndex, load);
+            }
+        });
+
+        const shearDataByIndex = new Array(members.length).fill(null);
+        let maxShear = 0;
+
+        members.forEach((member, idx) => {
+            const frame = computeMemberFrameForDiagram(member, nodes);
+            if (!frame || !(frame.length > 1e-6)) {
+                return;
+            }
+
+            const planeData = computePlaneProjectionData(frame, planeBasis);
+            if (!planeData) {
+                return;
+            }
+
+            const force = forces[idx];
+            const shearVectors = computeShearVectorsGlobal(force, frame);
+            const shearI = vecDot(shearVectors.i, planeData.perpGlobal);
+            const shearJ = vecDot(shearVectors.j, planeData.perpGlobal);
+
+            const Q_i = Number.isFinite(shearI) ? shearI : 0;
+            const Q_j = Number.isFinite(shearJ) ? shearJ : 0;
+            const Q_j_converted = -Q_j;
+
+            const load = memberLoadMap.get(idx);
+            const wComponent = computeDistributedLoadComponent(load, planeData.perpGlobal);
+
+            maxShear = Math.max(maxShear, Math.abs(Q_i), Math.abs(Q_j_converted));
+
+            shearDataByIndex[idx] = {
+                member,
+                frame,
+                planeData,
+                Q_i,
+                Q_j,
+                Q_j_converted,
+                w: Number.isFinite(wComponent) ? wComponent : 0
+            };
+        });
+
+        const maxOffsetPixels = 50;
+        let shearScale = 0;
+        if (scale > 0 && maxShear > 0) {
+            const maxOffsetModelUnits = maxOffsetPixels / scale;
+            shearScale = maxOffsetModelUnits / maxShear;
+        }
+
+        shearDataByIndex.forEach((data, idx) => {
+            if (!data) return;
+            const { member, frame, planeData, Q_i, Q_j, Q_j_converted, w } = data;
+            const n_i = nodes[member.i];
+            const n_j = nodes[member.j];
+            if (!n_i || !n_j) return;
+
+            const offset_i = -Q_i * shearScale;
+            const offset_j = Q_j * shearScale;
+            const startOffset = vecScale(planeData.perpGlobal, offset_i);
+            const endOffset = vecScale(planeData.perpGlobal, offset_j);
+
+            const n_i_offset = {
+                x: (n_i.x ?? 0) + startOffset.x,
+                y: (n_i.y ?? 0) + startOffset.y,
+                z: (n_i.z ?? 0) + startOffset.z
+            };
+            const n_j_offset = {
+                x: (n_j.x ?? 0) + endOffset.x,
+                y: (n_j.y ?? 0) + endOffset.y,
+                z: (n_j.z ?? 0) + endOffset.z
+            };
+
+            const n_i_3d = { x: n_i.x ?? 0, y: n_i.y ?? 0, z: n_i.z ?? 0 };
+            const n_j_3d = { x: n_j.x ?? 0, y: n_j.y ?? 0, z: n_j.z ?? 0 };
+
             const p_start_proj = project3DTo2D(n_i_3d, projectionMode);
             const p_end_proj = project3DTo2D(n_j_3d, projectionMode);
-            
-            const p1 = transform(p1_proj.x, p1_proj.y);
+            const p1_proj = project3DTo2D(n_i_offset, projectionMode);
+            const p2_proj = project3DTo2D(n_j_offset, projectionMode);
+
             const p_start = transform(p_start_proj.x, p_start_proj.y);
             const p_end = transform(p_end_proj.x, p_end_proj.y);
-            
-            ctx.beginPath(); 
-            ctx.moveTo(p_start.x, p_start.y); 
-            ctx.lineTo(p1.x, p1.y); 
-            let p2; 
-            if (w === 0) { 
-                const offset_j=-Q_j*shearScale; 
-                const p2_offset_x=-offset_j*m.s, p2_offset_y=offset_j*m.c; 
-                const n_j_offset = { x: n_j.x+p2_offset_x, y: (n_j.y || 0)+p2_offset_y, z: n_j.z || 0 };
-                const p2_proj = project3DTo2D(n_j_offset, projectionMode);
-                p2 = transform(p2_proj.x, p2_proj.y); 
-                ctx.lineTo(p2.x, p2.y); 
-            } else { 
-                const numPoints = 10; 
-                for(let i=1; i<=numPoints; i++){ 
-                    const x_local=(i/numPoints)*m.length, Q_local=Q_i-w*x_local, offset_local=-Q_local*shearScale; 
-                    const globalX=n_i.x+x_local*m.c-offset_local*m.s;
-                    const globalY=(n_i.y || 0)+x_local*m.s+offset_local*m.c;
-                    const globalZ=(n_i.z || 0)+x_local*(m.cz || 0);
-                    const globalNode = { x: globalX, y: globalY, z: globalZ };
-                    const projectedNode = project3DTo2D(globalNode, projectionMode);
-                    p2 = transform(projectedNode.x, projectedNode.y); 
-                    ctx.lineTo(p2.x, p2.y); 
-                } 
-            } 
-            ctx.lineTo(p_end.x, p_end.y); 
-            ctx.closePath(); 
-            ctx.fillStyle = Q_i > 0 ? 'rgba(0,128,0,0.2)' : 'rgba(255,165,0,0.2)'; 
-            ctx.strokeStyle = Q_i > 0 ? 'green' : 'orange'; 
-            ctx.fill(); 
-            ctx.stroke(); 
-            ctx.fillStyle = '#333'; 
-            if(Math.abs(Q_i)>1e-3) labelManager.draw(ctx,`${Q_i.toFixed(2)}`,p1.x,p1.y,nodeObstacles); 
-            if(Math.abs(Q_j)>1e-3) labelManager.draw(ctx,`${Q_j.toFixed(2)}`,p2.x,p2.y,nodeObstacles); 
-        }); 
+            const p1 = transform(p1_proj.x, p1_proj.y);
+
+            ctx.beginPath();
+            ctx.moveTo(p_start.x, p_start.y);
+            ctx.lineTo(p1.x, p1.y);
+
+            let p2 = null;
+            if (Math.abs(w) < 1e-9) {
+                p2 = transform(p2_proj.x, p2_proj.y);
+                ctx.lineTo(p2.x, p2.y);
+            } else {
+                const numPoints = 10;
+                const memberLength = frame.length || member.length || 0;
+                for (let i = 1; i <= numPoints; i++) {
+                    const ratio = Math.min(i / numPoints, 1);
+                    const x_local = ratio * memberLength;
+                    const Q_local = Q_i + (Q_j_converted - Q_i) * ratio;
+                    const offset_local = -Q_local * shearScale;
+
+                    const center = {
+                        x: (n_i.x ?? 0) + frame.localX.x * x_local,
+                        y: (n_i.y ?? 0) + frame.localX.y * x_local,
+                        z: (n_i.z ?? 0) + frame.localX.z * x_local
+                    };
+                    const offsetVec = vecScale(planeData.perpGlobal, offset_local);
+                    const globalPoint = {
+                        x: center.x + offsetVec.x,
+                        y: center.y + offsetVec.y,
+                        z: center.z + offsetVec.z
+                    };
+                    const projectedNode = project3DTo2D(globalPoint, projectionMode);
+                    p2 = transform(projectedNode.x, projectedNode.y);
+                    ctx.lineTo(p2.x, p2.y);
+                }
+            }
+
+            ctx.lineTo(p_end.x, p_end.y);
+            ctx.closePath();
+            ctx.fillStyle = Q_i > 0 ? 'rgba(0,128,0,0.2)' : 'rgba(255,165,0,0.2)';
+            ctx.strokeStyle = Q_i > 0 ? 'green' : 'orange';
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = '#333';
+            if (Math.abs(Q_i) > 1e-3) {
+                labelManager.draw(ctx, `${Q_i.toFixed(2)}`, p1.x, p1.y, nodeObstacles);
+            }
+            if (p2 && Math.abs(Q_j_converted) > 1e-3) {
+                labelManager.draw(ctx, `${Q_j_converted.toFixed(2)}`, p2.x, p2.y, nodeObstacles);
+            }
+        });
     };
 
 // --- 応力度の計算とカラーマッピング ---
@@ -8986,7 +9216,9 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     return;
             }
 
-            const force = forces[idx], load = memberLoads.find(l => l.memberIndex === idx), w = load ? load.w : 0;
+            const force = forces[idx];
+            const load = memberLoads.find(l => l.memberIndex === idx);
+            const w = getMemberDistributedLoadY(load);
             const L = length, N = -force.N_i, Z_mm3 = Z * 1e9, A_mm2 = A * 1e6;
             let maxRatio = 0, M_at_max = 0;
             const ratios = [];
@@ -9031,7 +9263,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         const member = members[memberIndex];
         const force = forces[memberIndex];
         const load = memberLoads.find(l => l.memberIndex === memberIndex);
-        const w = load ? load.w : 0;
+        const w = getMemberDistributedLoadY(load);
         const L = member.length;
         const numPoints = res.ratios.length;
 
@@ -15933,7 +16165,7 @@ const loadPreset = (index) => {
                     const member = members[memberIndex];
                     const force = forces[memberIndex];
                     const load = memberLoads.find(l => l.memberIndex === memberIndex);
-                    const w = load ? load.w : 0;
+                    const w = getMemberDistributedLoadY(load);
                     const L = member.length;
                     
                     // 材料特性の取得
