@@ -3351,10 +3351,23 @@ document.addEventListener('DOMContentLoaded', () => {
             <div style="margin-bottom: 15px;">
                 <label><input type="checkbox" id="bulk-edit-load"> 等分布荷重</label>
                 <div id="bulk-load-container" style="margin-left: 20px; display: none;">
-                    <div style="display: flex; gap: 10px; align-items: center;">
-                        <label>部材座標系y方向 w:</label>
-                        <input type="number" id="bulk-load-w" step="0.01" placeholder="kN/m" style="width: 100px;">
-                        <span style="font-size: 12px;">kN/m</span>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <label style="min-width: 150px;">部材座標系 x 方向 w<sub>x</sub>:</label>
+                            <input type="number" id="bulk-load-wx" step="0.01" placeholder="kN/m" style="width: 120px;">
+                            <span style="font-size: 12px;">kN/m</span>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <label style="min-width: 150px;">部材座標系 y 方向 w<sub>y</sub>:</label>
+                            <input type="number" id="bulk-load-wy" step="0.01" placeholder="kN/m" style="width: 120px;">
+                            <span style="font-size: 12px;">kN/m</span>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <label style="min-width: 150px;">部材座標系 z 方向 w<sub>z</sub>:</label>
+                            <input type="number" id="bulk-load-wz" step="0.01" placeholder="kN/m" style="width: 120px;">
+                            <span style="font-size: 12px;">kN/m</span>
+                        </div>
+                        <div style="font-size: 12px; color: #666;">※ 空欄の方向は変更しません。0 を入力すると該当方向をゼロに更新します。</div>
                     </div>
                 </div>
             </div>
@@ -3514,11 +3527,31 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // 等分布荷重の処理
         if (document.getElementById('bulk-edit-load').checked) {
-            const w = document.getElementById('bulk-load-w').value;
-            if (w) {
-                updates.memberLoad = {
-                    w: parseFloat(w)
-                };
+            const loadInputs = [
+                { key: 'wx', elementId: 'bulk-load-wx' },
+                { key: 'wy', elementId: 'bulk-load-wy', alias: 'w' },
+                { key: 'wz', elementId: 'bulk-load-wz' }
+            ];
+            const memberLoad = {};
+            let hasInput = false;
+
+            loadInputs.forEach(({ key, elementId, alias }) => {
+                const input = document.getElementById(elementId);
+                if (!input) return;
+                const rawValue = input.value;
+                if (rawValue === '') return;
+                const parsed = parseFloat(rawValue);
+                if (Number.isFinite(parsed)) {
+                    memberLoad[key] = parsed;
+                    if (alias) {
+                        memberLoad[alias] = parsed;
+                    }
+                    hasInput = true;
+                }
+            });
+
+            if (hasInput) {
+                updates.memberLoad = memberLoad;
             }
         }
         
@@ -3600,20 +3633,30 @@ document.addEventListener('DOMContentLoaded', () => {
                     const memberInput = loadRow.cells[0].querySelector('input');
                     return parseInt(memberInput.value) - 1 === memberIndex;
                 });
-                
+
+                const hasProp = (prop) => Object.prototype.hasOwnProperty.call(updates.memberLoad, prop);
+                const getSafeValue = (prop, fallback = 0) => {
+                    if (!hasProp(prop)) return fallback;
+                    const value = updates.memberLoad[prop];
+                    return Number.isFinite(value) ? value : 0;
+                };
+
                 if (existingLoadRow) {
-                    const { wx = 0, wy = updates.memberLoad.w ?? 0, wz = 0 } = updates.memberLoad;
-                    const safeValues = {
-                        wx: Number.isFinite(wx) ? wx : 0,
-                        wy: Number.isFinite(wy) ? wy : 0,
-                        wz: Number.isFinite(wz) ? wz : 0
-                    };
-                    existingLoadRow.cells[1].querySelector('input').value = safeValues.wx;
-                    existingLoadRow.cells[2].querySelector('input').value = safeValues.wy;
-                    existingLoadRow.cells[3].querySelector('input').value = safeValues.wz;
+                    if (hasProp('wx')) {
+                        existingLoadRow.cells[1].querySelector('input').value = getSafeValue('wx');
+                    }
+                    if (hasProp('wy') || hasProp('w')) {
+                        const value = hasProp('wy') ? getSafeValue('wy') : getSafeValue('w');
+                        existingLoadRow.cells[2].querySelector('input').value = value;
+                    }
+                    if (hasProp('wz')) {
+                        existingLoadRow.cells[3].querySelector('input').value = getSafeValue('wz');
+                    }
                 } else {
-                    // 新しい部材荷重を追加
-                    const { wx = 0, wy = updates.memberLoad.w ?? 0, wz = 0 } = updates.memberLoad;
+                    const wx = getSafeValue('wx');
+                    const wy = hasProp('wy') ? getSafeValue('wy') : getSafeValue('w');
+                    const wz = getSafeValue('wz');
+
                     if (wx !== 0 || wy !== 0 || wz !== 0) {
                         const newLoadRow = elements.memberLoadsTable.insertRow();
                         newLoadRow.innerHTML = `
@@ -3623,7 +3666,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <td><input type="number" value="${wz}" step="0.01"></td>
                             <td><button class="delete-row-btn">×</button></td>
                         `;
-                        
+
                         // 削除ボタンのイベントリスナーを追加
                         const deleteBtn = newLoadRow.querySelector('.delete-row-btn');
                         deleteBtn.onclick = () => {
@@ -3633,7 +3676,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 drawOnCanvas();
                             }
                         };
-                        
+
                         // 入力変更時の再描画
                         newLoadRow.querySelectorAll('input').forEach(input => {
                             input.addEventListener('change', () => {
@@ -5753,7 +5796,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     };
                 } else {
                     // 3D解析
-                    const { T3D, k_local_3d, i, j } = member;
+                    const { i, j } = member;
                     const d_global_member = [
                         D_global[i*6][0], D_global[i*6+1][0], D_global[i*6+2][0],
                         D_global[i*6+3][0], D_global[i*6+4][0], D_global[i*6+5][0],
@@ -5761,11 +5804,37 @@ document.addEventListener('DOMContentLoaded', () => {
                         D_global[j*6+3][0], D_global[j*6+4][0], D_global[j*6+5][0]
                     ].map(v => [v]);
 
-                    const d_local = mat.multiply(T3D, d_global_member);
-                    let f_local = mat.multiply(k_local_3d, d_local);
+                    const releaseInfo = member.release3D;
+                    const T_use = member.T_active || member.T3D;
+                    const d_local_active = mat.multiply(T_use, d_global_member);
 
-                    // 3D部材荷重の固定端力は未実装のため、現在は0として扱う
-                    // TODO: 3D部材荷重の固定端力を実装
+                    let d_local_full;
+                    if (releaseInfo?.usedCondensation) {
+                        d_local_full = Array.from({ length: 12 }, () => [0]);
+                        releaseInfo.activeLocalIndices.forEach((localIdx, pos) => {
+                            d_local_full[localIdx][0] = d_local_active[pos][0];
+                        });
+                        if (releaseInfo.releaseLocalIndices.length > 0) {
+                            const temp = mat.multiply(releaseInfo.K_ra, d_local_active);
+                            const d_released = mat.multiply(releaseInfo.K_rr_inv, temp);
+                            releaseInfo.releaseLocalIndices.forEach((localIdx, pos) => {
+                                d_local_full[localIdx][0] = -d_released[pos][0];
+                            });
+                        }
+                    } else {
+                        d_local_full = d_local_active;
+                    }
+
+                    const k_for_force = (releaseInfo && !releaseInfo.usedCondensation)
+                        ? (member.k_local_active || member.k_local_3d)
+                        : member.k_local_3d;
+
+                    let f_local = mat.multiply(k_for_force, d_local_full);
+
+                    if (fixedEndForces[idx]) {
+                        const fel_mat = fixedEndForces[idx].map(v => [v]);
+                        f_local = mat.add(f_local, fel_mat);
+                    }
 
                     // 3D断面力の全成分を保存
                     // f_local: [Fx_i, Fy_i, Fz_i, Mx_i, My_i, Mz_i, Fx_j, Fy_j, Fz_j, Mx_j, My_j, Mz_j]
@@ -6432,22 +6501,68 @@ document.addEventListener('DOMContentLoaded', () => {
         lastResults = { D, R, forces, nodes, members, nodeLoads, memberLoads };
         window.lastResults = lastResults; // グローバルに保存
 
+        const dofPerNode = (nodes?.length && D?.length) ? (D.length / nodes.length) : 0;
+        const is3D = dofPerNode === 6;
+
         // エクセル出力用の解析結果を保存
         lastAnalysisResult = {
-            displacements: D ? Array.from({length: D.length / 3}, (_, i) => ({
-                x: D[i*3][0],
-                y: D[i*3+1][0],
-                rotation: D[i*3+2][0]
-            })) : [],
-            forces: forces ? forces.map(f => ({
-                i: { N: -f.N_i, Q: f.Q_i, M: f.M_i },
-                j: { N: f.N_j, Q: -f.Q_j, M: f.M_j }
-            })) : [],
-            reactions: R ? Array.from({length: R.length / 3}, (_, i) => ({
-                x: -R[i*3][0] || 0,
-                y: -R[i*3+1][0] || 0,
-                mz: -R[i*3+2][0] || 0
-            })) : [],
+            displacements: D ? (
+                is3D
+                    ? Array.from({ length: D.length / 6 }, (_, i) => ({
+                        x: D[i*6][0],
+                        y: D[i*6+1][0],
+                        z: D[i*6+2][0],
+                        rx: D[i*6+3][0],
+                        ry: D[i*6+4][0],
+                        rz: D[i*6+5][0]
+                    }))
+                    : Array.from({ length: D.length / 3 }, (_, i) => ({
+                        x: D[i*3][0],
+                        y: D[i*3+1][0],
+                        rotation: D[i*3+2][0]
+                    }))
+            ) : [],
+            forces: forces ? (
+                is3D
+                    ? forces.map(f => ({
+                        i: {
+                            N: -f.N_i,
+                            Vy: f.Qy_i,
+                            Vz: f.Qz_i,
+                            Tx: f.Mx_i,
+                            My: f.My_i,
+                            Mz: f.Mz_i
+                        },
+                        j: {
+                            N: f.N_j,
+                            Vy: -f.Qy_j,
+                            Vz: -f.Qz_j,
+                            Tx: f.Mx_j,
+                            My: f.My_j,
+                            Mz: f.Mz_j
+                        }
+                    }))
+                    : forces.map(f => ({
+                        i: { N: -f.N_i, Q: f.Q_i, M: f.M_i },
+                        j: { N: f.N_j, Q: -f.Q_j, M: f.M_j }
+                    }))
+            ) : [],
+            reactions: R ? (
+                is3D
+                    ? Array.from({ length: R.length / 6 }, (_, i) => ({
+                        x: -R[i*6][0] || 0,
+                        y: -R[i*6+1][0] || 0,
+                        z: -R[i*6+2][0] || 0,
+                        mx: -R[i*6+3][0] || 0,
+                        my: -R[i*6+4][0] || 0,
+                        mz: -R[i*6+5][0] || 0
+                    }))
+                    : Array.from({ length: R.length / 3 }, (_, i) => ({
+                        x: -R[i*3][0] || 0,
+                        y: -R[i*3+1][0] || 0,
+                        mz: -R[i*3+2][0] || 0
+                    }))
+            ) : [],
             nodes: nodes || [],
             members: members || [],
             sectionCheckResults: null  // 後で断面検定実行時に設定される
@@ -6468,12 +6583,12 @@ document.addEventListener('DOMContentLoaded', () => {
         elements.errorMessage.style.display = 'none';
         
         // 🔧 2D/3D判定（自由度数から判定）
-        const dofPerNode = D.length / nodes.length;
-        const is3D = (dofPerNode === 6);
+        const dofPerNodeDisplay = D.length / nodes.length;
+        const is3DDisplay = (dofPerNodeDisplay === 6);
         
         // 変位結果の表示
         let dispHTML;
-        if (is3D) {
+        if (is3DDisplay) {
             // 3D表示
             dispHTML = `<thead><tr><th>節点 #</th><th>変位 δx (mm)</th><th>変位 δy (mm)</th><th>変位 δz (mm)</th><th>回転角 θx (rad)</th><th>回転角 θy (rad)</th><th>回転角 θz (rad)</th></tr></thead><tbody>`;
             const numNodes = D.length / 6;
@@ -6500,7 +6615,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // 反力結果の表示
         let reactHTML;
-        if (is3D) {
+        if (is3DDisplay) {
             // 3D表示
             reactHTML = `<thead><tr><th>節点 #</th><th>反力 Rx (kN)</th><th>反力 Ry (kN)</th><th>反力 Rz (kN)</th><th>反力 Mx (kN・m)</th><th>反力 My (kN・m)</th><th>反力 Mz (kN・m)</th></tr></thead><tbody>`;
             nodes.forEach((n, i) => {
@@ -6528,12 +6643,27 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         // 断面力結果の表示
-        let forceHTML = `<thead><tr><th>部材 #</th><th>始端 #i</th><th>終端 #j</th><th>軸力 N (kN)</th><th>せん断力 Q (kN)</th><th>曲げM (kN・m)</th></tr></thead><tbody>`;
-        forces.forEach((f, i) => {
-            const ni = members[i].i+1, nj = members[i].j+1;
-            forceHTML += `<tr><td rowspan="2">${i+1}</td><td>${ni} (i端)</td><td>-</td><td>${(-f.N_i).toFixed(2)}</td><td>${f.Q_i.toFixed(2)}</td><td>${f.M_i.toFixed(2)}</td></tr>`;
-            forceHTML += `<tr><td>-</td><td>${nj} (j端)</td><td>${f.N_j.toFixed(2)}</td><td>${(-f.Q_j).toFixed(2)}</td><td>${f.M_j.toFixed(2)}</td></tr>`;
-        });
+        let forceHTML;
+        if (is3DDisplay) {
+            forceHTML = `<thead><tr><th>部材 #</th><th>端部</th><th>節点 #</th><th>軸力 N<sub>x</sub> (kN)</th><th>せん断力 V<sub>y</sub> (kN)</th><th>せん断力 V<sub>z</sub> (kN)</th><th>ねじり T<sub>x</sub> (kN・m)</th><th>曲げ M<sub>y</sub> (kN・m)</th><th>曲げ M<sub>z</sub> (kN・m)</th></tr></thead><tbody>`;
+            forces.forEach((f, idx) => {
+                const ni = members[idx].i + 1;
+                const nj = members[idx].j + 1;
+                forceHTML += `<tr><td rowspan="2">${idx + 1}</td><td>i端</td><td>${ni}</td>` +
+                    `<td>${(-f.N_i).toFixed(2)}</td><td>${f.Qy_i.toFixed(2)}</td><td>${f.Qz_i.toFixed(2)}</td>` +
+                    `<td>${f.Mx_i.toFixed(2)}</td><td>${f.My_i.toFixed(2)}</td><td>${f.Mz_i.toFixed(2)}</td></tr>`;
+                forceHTML += `<tr><td>j端</td><td>${nj}</td>` +
+                    `<td>${f.N_j.toFixed(2)}</td><td>${(-f.Qy_j).toFixed(2)}</td><td>${(-f.Qz_j).toFixed(2)}</td>` +
+                    `<td>${f.Mx_j.toFixed(2)}</td><td>${f.My_j.toFixed(2)}</td><td>${f.Mz_j.toFixed(2)}</td></tr>`;
+            });
+        } else {
+            forceHTML = `<thead><tr><th>部材 #</th><th>始端 #i</th><th>終端 #j</th><th>軸力 N (kN)</th><th>せん断力 Q (kN)</th><th>曲げM (kN・m)</th></tr></thead><tbody>`;
+            forces.forEach((f, i) => {
+                const ni = members[i].i+1, nj = members[i].j+1;
+                forceHTML += `<tr><td rowspan="2">${i+1}</td><td>${ni} (i端)</td><td>-</td><td>${(-f.N_i).toFixed(2)}</td><td>${f.Q_i.toFixed(2)}</td><td>${f.M_i.toFixed(2)}</td></tr>`;
+                forceHTML += `<tr><td>-</td><td>${nj} (j端)</td><td>${f.N_j.toFixed(2)}</td><td>${(-f.Q_j).toFixed(2)}</td><td>${f.M_j.toFixed(2)}</td></tr>`;
+            });
+        }
         forceHTML += '</tbody>';
         if (elements.forceResults) {
             elements.forceResults.innerHTML = forceHTML;
@@ -16005,11 +16135,29 @@ const loadPreset = (index) => {
         data.push([]);
         
         if (lastAnalysisResult && lastAnalysisResult.displacements && lastAnalysisResult.displacements.length > 0) {
+            const dispSample = lastAnalysisResult.displacements[0];
+            const is3DDisp = dispSample && typeof dispSample.z === 'number';
+
             data.push(['■ 節点変位結果']);
-            data.push(['節点番号', 'X変位(mm)', 'Y変位(mm)', '回転(rad)']);
-            lastAnalysisResult.displacements.forEach((disp, i) => {
-                data.push([i + 1, (disp.x * 1000).toFixed(3), (disp.y * 1000).toFixed(3), disp.rotation.toFixed(6)]);
-            });
+            if (is3DDisp) {
+                data.push(['節点番号', 'X変位(mm)', 'Y変位(mm)', 'Z変位(mm)', 'θx(rad)', 'θy(rad)', 'θz(rad)']);
+                lastAnalysisResult.displacements.forEach((disp, i) => {
+                    data.push([
+                        i + 1,
+                        (disp.x * 1000).toFixed(3),
+                        (disp.y * 1000).toFixed(3),
+                        (disp.z * 1000).toFixed(3),
+                        disp.rx.toFixed(6),
+                        disp.ry.toFixed(6),
+                        disp.rz.toFixed(6)
+                    ]);
+                });
+            } else {
+                data.push(['節点番号', 'X変位(mm)', 'Y変位(mm)', '回転(rad)']);
+                lastAnalysisResult.displacements.forEach((disp, i) => {
+                    data.push([i + 1, (disp.x * 1000).toFixed(3), (disp.y * 1000).toFixed(3), disp.rotation.toFixed(6)]);
+                });
+            }
             data.push([]);
         } else {
             data.push(['※ 節点変位結果がありません']);
@@ -16017,19 +16165,47 @@ const loadPreset = (index) => {
         }
         
         if (lastAnalysisResult && lastAnalysisResult.forces && lastAnalysisResult.forces.length > 0) {
+            const forceSample = lastAnalysisResult.forces[0];
+            const is3DForce = forceSample && forceSample.i && Object.prototype.hasOwnProperty.call(forceSample.i, 'Vy');
+
             data.push(['■ 部材力結果']);
-            data.push(['部材番号', 'i端軸力(kN)', 'i端せん断力(kN)', 'i端曲げモーメント(kN·m)', 'j端軸力(kN)', 'j端せん断力(kN)', 'j端曲げモーメント(kN·m)']);
-            lastAnalysisResult.forces.forEach((force, i) => {
+            if (is3DForce) {
                 data.push([
-                    i + 1, 
-                    force.i.N.toFixed(2), 
-                    force.i.Q.toFixed(2), 
-                    force.i.M.toFixed(2),
-                    force.j.N.toFixed(2), 
-                    force.j.Q.toFixed(2), 
-                    force.j.M.toFixed(2)
+                    '部材番号',
+                    'i端軸力(kN)', 'i端せん断力Vy(kN)', 'i端せん断力Vz(kN)', 'i端ねじりTx(kN·m)', 'i端曲げMy(kN·m)', 'i端曲げMz(kN·m)',
+                    'j端軸力(kN)', 'j端せん断力Vy(kN)', 'j端せん断力Vz(kN)', 'j端ねじりTx(kN·m)', 'j端曲げMy(kN·m)', 'j端曲げMz(kN·m)'
                 ]);
-            });
+                lastAnalysisResult.forces.forEach((force, i) => {
+                    data.push([
+                        i + 1,
+                        force.i.N.toFixed(2),
+                        force.i.Vy.toFixed(2),
+                        force.i.Vz.toFixed(2),
+                        force.i.Tx.toFixed(2),
+                        force.i.My.toFixed(2),
+                        force.i.Mz.toFixed(2),
+                        force.j.N.toFixed(2),
+                        force.j.Vy.toFixed(2),
+                        force.j.Vz.toFixed(2),
+                        force.j.Tx.toFixed(2),
+                        force.j.My.toFixed(2),
+                        force.j.Mz.toFixed(2)
+                    ]);
+                });
+            } else {
+                data.push(['部材番号', 'i端軸力(kN)', 'i端せん断力(kN)', 'i端曲げモーメント(kN·m)', 'j端軸力(kN)', 'j端せん断力(kN)', 'j端曲げモーメント(kN·m)']);
+                lastAnalysisResult.forces.forEach((force, i) => {
+                    data.push([
+                        i + 1,
+                        force.i.N.toFixed(2),
+                        force.i.Q.toFixed(2),
+                        force.i.M.toFixed(2),
+                        force.j.N.toFixed(2),
+                        force.j.Q.toFixed(2),
+                        force.j.M.toFixed(2)
+                    ]);
+                });
+            }
         } else {
             data.push(['※ 部材力結果がありません']);
         }
