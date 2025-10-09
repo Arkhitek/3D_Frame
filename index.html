@@ -350,6 +350,15 @@
                         <h3>せん断力図 (SFD) (kN)</h3>
                         <canvas id="shear-canvas"></canvas>
                     </div>
+                    <!-- 第2軸応力図用のキャンバス（3D構造の場合のみ表示） -->
+                    <div class="canvas-container" id="secondary-moment-container" style="display: none;">
+                        <h3>第2軸曲げモーメント図 (BMD) (kN・m)</h3>
+                        <canvas id="moment-canvas2"></canvas>
+                    </div>
+                    <div class="canvas-container" id="secondary-shear-container" style="display: none;">
+                        <h3>第2軸せん断力図 (SFD) (kN)</h3>
+                        <canvas id="shear-canvas2"></canvas>
+                    </div>
                 </div>
 
                 <h3>節点変位</h3>

@@ -1,4 +1,28 @@
-﻿// 木材基準強度データ (N/mm²)
+﻿// 3D座標を2D投影する関数（グローバルスコープ）
+const project3DTo2D = (node, projectionMode) => {
+    const nodeY = node.y !== undefined ? node.y : 0;  // Y座標(水平)
+    const nodeZ = node.z !== undefined ? node.z : 0;  // Z座標(鉛直)
+    
+    switch(projectionMode) {
+        case 'xy':  // XY平面(水平面を上から見た図)
+            return { x: node.x, y: nodeY };
+        case 'xz':  // XZ平面(X方向鉛直断面)
+            return { x: node.x, y: nodeZ };
+        case 'yz':  // YZ平面(Y方向鉛直断面)
+            return { x: nodeY, y: nodeZ };
+        case 'iso': // 等角投影(アイソメトリック)
+            // 30度回転の等角投影
+            const angle = Math.PI / 6; // 30度
+            return {
+                x: node.x - nodeY * Math.cos(angle),
+                y: nodeZ + nodeY * Math.sin(angle)
+            };
+        default:
+            return { x: node.x, y: nodeZ };
+    }
+};
+
+// 木材基準強度データ (N/mm²)
 const WOOD_BASE_STRENGTH_DATA = {
     "Matsu_Group": { name: "あかまつ、くろまつ、べいまつ", fc: 22.2, ft: 17.7, fb: 28.2, fs: 2.4 },
     "Hinoki_Group": { name: "からまつ、ひば、ひのき、べいひ", fc: 20.7, ft: 16.2, fb: 26.7, fs: 2.1 },
@@ -2121,6 +2145,10 @@ document.addEventListener('DOMContentLoaded', () => {
         momentCanvas: document.getElementById('moment-canvas'),
         axialCanvas: document.getElementById('axial-canvas'),
         shearCanvas: document.getElementById('shear-canvas'),
+        momentCanvas2: document.getElementById('moment-canvas2'),
+        shearCanvas2: document.getElementById('shear-canvas2'),
+        secondaryMomentContainer: document.getElementById('secondary-moment-container'),
+        secondaryShearContainer: document.getElementById('secondary-shear-container'),
         stressCanvas: document.getElementById('stress-canvas'),
         projectionMode: document.getElementById('projection-mode'),
         modeSelectBtn: document.getElementById('mode-select'),
@@ -6674,11 +6702,63 @@ document.addEventListener('DOMContentLoaded', () => {
         // 新しい全投影対応の描画関数を使用
         drawDisplacementDiagram(nodes, members, D, memberLoads);
         
-        // 応力図描画（全投影対応）
+        // 応力図描画（現在の描画 + 第2軸表示）
         if (typeof drawStressDiagram === 'function') {
-            drawStressDiagram(elements.momentCanvas, nodes, members, forces, 'moment', '曲げモーメント図 (BMD) (kN・m)');
+            // 投影面に応じてタイトルを動的に設定
+            const projectionMode = getCurrentProjectionMode();
+            let momentTitle = '曲げモーメント図 (BMD) (kN・m)';
+            let shearTitle = 'せん断力図 (SFD) (kN)';
+            
+            if (projectionMode === 'xy') {
+                momentTitle = '曲げモーメント図 Mz (BMD) (kN・m)';
+                shearTitle = 'せん断力図 Vz (SFD) (kN)';
+            } else if (projectionMode === 'xz') {
+                momentTitle = '曲げモーメント図 My (BMD) (kN・m)';
+                shearTitle = 'せん断力図 Vy (SFD) (kN)';
+            } else if (projectionMode === 'yz') {
+                momentTitle = '曲げモーメント図 Mx (BMD) (kN・m)';
+                shearTitle = 'せん断力図 Vx (SFD) (kN)';
+            }
+            
+            // 現在の安定した描画を維持
+            drawStressDiagram(elements.momentCanvas, nodes, members, forces, 'moment', momentTitle);
             drawStressDiagram(elements.axialCanvas, nodes, members, forces, 'axial', '軸力図 (AFD) (kN)');
-            drawStressDiagram(elements.shearCanvas, nodes, members, forces, 'shear', 'せん断力図 (SFD) (kN)');
+            drawStressDiagram(elements.shearCanvas, nodes, members, forces, 'shear', shearTitle);
+            
+            // 第2軸の応力図を別のキャンバスに描画（3D構造の場合）
+            const dofPerNode = (nodes?.length && D?.length) ? (D.length / nodes.length) : 0;
+            const is3D = dofPerNode === 6;
+            
+            if (is3D && typeof drawSecondaryAxisStressDiagram === 'function') {
+                console.log('🚀 3D構造: 第2軸応力図を追加表示');
+                try {
+                    // 第2軸用のキャンバスを表示
+                    if (elements.secondaryMomentContainer) {
+                        elements.secondaryMomentContainer.style.display = 'block';
+                    }
+                    if (elements.secondaryShearContainer) {
+                        elements.secondaryShearContainer.style.display = 'block';
+                    }
+                    
+                    // 第2軸の応力図を別のキャンバスに描画
+                    if (elements.momentCanvas2) {
+                        drawSecondaryAxisStressDiagram(elements.momentCanvas2, nodes, members, forces, 'moment', '曲げモーメント図 (BMD)');
+                    }
+                    if (elements.shearCanvas2) {
+                        drawSecondaryAxisStressDiagram(elements.shearCanvas2, nodes, members, forces, 'shear', 'せん断力図 (SFD)');
+                    }
+                } catch (error) {
+                    console.error('❌ 第2軸応力図でエラー:', error);
+                }
+            } else {
+                // 2D構造の場合は第2軸用のキャンバスを非表示
+                if (elements.secondaryMomentContainer) {
+                    elements.secondaryMomentContainer.style.display = 'none';
+                }
+                if (elements.secondaryShearContainer) {
+                    elements.secondaryShearContainer.style.display = 'none';
+                }
+            }
         } else {
             // フォールバック: 古い単一投影の描画関数
             drawMomentDiagram(nodes, members, forces, memberLoads);
@@ -6784,30 +6864,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return memberLabelPositions;
     }
     
-    // 3D座標を2D投影する関数
-    // 座標系: X-Y平面=水平、Z方向=鉛直上向き
-    const project3DTo2D = (node, projectionMode) => {
-        const nodeY = node.y !== undefined ? node.y : 0;  // Y座標(水平)
-        const nodeZ = node.z !== undefined ? node.z : 0;  // Z座標(鉛直)
-        
-        switch(projectionMode) {
-            case 'xy':  // XY平面(水平面を上から見た図)
-                return { x: node.x, y: nodeY };
-            case 'xz':  // XZ平面(X方向鉛直断面)
-                return { x: node.x, y: nodeZ };
-            case 'yz':  // YZ平面(Y方向鉛直断面)
-                return { x: nodeY, y: nodeZ };
-            case 'iso': // 等角投影(アイソメトリック)
-                // 30度回転の等角投影
-                const angle = Math.PI / 6; // 30度
-                return {
-                    x: node.x - nodeY * Math.cos(angle),
-                    y: nodeZ + nodeY * Math.sin(angle)
-                };
-            default:
-                return { x: node.x, y: nodeZ };
-        }
-    };
+    // project3DTo2D関数はグローバルスコープで定義済み
     
     // window変数として登録（クロススコープアクセス用）
     window.lastDrawingContext = null;
