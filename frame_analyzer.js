@@ -9442,8 +9442,21 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             const L = length, N = -force.N_i, Z_mm3 = Z * 1e9, A_mm2 = A * 1e6;
             
             // 両軸対応の断面係数計算
-            const Zy_mm3 = Iy ? (Iy / (Math.sqrt(Iy / A) / 2)) * 1e9 : Z_mm3; // Y軸周りの断面係数
-            const Zz_mm3 = Iz ? (Iz / (Math.sqrt(Iz / A) / 2)) * 1e9 : Z_mm3; // Z軸周りの断面係数
+            // Y軸周りの断面係数（My用）
+            let Zy_mm3 = Z_mm3;
+            if (Iy && A) {
+                const ry = Math.sqrt(Iy / A); // Y軸周りの回転半径
+                const cy = ry * 2; // 断面の高さ（概算）
+                Zy_mm3 = (Iy / cy) * 1e9; // Y軸周りの断面係数
+            }
+            
+            // Z軸周りの断面係数（Mz用）
+            let Zz_mm3 = Z_mm3;
+            if (Iz && A) {
+                const rz = Math.sqrt(Iz / A); // Z軸周りの回転半径
+                const cz = rz * 2; // 断面の幅（概算）
+                Zz_mm3 = (Iz / cz) * 1e9; // Z軸周りの断面係数
+            }
             
             let maxRatio = 0, maxRatioY = 0, maxRatioZ = 0, M_at_max = 0;
             const ratios = [];
@@ -9456,12 +9469,12 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 const M_parabolic = w * L * x / 2 - w * x**2 / 2;
                 const M_x = M_linear + M_parabolic;
                 
-                // Y軸周りのモーメント（Z軸周り）
-                const My_linear = -force.Mz_i * (1 - x/L) + force.Mz_j * (x/L);
+                // Y軸周りの曲げモーメント（My）
+                const My_linear = -force.My_i * (1 - x/L) + force.My_j * (x/L);
                 const My_x = My_linear;
                 
-                // Z軸周りのモーメント（Y軸周り）
-                const Mz_linear = -force.My_i * (1 - x/L) + force.My_j * (x/L);
+                // Z軸周りの曲げモーメント（Mz）
+                const Mz_linear = -force.Mz_i * (1 - x/L) + force.Mz_j * (x/L);
                 const Mz_x = Mz_linear;
                 
                 const sigma_a = (N * 1000) / A_mm2;
@@ -9495,11 +9508,13 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             }
             
             results.push({ 
-                maxRatio, 
+                maxRatio: Math.max(maxRatio, maxRatioY, maxRatioZ), // 両軸の最大値
                 maxRatioY, 
                 maxRatioZ,
                 N, 
                 M: M_at_max, 
+                My: Math.max(Math.abs(force.My_i || 0), Math.abs(force.My_j || 0)), // Y軸周りの最大曲げモーメント
+                Mz: Math.max(Math.abs(force.Mz_i || 0), Math.abs(force.Mz_j || 0)), // Z軸周りの最大曲げモーメント
                 checkType: '両軸組合せ応力', 
                 status: Math.max(maxRatio, maxRatioY, maxRatioZ) > 1.0 ? 'NG' : 'OK', 
                 ratios,
@@ -9785,100 +9800,55 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 });
             }
             
-            // 検定比分布を塗りつぶし（応力図と同様）
-            const positiveFillColor = 'rgba(255, 100, 100, 0.5)';
-            const negativeFillColor = 'rgba(100, 100, 255, 0.5)';
-            
+            // 検定比分布を塗りつぶし（応力図と同じ方式）
             ctx.save();
-            ctx.globalAlpha = 1.0;
-            ctx.globalCompositeOperation = 'source-over';
+            ctx.beginPath();
             
-            // 各セグメントごとに台形を描画
-            for (let k = 0; k < ratioPoints.length - 1; k++) {
-                const p1 = ratioPoints[k];
-                const p2 = ratioPoints[k + 1];
+            // 外側の輪郭
+            for (let k = 0; k <= numDivisions; k++) {
+                const p = ratioPoints[k];
+                const px = p.x + perpX * p.offset;
+                const py = p.y + perpY * p.offset;
                 
-                if (Math.abs(p1.value) < 1e-9 && Math.abs(p2.value) < 1e-9) {
-                    continue;
-                }
-                
-                const avgValue = (p1.value + p2.value) / 2;
-                const fillColor = avgValue >= 0 ? positiveFillColor : negativeFillColor;
-                
-                // 台形を描画
-                const base1 = { x: p1.x, y: p1.y };
-                const base2 = { x: p2.x, y: p2.y };
-                const off1 = { 
-                    x: p1.x + perpX * p1.offset, 
-                    y: p1.y - perpY * p1.offset 
-                };
-                const off2 = { 
-                    x: p2.x + perpX * p2.offset, 
-                    y: p2.y - perpY * p2.offset 
-                };
-                
-                ctx.fillStyle = fillColor;
-                ctx.beginPath();
-                ctx.moveTo(base1.x, base1.y);
-                ctx.lineTo(base2.x, base2.y);
-                ctx.lineTo(off2.x, off2.y);
-                ctx.lineTo(off1.x, off1.y);
-                ctx.closePath();
-                ctx.fill();
-                
-                // 輪郭線
-                ctx.strokeStyle = avgValue >= 0 ? '#ff0000' : '#0000ff';
-                ctx.lineWidth = 1;
-                ctx.stroke();
+                if (k === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
             }
+            
+            // 内側の輪郭（薄い線）
+            for (let k = numDivisions; k >= 0; k--) {
+                const p = ratioPoints[k];
+                const px = p.x + perpX * p.offset * 0.1;
+                const py = p.y + perpY * p.offset * 0.1;
+                ctx.lineTo(px, py);
+            }
+            
+            ctx.closePath();
+            
+            // 検定比に応じた色で塗りつぶし
+            const maxMemberRatio = Math.max(...ratios);
+            const color = window.getRatioColor ? window.getRatioColor(maxMemberRatio) : getRatioColor(maxMemberRatio);
+            ctx.fillStyle = color + '60'; // 透明度付き
+            ctx.fill();
             
             ctx.restore();
             
-            // 基準線（D/C=1.0）
-            ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-            ctx.lineWidth = 1;
-            ctx.setLineDash([5, 5]);
+            // 輪郭線
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.moveTo(start.x + perpX * ratioScale, start.y - perpY * ratioScale);
-            ctx.lineTo(end.x + perpX * ratioScale, end.y - perpY * ratioScale);
+            for (let k = 0; k <= numDivisions; k++) {
+                const p = ratioPoints[k];
+                const px = p.x + perpX * p.offset;
+                const py = p.y + perpY * p.offset;
+                
+                if (k === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
             ctx.stroke();
-            ctx.setLineDash([]);
             
-            // 検定比数値を複数箇所に表示
-            const displayPoints = [
-                { index: 0, label: '始端' },           // 始端
-                { index: Math.floor(numDivisions / 4), label: '1/4' },     // 1/4点
-                { index: Math.floor(numDivisions / 2), label: '中央' },     // 中央
-                { index: Math.floor(numDivisions * 3 / 4), label: '3/4' }, // 3/4点
-                { index: numDivisions, label: '終端' }   // 終端
-            ];
+            // 基準線（D/C=1.0）は表示しない（応力図と同様）
             
-            displayPoints.forEach(({ index, label }) => {
-                if (index >= 0 && index <= numDivisions) {
-                    const point = ratioPoints[index];
-                    if (Math.abs(point.value) > 0.001) {
-                        const markerX = point.x + perpX * point.offset;
-                        const markerY = point.y - perpY * point.offset;
-                        
-                        // マーカー
-                        ctx.fillStyle = '#000';
-                        ctx.beginPath();
-                        ctx.arc(markerX, markerY, 3, 0, 2 * Math.PI);
-                        ctx.fill();
-                        
-                        // 数値を表示
-                        const valueText = point.value.toFixed(3);
-                        const labelText = `${label}: ${valueText}`;
-                        drawTextWithPlacement(ctx, labelText, markerX, markerY - 15, labelObstacles, {
-                            strokeStyle: 'white',
-                            fillStyle: '#000',
-                            padding: 4
-                        });
-                    }
-                }
-            });
-            
-            // 最大値の位置にも特別に表示
+            // 数値表示：各部材の最大値のみ
             let maxAbsValue = 0;
             let maxAbsIndex = 0;
             ratioPoints.forEach((p, idx) => {
@@ -9888,24 +9858,30 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 }
             });
             
-            if (maxAbsIndex > 0 && maxAbsIndex < numDivisions) {
+            if (maxAbsValue > 0.001) {
                 const maxPoint = ratioPoints[maxAbsIndex];
-                const markerX = maxPoint.x + perpX * maxPoint.offset;
-                const markerY = maxPoint.y - perpY * maxPoint.offset;
                 
-                // 最大値のマーカー（少し大きく）
+                // 最大値の位置を正確に計算（検定比分布の外側に配置）
+                const markerX = maxPoint.x + perpX * maxPoint.offset;
+                const markerY = maxPoint.y + perpY * maxPoint.offset;
+                
+                // 最大値のマーカー（赤丸）
                 ctx.fillStyle = '#ff0000';
                 ctx.beginPath();
                 ctx.arc(markerX, markerY, 5, 0, 2 * Math.PI);
                 ctx.fill();
                 
-                // 最大値の数値を表示
-                const maxValueText = `最大: ${maxPoint.value.toFixed(3)}`;
-                drawTextWithPlacement(ctx, maxValueText, markerX, markerY + 20, labelObstacles, {
-                    strokeStyle: 'white',
-                    fillStyle: '#ff0000',
-                    padding: 6
-                });
+                // 白い縁取り
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                // 最大値の数値を表示（マーカーの近傍）
+                const maxValueText = maxPoint.value.toFixed(3);
+                ctx.font = 'bold 14px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillStyle = '#ff0000';
+                ctx.fillText(maxValueText, markerX, markerY - 20);
             }
         });
         
@@ -10191,13 +10167,67 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
     const displaySectionCheckResults = () => {
         if (!lastSectionCheckResults) { elements.sectionCheckResults.innerHTML = ''; return; }
         console.log("断面算定の計算結果:", lastSectionCheckResults);
-        let html = `<thead><tr><th>部材 #</th><th>軸力 N (kN)</th><th>曲げ M (kN·m)</th><th>検定項目</th><th>検定比 (D/C)</th><th>判定</th><th>詳細</th></tr></thead><tbody>`;
-        lastSectionCheckResults.forEach((res, i) => {
-            const is_ng = res.status === 'NG';
-            const maxRatioText = (typeof res.maxRatio === 'number' && isFinite(res.maxRatio)) ? res.maxRatio.toFixed(2) : res.maxRatio;
-            const statusText = is_ng ? '❌ NG' : '✅ OK';
-            html += `<tr ${is_ng ? 'style="background-color: #fdd;"' : ''}><td>${i + 1}</td><td>${res.N.toFixed(2)}</td><td>${res.M.toFixed(2)}</td><td>${res.checkType}</td><td style="font-weight: bold; ${is_ng ? 'color: red;' : ''}">${maxRatioText}</td><td>${statusText}</td><td><button onclick="showSectionCheckDetail(${i})">詳細</button></td></tr>`;
-        });
+        
+        // 3D構造かどうかを判定
+        const dofPerNode = lastResults?.D?.length / lastResults?.nodes?.length;
+        const is3D = dofPerNode === 6;
+        
+        let html;
+        if (is3D) {
+            // 3D構造の場合：両軸の結果を表示
+            html = `<thead><tr><th>部材 #</th><th>軸力 N (kN)</th><th>曲げ M1 (kN·m)</th><th>曲げ M2 (kN·m)</th><th>検定項目</th><th>検定比1 (D/C)</th><th>検定比2 (D/C)</th><th>最大検定比</th><th>判定</th><th>詳細</th></tr></thead><tbody>`;
+            lastSectionCheckResults.forEach((res, i) => {
+                const is_ng = res.status === 'NG';
+                const maxRatioText = (typeof res.maxRatio === 'number' && isFinite(res.maxRatio)) ? res.maxRatio.toFixed(2) : res.maxRatio;
+                const statusText = is_ng ? '❌ NG' : '✅ OK';
+                
+                // 各軸の検定比を計算
+                const ratio1 = res.ratios && res.ratios.length > 0 ? Math.max(...res.ratios).toFixed(2) : '0.00';
+                const ratio2 = res.ratiosY && res.ratiosY.length > 0 ? Math.max(...res.ratiosY).toFixed(2) : '0.00';
+                
+                // 第2軸の曲げモーメントを部材力から取得
+                let M1_display = '0.00';
+                let M2_display = '0.00';
+                if (lastResults?.forces && lastResults.forces[i]) {
+                    const force = lastResults.forces[i];
+                    
+                    // 第1軸の曲げモーメント（Mz_i, Mz_jの絶対値の大きい方）
+                    const Mz_i_abs = Math.abs(force.Mz_i || 0);
+                    const Mz_j_abs = Math.abs(force.Mz_j || 0);
+                    const maxMz = Math.max(Mz_i_abs, Mz_j_abs);
+                    M1_display = maxMz.toFixed(2);
+                    
+                    // 第2軸の曲げモーメント（My_i, My_jの絶対値の大きい方）
+                    const My_i_abs = Math.abs(force.My_i || 0);
+                    const My_j_abs = Math.abs(force.My_j || 0);
+                    const maxMy = Math.max(My_i_abs, My_j_abs);
+                    M2_display = maxMy.toFixed(2);
+                }
+                
+                html += `<tr ${is_ng ? 'style="background-color: #fdd;"' : ''}>
+                    <td>${i + 1}</td>
+                    <td>${res.N.toFixed(2)}</td>
+                    <td>${M1_display}</td>
+                    <td>${M2_display}</td>
+                    <td>${res.checkType}</td>
+                    <td style="font-weight: bold; ${parseFloat(ratio1) > 1.0 ? 'color: red;' : ''}">${ratio1}</td>
+                    <td style="font-weight: bold; ${parseFloat(ratio2) > 1.0 ? 'color: red;' : ''}">${ratio2}</td>
+                    <td style="font-weight: bold; ${is_ng ? 'color: red;' : ''}">${maxRatioText}</td>
+                    <td>${statusText}</td>
+                    <td><button onclick="showSectionCheckDetail(${i})">詳細</button></td>
+                </tr>`;
+            });
+        } else {
+            // 2D構造の場合：従来の表示
+            html = `<thead><tr><th>部材 #</th><th>軸力 N (kN)</th><th>曲げ M (kN·m)</th><th>検定項目</th><th>検定比 (D/C)</th><th>判定</th><th>詳細</th></tr></thead><tbody>`;
+            lastSectionCheckResults.forEach((res, i) => {
+                const is_ng = res.status === 'NG';
+                const maxRatioText = (typeof res.maxRatio === 'number' && isFinite(res.maxRatio)) ? res.maxRatio.toFixed(2) : res.maxRatio;
+                const statusText = is_ng ? '❌ NG' : '✅ OK';
+                html += `<tr ${is_ng ? 'style="background-color: #fdd;"' : ''}><td>${i + 1}</td><td>${res.N.toFixed(2)}</td><td>${res.M.toFixed(2)}</td><td>${res.checkType}</td><td style="font-weight: bold; ${is_ng ? 'color: red;' : ''}">${maxRatioText}</td><td>${statusText}</td><td><button onclick="showSectionCheckDetail(${i})">詳細</button></td></tr>`;
+            });
+        }
+        
         html += `</tbody>`;
         elements.sectionCheckResults.innerHTML = html;
     };
