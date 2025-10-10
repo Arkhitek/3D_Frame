@@ -6720,18 +6720,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 shearTitle = 'せん断力図 Vx (SFD) (kN)';
             }
             
-            // 現在の安定した描画を維持
-            drawStressDiagram(elements.momentCanvas, nodes, members, forces, 'moment', momentTitle);
-            drawStressDiagram(elements.axialCanvas, nodes, members, forces, 'axial', '軸力図 (AFD) (kN)');
-            drawStressDiagram(elements.shearCanvas, nodes, members, forces, 'shear', shearTitle);
-            
-            // 第2軸の応力図を別のキャンバスに描画（3D構造の場合）
+            // 第1軸と第2軸の応力図を横並びで描画（3D構造の場合）
             const dofPerNode = (nodes?.length && D?.length) ? (D.length / nodes.length) : 0;
             const is3D = dofPerNode === 6;
             
             if (is3D && typeof drawSecondaryAxisStressDiagram === 'function') {
-                console.log('🚀 3D構造: 第2軸応力図を追加表示');
+                console.log('🚀 3D構造: 第1軸と第2軸の応力図を横並び表示');
                 try {
+                    // 第1軸の応力図を描画
+                    drawStressDiagram(elements.momentCanvas, nodes, members, forces, 'moment', momentTitle);
+                    drawStressDiagram(elements.axialCanvas, nodes, members, forces, 'axial', '軸力図 (AFD) (kN)');
+                    drawStressDiagram(elements.shearCanvas, nodes, members, forces, 'shear', shearTitle);
+                    
+                    // 第2軸の応力図を別キャンバスに描画（横並び表示）
+                    const secondaryMomentTitle = momentTitle.replace('Mz', 'My').replace('My', 'Mz');
+                    const secondaryShearTitle = shearTitle.replace('Vz', 'Vy').replace('Vy', 'Vz');
+                    
                     // 第2軸用のキャンバスを表示
                     if (elements.secondaryMomentContainer) {
                         elements.secondaryMomentContainer.style.display = 'block';
@@ -6740,18 +6744,38 @@ document.addEventListener('DOMContentLoaded', () => {
                         elements.secondaryShearContainer.style.display = 'block';
                     }
                     
-                    // 第2軸の応力図を別のキャンバスに描画
+                    // 第2軸の応力図を別キャンバスに描画
                     if (elements.momentCanvas2) {
-                        drawSecondaryAxisStressDiagram(elements.momentCanvas2, nodes, members, forces, 'moment', '曲げモーメント図 (BMD)');
+                        drawSecondaryAxisStressDiagram(elements.momentCanvas2, nodes, members, forces, 'moment', secondaryMomentTitle);
                     }
                     if (elements.shearCanvas2) {
-                        drawSecondaryAxisStressDiagram(elements.shearCanvas2, nodes, members, forces, 'shear', 'せん断力図 (SFD)');
+                        drawSecondaryAxisStressDiagram(elements.shearCanvas2, nodes, members, forces, 'shear', secondaryShearTitle);
                     }
+                    
+                    // 軸力図は軸に依存しないので第2軸は不要
+                    
                 } catch (error) {
                     console.error('❌ 第2軸応力図でエラー:', error);
+                    // エラーの場合は第1軸のみ表示
+                    drawStressDiagram(elements.momentCanvas, nodes, members, forces, 'moment', momentTitle);
+                    drawStressDiagram(elements.axialCanvas, nodes, members, forces, 'axial', '軸力図 (AFD) (kN)');
+                    drawStressDiagram(elements.shearCanvas, nodes, members, forces, 'shear', shearTitle);
+                    
+                    // 第2軸用のキャンバスは非表示
+                    if (elements.secondaryMomentContainer) {
+                        elements.secondaryMomentContainer.style.display = 'none';
+                    }
+                    if (elements.secondaryShearContainer) {
+                        elements.secondaryShearContainer.style.display = 'none';
+                    }
                 }
             } else {
-                // 2D構造の場合は第2軸用のキャンバスを非表示
+                // 2D構造の場合は第1軸のみ表示
+                drawStressDiagram(elements.momentCanvas, nodes, members, forces, 'moment', momentTitle);
+                drawStressDiagram(elements.axialCanvas, nodes, members, forces, 'axial', '軸力図 (AFD) (kN)');
+                drawStressDiagram(elements.shearCanvas, nodes, members, forces, 'shear', shearTitle);
+                
+                // 第2軸用のキャンバスは非表示
                 if (elements.secondaryMomentContainer) {
                     elements.secondaryMomentContainer.style.display = 'none';
                 }
@@ -9351,9 +9375,18 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         const { members, forces, memberLoads } = lastResults;
         const results = [];
         members.forEach((member, idx) => {
-            const { strengthProps, A, Z, ix, iy, E, length } = member;
+            const { strengthProps, A, Z, ix, iy, E, length, Iy, Iz } = member;
             if(!strengthProps || !A || !Z || isNaN(A) || isNaN(Z)) {
-                results.push({ maxRatio: 'N/A', N: 0, M: 0, checkType: 'データ不足', status: 'error', ratios: Array(21).fill(0)});
+                results.push({ 
+                    maxRatio: 'N/A', 
+                    N: 0, 
+                    M: 0, 
+                    checkType: 'データ不足', 
+                    status: 'error', 
+                    ratios: Array(21).fill(0),
+                    ratiosY: Array(21).fill(0), // Y軸周りの検定比
+                    ratiosZ: Array(21).fill(0)  // Z軸周りの検定比
+                });
                 return;
             }
             let ft, fc, fb, fs;
@@ -9407,25 +9440,752 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             const load = memberLoads.find(l => l.memberIndex === idx);
             const w = getMemberDistributedLoadY(load);
             const L = length, N = -force.N_i, Z_mm3 = Z * 1e9, A_mm2 = A * 1e6;
-            let maxRatio = 0, M_at_max = 0;
+            
+            // 両軸対応の断面係数計算
+            const Zy_mm3 = Iy ? (Iy / (Math.sqrt(Iy / A) / 2)) * 1e9 : Z_mm3; // Y軸周りの断面係数
+            const Zz_mm3 = Iz ? (Iz / (Math.sqrt(Iz / A) / 2)) * 1e9 : Z_mm3; // Z軸周りの断面係数
+            
+            let maxRatio = 0, maxRatioY = 0, maxRatioZ = 0, M_at_max = 0;
             const ratios = [];
+            const ratiosY = []; // Y軸周りの検定比
+            const ratiosZ = []; // Z軸周りの検定比
+            
             for (let k = 0; k <= 20; k++) {
-                const x = (k / 20) * L, M_linear = -force.M_i * (1 - x/L) + force.M_j * (x/L), M_parabolic = w * L * x / 2 - w * x**2 / 2;
-                const M_x = M_linear + M_parabolic, sigma_a = (N * 1000) / A_mm2, sigma_b = (Math.abs(M_x) * 1e6) / Z_mm3;
-                let ratio_x = 0;
-                if(isNaN(sigma_a) || isNaN(sigma_b) || !ft || !fc || !fb) { ratio_x = Infinity; }
-                else if (sigma_a >= 0) { // 引張
+                const x = (k / 20) * L;
+                const M_linear = -force.M_i * (1 - x/L) + force.M_j * (x/L);
+                const M_parabolic = w * L * x / 2 - w * x**2 / 2;
+                const M_x = M_linear + M_parabolic;
+                
+                // Y軸周りのモーメント（Z軸周り）
+                const My_linear = -force.Mz_i * (1 - x/L) + force.Mz_j * (x/L);
+                const My_x = My_linear;
+                
+                // Z軸周りのモーメント（Y軸周り）
+                const Mz_linear = -force.My_i * (1 - x/L) + force.My_j * (x/L);
+                const Mz_x = Mz_linear;
+                
+                const sigma_a = (N * 1000) / A_mm2;
+                const sigma_b = (Math.abs(M_x) * 1e6) / Z_mm3;
+                const sigma_by = (Math.abs(My_x) * 1e6) / Zy_mm3; // Y軸周り
+                const sigma_bz = (Math.abs(Mz_x) * 1e6) / Zz_mm3; // Z軸周り
+                
+                let ratio_x = 0, ratio_y = 0, ratio_z = 0;
+                
+                if(isNaN(sigma_a) || !ft || !fc || !fb) { 
+                    ratio_x = ratio_y = ratio_z = Infinity; 
+                } else {
+                    if (sigma_a >= 0) { // 引張
                     ratio_x = (sigma_a / ft) + (sigma_b / fb);
-                } 
-                else { // 圧縮
+                        ratio_y = (sigma_a / ft) + (sigma_by / fb);
+                        ratio_z = (sigma_a / ft) + (sigma_bz / fb);
+                    } else { // 圧縮
                     ratio_x = (Math.abs(sigma_a) / fc) + (sigma_b / fb);
+                        ratio_y = (Math.abs(sigma_a) / fc) + (sigma_by / fb);
+                        ratio_z = (Math.abs(sigma_a) / fc) + (sigma_bz / fb);
                 }
+                }
+                
                 ratios.push(ratio_x);
+                ratiosY.push(ratio_y);
+                ratiosZ.push(ratio_z);
+                
                 if (ratio_x > maxRatio) { maxRatio = ratio_x; M_at_max = M_x; }
+                if (ratio_y > maxRatioY) maxRatioY = ratio_y;
+                if (ratio_z > maxRatioZ) maxRatioZ = ratio_z;
             }
-            results.push({ maxRatio, N, M: M_at_max, checkType: '組合せ応力', status: maxRatio > 1.0 ? 'NG' : 'OK', ratios });
+            
+            results.push({ 
+                maxRatio, 
+                maxRatioY, 
+                maxRatioZ,
+                N, 
+                M: M_at_max, 
+                checkType: '両軸組合せ応力', 
+                status: Math.max(maxRatio, maxRatioY, maxRatioZ) > 1.0 ? 'NG' : 'OK', 
+                ratios,
+                ratiosY,
+                ratiosZ
+            });
         });
         return results;
+    };
+
+    const drawDualAxisCapacityRatioDiagram = (canvas, nodes, members, sectionCheckResults) => {
+        console.log('🔧 drawDualAxisCapacityRatioDiagram 開始:', {
+            hasCanvas: !!canvas,
+            nodesCount: nodes?.length,
+            membersCount: members?.length,
+            sectionCheckResultsCount: sectionCheckResults?.length
+        });
+        
+        if (!canvas) {
+            console.warn('❌ 検定比図キャンバスが存在しません');
+            return;
+        }
+        
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width;
+        const height = canvas.height;
+        
+        console.log('🔧 キャンバス情報:', { width, height });
+        
+        // キャンバスをクリア
+        ctx.clearRect(0, 0, width, height);
+        
+        // 投影モードを判定
+        const dofPerNode = nodes.length > 0 && window.lastResults?.D ? (window.lastResults.D.length / nodes.length) : 0;
+        const is3D = dofPerNode === 6;
+        
+        console.log('🔧 構造判定:', { dofPerNode, is3D });
+        
+        if (!is3D) {
+            // 2D構造の場合は従来の検定比図を描画
+            if (typeof drawCapacityRatioDiagram === 'function') {
+                drawCapacityRatioDiagram(canvas, nodes, members, sectionCheckResults);
+            }
+            return;
+        }
+        
+        // 3D構造の場合、応力図と同様の描画方式を使用
+        drawCapacityRatioDiagramLikeStress(canvas, nodes, members, sectionCheckResults);
+    };
+
+    // 応力図と同様の検定比図描画関数
+    const drawCapacityRatioDiagramLikeStress = (canvas, nodes, members, sectionCheckResults) => {
+        const ctx = canvas.getContext('2d');
+        
+        // キャンバスをクリア
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // フレーム設定（応力図と同様）
+        const framePadding = 40;
+        const frameWidth = 1200;  // 応力図と同じサイズ
+        const frameHeight = 900;  // 応力図と同じサイズ
+        const headerHeight = 80;
+        
+        // 第1軸と第2軸の検定比図を横並びで描画
+        const frameData = [
+            { title: '第1軸検定比図 (D/C)', axisType: 'primary' },
+            { title: '第2軸検定比図 (D/C)', axisType: 'secondary' }
+        ];
+        
+        // キャンバスサイズを調整（横スクロール対応）
+        const totalWidth = frameData.length * (frameWidth + framePadding) + framePadding;
+        const totalHeight = frameHeight + headerHeight + framePadding * 2;
+
+        // 高DPI対応: デバイスピクセル比を取得
+        const dpr = window.devicePixelRatio || 1;
+
+        // キャンバスの内部解像度を高解像度に設定
+        canvas.width = totalWidth * dpr;
+        canvas.height = totalHeight * dpr;
+
+        // CSSでの表示サイズは元のサイズ
+        canvas.style.width = totalWidth + 'px';
+        canvas.style.height = totalHeight + 'px';
+
+        // コンテキストをスケール
+        ctx.scale(dpr, dpr);
+        
+        // 各フレームを描画
+        frameData.forEach((frame, frameIndex) => {
+            const x = framePadding + frameIndex * (frameWidth + framePadding);
+            const y = headerHeight + framePadding;
+            
+            const frameInfo = {
+                ...frame,
+                x: x,
+                y: y
+            };
+            
+            drawSingleCapacityRatioFrame(ctx, nodes, members, sectionCheckResults, frameInfo, frameWidth, frameHeight);
+        });
+        
+        // 全体タイトル
+        ctx.fillStyle = '#333';
+        ctx.font = 'bold 20px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('検定比図 (D/C)', totalWidth / 2, 30);
+    };
+
+    // 単一フレームの検定比図描画（応力図と同様の方式）
+    const drawSingleCapacityRatioFrame = (ctx, nodes, members, sectionCheckResults, frame, frameWidth, frameHeight) => {
+        const { title, axisType, x, y } = frame;
+        const projectionMode = 'iso'; // 等角投影を使用
+        
+        // フレーム境界
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, frameWidth, frameHeight);
+        
+        // フレームタイトル
+        ctx.fillStyle = '#333';
+        ctx.font = 'bold 16px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(title, x + frameWidth / 2, y + 25);
+        
+        // 検定比データの準備
+        let maxRatio = 0;
+        let validMembers = [];
+        
+        members.forEach((member, idx) => {
+            const result = sectionCheckResults[idx];
+            if (!result || !result.ratios) return;
+            
+            const ratios = axisType === 'primary' ? result.ratios : 
+                          (axisType === 'secondary' ? (result.ratiosY || result.ratiosZ || result.ratios) : result.ratios);
+            
+            if (ratios && ratios.length > 0) {
+                const memberMaxRatio = Math.max(...ratios);
+                maxRatio = Math.max(maxRatio, memberMaxRatio);
+                validMembers.push({ member, idx, result, ratios });
+            }
+        });
+        
+        if (maxRatio === 0) {
+            ctx.fillStyle = '#999';
+            ctx.font = '14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('検定比データなし', x + frameWidth / 2, y + frameHeight / 2);
+            return;
+        }
+        
+        // スケール計算（コンテナ内に収まるように調整）
+        const margin = 80; // マージンを大きくして数値表示のスペースを確保
+        const drawWidth = frameWidth - 2 * margin;
+        const drawHeight = frameHeight - 2 * margin;
+        
+        // 3D座標の範囲を計算
+        let minX = Infinity, maxX = -Infinity;
+        let minY = Infinity, maxY = -Infinity;
+        
+        validMembers.forEach(({ member }) => {
+            const ni = nodes[member.i];
+            const nj = nodes[member.j];
+            const pi = project3DTo2D(ni, projectionMode);
+            const pj = project3DTo2D(nj, projectionMode);
+            minX = Math.min(minX, pi.x, pj.x);
+            maxX = Math.max(maxX, pi.x, pj.x);
+            minY = Math.min(minY, pi.y, pj.y);
+            maxY = Math.max(maxY, pi.y, pj.y);
+        });
+        
+        const modelWidth = maxX - minX;
+        const modelHeight = maxY - minY;
+        
+        // モデルスケール（検定比の表示領域も考慮）
+        let modelScale = 1;
+        if (modelWidth > 0 && modelHeight > 0) {
+            // 検定比の表示領域を考慮してスケールを調整
+            const ratioDisplaySpace = Math.min(drawWidth, drawHeight) * 0.2;
+            modelScale = Math.min(
+                (drawWidth - ratioDisplaySpace) / modelWidth, 
+                (drawHeight - ratioDisplaySpace) / modelHeight
+            ) * 0.7;
+        }
+        
+        // 検定比のスケール（モデルに収まるように調整）
+        const maxRatioPixels = Math.min(drawWidth, drawHeight) * 0.12;
+        const ratioScale = maxRatio > 0 ? maxRatioPixels / maxRatio : 1;
+        
+        // 座標変換関数（モデルを中央に配置）
+        const modelCenterX = (minX + maxX) / 2;
+        const modelCenterY = (minY + maxY) / 2;
+        const frameCenterX = x + frameWidth / 2;
+        const frameCenterY = y + frameHeight / 2;
+        
+        const transform = (px, py) => ({
+            x: frameCenterX + (px - modelCenterX) * modelScale,
+            y: frameCenterY - (py - modelCenterY) * modelScale
+        });
+        
+        // ラベル配置管理
+        const labelObstacles = [];
+        const nodeScreenData = [];
+        const memberScreenData = [];
+        
+        // 節点を描画
+        validMembers.forEach(({ member, idx }) => {
+            const ni = nodes[member.i];
+            const nj = nodes[member.j];
+            const pi = project3DTo2D(ni, projectionMode);
+            const pj = project3DTo2D(nj, projectionMode);
+            const pos1 = transform(pi.x, pi.y);
+            const pos2 = transform(pj.x, pj.y);
+            
+            nodeScreenData.push({ nodeIndex: member.i, x: pos1.x, y: pos1.y });
+            nodeScreenData.push({ nodeIndex: member.j, x: pos2.x, y: pos2.y });
+            
+            registerCircleObstacle(labelObstacles, pos1.x, pos1.y, 4);
+            registerCircleObstacle(labelObstacles, pos2.x, pos2.y, 4);
+        });
+        
+        // 構造を描画（応力図と同様）
+        ctx.strokeStyle = '#ccc';
+        ctx.lineWidth = 1;
+        validMembers.forEach(({ member, idx }) => {
+            const ni = nodes[member.i];
+            const nj = nodes[member.j];
+            const pi = project3DTo2D(ni, projectionMode);
+            const pj = project3DTo2D(nj, projectionMode);
+            const p1 = transform(pi.x, pi.y);
+            const p2 = transform(pj.x, pj.y);
+            
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            ctx.stroke();
+            
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const length = Math.hypot(dx, dy) || 1;
+            memberScreenData.push({
+                memberIndex: idx,
+                midX: (p1.x + p2.x) / 2,
+                midY: (p1.y + p2.y) / 2,
+                tangent: { x: dx / length, y: dy / length },
+                normal: { x: -dy / length, y: dx / length }
+            });
+        });
+        
+        // 検定比分布を描画（応力図と同様の方式）
+        validMembers.forEach(({ member, idx, result, ratios }) => {
+            const ni = nodes[member.i];
+            const nj = nodes[member.j];
+            const pi = project3DTo2D(ni, projectionMode);
+            const pj = project3DTo2D(nj, projectionMode);
+            
+            const start = transform(pi.x, pi.y);
+            const end = transform(pj.x, pj.y);
+            const dx = end.x - start.x;
+            const dy = end.y - start.y;
+            const length = Math.hypot(dx, dy);
+            
+            if (length === 0) return;
+            
+            const perpX = -dy / length;
+            const perpY = dx / length;
+            
+            // 検定比分布の計算
+            const numDivisions = ratios.length - 1;
+            const ratioPoints = [];
+            
+            for (let k = 0; k <= numDivisions; k++) {
+                const t = k / numDivisions;
+                const baseX = start.x + t * dx;
+                const baseY = start.y + t * dy;
+                const ratio = ratios[k];
+                const offset = ratio * ratioScale;
+                
+                ratioPoints.push({
+                    x: baseX,
+                    y: baseY,
+                    offset: offset,
+                    value: ratio
+                });
+            }
+            
+            // 検定比分布を塗りつぶし（応力図と同様）
+            const positiveFillColor = 'rgba(255, 100, 100, 0.5)';
+            const negativeFillColor = 'rgba(100, 100, 255, 0.5)';
+            
+            ctx.save();
+            ctx.globalAlpha = 1.0;
+            ctx.globalCompositeOperation = 'source-over';
+            
+            // 各セグメントごとに台形を描画
+            for (let k = 0; k < ratioPoints.length - 1; k++) {
+                const p1 = ratioPoints[k];
+                const p2 = ratioPoints[k + 1];
+                
+                if (Math.abs(p1.value) < 1e-9 && Math.abs(p2.value) < 1e-9) {
+                    continue;
+                }
+                
+                const avgValue = (p1.value + p2.value) / 2;
+                const fillColor = avgValue >= 0 ? positiveFillColor : negativeFillColor;
+                
+                // 台形を描画
+                const base1 = { x: p1.x, y: p1.y };
+                const base2 = { x: p2.x, y: p2.y };
+                const off1 = { 
+                    x: p1.x + perpX * p1.offset, 
+                    y: p1.y - perpY * p1.offset 
+                };
+                const off2 = { 
+                    x: p2.x + perpX * p2.offset, 
+                    y: p2.y - perpY * p2.offset 
+                };
+                
+                ctx.fillStyle = fillColor;
+                ctx.beginPath();
+                ctx.moveTo(base1.x, base1.y);
+                ctx.lineTo(base2.x, base2.y);
+                ctx.lineTo(off2.x, off2.y);
+                ctx.lineTo(off1.x, off1.y);
+                ctx.closePath();
+                ctx.fill();
+                
+                // 輪郭線
+                ctx.strokeStyle = avgValue >= 0 ? '#ff0000' : '#0000ff';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+            
+            ctx.restore();
+            
+            // 基準線（D/C=1.0）
+            ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(start.x + perpX * ratioScale, start.y - perpY * ratioScale);
+            ctx.lineTo(end.x + perpX * ratioScale, end.y - perpY * ratioScale);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // 検定比数値を複数箇所に表示
+            const displayPoints = [
+                { index: 0, label: '始端' },           // 始端
+                { index: Math.floor(numDivisions / 4), label: '1/4' },     // 1/4点
+                { index: Math.floor(numDivisions / 2), label: '中央' },     // 中央
+                { index: Math.floor(numDivisions * 3 / 4), label: '3/4' }, // 3/4点
+                { index: numDivisions, label: '終端' }   // 終端
+            ];
+            
+            displayPoints.forEach(({ index, label }) => {
+                if (index >= 0 && index <= numDivisions) {
+                    const point = ratioPoints[index];
+                    if (Math.abs(point.value) > 0.001) {
+                        const markerX = point.x + perpX * point.offset;
+                        const markerY = point.y - perpY * point.offset;
+                        
+                        // マーカー
+                        ctx.fillStyle = '#000';
+                        ctx.beginPath();
+                        ctx.arc(markerX, markerY, 3, 0, 2 * Math.PI);
+                        ctx.fill();
+                        
+                        // 数値を表示
+                        const valueText = point.value.toFixed(3);
+                        const labelText = `${label}: ${valueText}`;
+                        drawTextWithPlacement(ctx, labelText, markerX, markerY - 15, labelObstacles, {
+                            strokeStyle: 'white',
+                            fillStyle: '#000',
+                            padding: 4
+                        });
+                    }
+                }
+            });
+            
+            // 最大値の位置にも特別に表示
+            let maxAbsValue = 0;
+            let maxAbsIndex = 0;
+            ratioPoints.forEach((p, idx) => {
+                if (Math.abs(p.value) > maxAbsValue) {
+                    maxAbsValue = Math.abs(p.value);
+                    maxAbsIndex = idx;
+                }
+            });
+            
+            if (maxAbsIndex > 0 && maxAbsIndex < numDivisions) {
+                const maxPoint = ratioPoints[maxAbsIndex];
+                const markerX = maxPoint.x + perpX * maxPoint.offset;
+                const markerY = maxPoint.y - perpY * maxPoint.offset;
+                
+                // 最大値のマーカー（少し大きく）
+                ctx.fillStyle = '#ff0000';
+                ctx.beginPath();
+                ctx.arc(markerX, markerY, 5, 0, 2 * Math.PI);
+                ctx.fill();
+                
+                // 最大値の数値を表示
+                const maxValueText = `最大: ${maxPoint.value.toFixed(3)}`;
+                drawTextWithPlacement(ctx, maxValueText, markerX, markerY + 20, labelObstacles, {
+                    strokeStyle: 'white',
+                    fillStyle: '#ff0000',
+                    padding: 6
+                });
+            }
+        });
+        
+        // 部材番号を表示
+        ctx.fillStyle = '#0066cc';
+        ctx.font = 'bold 14px Arial';
+        ctx.textAlign = 'center';
+        memberScreenData.forEach(({ memberIndex, midX, midY }) => {
+            ctx.fillText(String(memberIndex + 1), midX, midY);
+        });
+        
+        // スケール表示
+        ctx.fillStyle = '#666';
+        ctx.font = '12px Arial';
+        ctx.textAlign = 'left';
+        ctx.fillText(`最大検定比: ${maxRatio.toFixed(3)}`, x + 10, y + frameHeight - 10);
+    };
+
+    // 円形障害物を登録する関数
+    const registerCircleObstacle = (obstacles, x, y, radius) => {
+        obstacles.push({
+            x1: x - radius,
+            y1: y - radius,
+            x2: x + radius,
+            y2: y + radius
+        });
+    };
+
+    // テキスト配置管理関数
+    const drawTextWithPlacement = (ctx, text, x, y, obstacles, options = {}) => {
+        const { strokeStyle = 'white', fillStyle = '#000', padding = 8 } = options;
+        
+        // テキストのサイズを測定
+        const metrics = ctx.measureText(text);
+        const textWidth = metrics.width;
+        const textHeight = parseInt(ctx.font);
+        
+        // 衝突チェック
+        const textRect = {
+            x1: x - textWidth / 2 - padding,
+            y1: y - textHeight / 2 - padding,
+            x2: x + textWidth / 2 + padding,
+            y2: y + textHeight / 2 + padding
+        };
+        
+        let hasCollision = false;
+        obstacles.forEach(obstacle => {
+            if (textRect.x1 < obstacle.x2 && textRect.x2 > obstacle.x1 &&
+                textRect.y1 < obstacle.y2 && textRect.y2 > obstacle.y1) {
+                hasCollision = true;
+            }
+        });
+        
+        // 衝突がある場合は位置を調整（より多くの方向を試す）
+        if (hasCollision) {
+            // 上下左右、斜め方向にもオフセットを試す
+            const offsets = [
+                { dx: 0, dy: -textHeight - padding },      // 上
+                { dx: 0, dy: textHeight + padding },       // 下
+                { dx: textWidth + padding, dy: 0 },        // 右
+                { dx: -textWidth - padding, dy: 0 },       // 左
+                { dx: textWidth + padding, dy: -textHeight - padding }, // 右上
+                { dx: -textWidth - padding, dy: -textHeight - padding }, // 左上
+                { dx: textWidth + padding, dy: textHeight + padding },   // 右下
+                { dx: -textWidth - padding, dy: textHeight + padding },  // 左下
+            ];
+            
+            for (const offset of offsets) {
+                const newX = x + offset.dx;
+                const newY = y + offset.dy;
+                const newRect = {
+                    x1: newX - textWidth / 2 - padding,
+                    y1: newY - textHeight / 2 - padding,
+                    x2: newX + textWidth / 2 + padding,
+                    y2: newY + textHeight / 2 + padding
+                };
+                
+                let newCollision = false;
+                obstacles.forEach(obstacle => {
+                    if (newRect.x1 < obstacle.x2 && newRect.x2 > obstacle.x1 &&
+                        newRect.y1 < obstacle.y2 && newRect.y2 > obstacle.y1) {
+                        newCollision = true;
+                    }
+                });
+                
+                if (!newCollision) {
+                    x = newX;
+                    y = newY;
+                    break;
+                }
+            }
+        }
+        
+        // テキストを描画
+        ctx.strokeStyle = strokeStyle;
+        ctx.lineWidth = 3;
+        ctx.strokeText(text, x, y);
+        ctx.fillStyle = fillStyle;
+        ctx.fillText(text, x, y);
+        
+        // 障害物として登録
+        obstacles.push({
+            x1: x - textWidth / 2 - padding,
+            y1: y - textHeight / 2 - padding,
+            x2: x + textWidth / 2 + padding,
+            y2: y + textHeight / 2 + padding
+        });
+    };
+
+    // 検定比に応じた色を返す関数
+    const getRatioColor = (ratio) => {
+        if (ratio < 0.5) return '#00ff00';      // 緑
+        if (ratio < 0.7) return '#90ee90';      // 薄緑
+        if (ratio < 0.9) return '#ffff00';      // 黄色
+        if (ratio < 1.0) return '#ffa500';      // オレンジ
+        return '#ff0000';                        // 赤
+    };
+    
+    const drawSingleAxisCapacityRatioDiagram = (ctx, nodes, members, sectionCheckResults, axisType, 
+        x, y, width, height, projectionMode) => {
+        
+        console.log('🔧 drawSingleAxisCapacityRatioDiagram 開始:', {
+            axisType,
+            frameRect: { x, y, width, height },
+            projectionMode,
+            nodesCount: nodes?.length,
+            membersCount: members?.length,
+            sectionCheckResultsCount: sectionCheckResults?.length
+        });
+        
+        // フレーム境界を描画
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, width, height);
+        
+        // タイトルを描画
+        ctx.fillStyle = '#333';
+        ctx.font = 'bold 14px Arial';
+        ctx.textAlign = 'center';
+        const title = axisType === 'primary' ? '第1軸検定比図' : '第2軸検定比図';
+        ctx.fillText(title, x + width / 2, y + 20);
+        
+        // 検定比の最大値を計算
+        let maxRatio = 0;
+        let validResultsCount = 0;
+        sectionCheckResults.forEach((result, idx) => {
+            if (result.ratios) {
+                validResultsCount++;
+                const ratios = axisType === 'primary' ? result.ratios : 
+                              (axisType === 'secondary' ? (result.ratiosY || result.ratiosZ || result.ratios) : result.ratios);
+                ratios.forEach(ratio => {
+                    if (ratio > maxRatio) maxRatio = ratio;
+                });
+            }
+        });
+        
+        console.log('🔧 検定比データ分析:', {
+            axisType,
+            totalResults: sectionCheckResults.length,
+            validResultsCount,
+            maxRatio,
+            hasRatiosY: sectionCheckResults.some(r => r.ratiosY),
+            hasRatiosZ: sectionCheckResults.some(r => r.ratiosZ)
+        });
+        
+        if (maxRatio === 0) {
+            console.warn('❌ 検定比データなし');
+            ctx.fillStyle = '#999';
+            ctx.font = '12px Arial';
+            ctx.fillText('検定比データなし', x + width / 2, y + height / 2);
+            return;
+        }
+        
+        // 検定比スケールを計算（より大きな表示にする）
+        const ratioScale = Math.min(width, height) * 0.8 / maxRatio;
+        
+        console.log('🔧 検定比スケール:', { maxRatio, ratioScale, frameSize: { width, height } });
+        
+        // 部材を描画
+        let drawnMembersCount = 0;
+        members.forEach((member, idx) => {
+            const result = sectionCheckResults[idx];
+            if (!result || !result.ratios) {
+                console.log('🔧 部材スキップ:', { memberIndex: idx + 1, hasResult: !!result, hasRatios: !!(result?.ratios) });
+                return;
+            }
+            
+            const ratios = axisType === 'primary' ? result.ratios : 
+                          (axisType === 'secondary' ? (result.ratiosY || result.ratiosZ || result.ratios) : result.ratios);
+            
+            const nodeI = nodes[member.i];
+            const nodeJ = nodes[member.j];
+            
+            // 3D座標を2Dに投影
+            const start3D = { x: nodeI.x, y: nodeI.y || 0, z: nodeI.z || 0 };
+            const end3D = { x: nodeJ.x, y: nodeJ.y || 0, z: nodeJ.z || 0 };
+            
+            const start2D = project3DTo2D(start3D, projectionMode);
+            const end2D = project3DTo2D(end3D, projectionMode);
+            
+            // フレーム内の座標に変換
+            const startX = x + (start2D.x + 1) * width / 2;
+            const startY = y + height - (start2D.y + 1) * height / 2;
+            const endX = x + (end2D.x + 1) * width / 2;
+            const endY = y + height - (end2D.y + 1) * height / 2;
+            
+            // 部材の方向ベクトルと垂直ベクトル
+            const dx = endX - startX;
+            const dy = endY - startY;
+            const length = Math.sqrt(dx * dx + dy * dy);
+            
+            if (length === 0) return;
+            
+            const perpX = -dy / length;
+            const perpY = dx / length;
+            
+            // 検定比分布を描画
+            ctx.beginPath();
+            ctx.moveTo(startX, startY);
+            
+            // 検定比分布の外側ライン
+            ratios.forEach((ratio, k) => {
+                const t = k / (ratios.length - 1);
+                const baseX = startX + t * dx;
+                const baseY = startY + t * dy;
+                const offset = ratio * ratioScale;
+                const px = baseX + perpX * offset;
+                const py = baseY + perpY * offset;
+                ctx.lineTo(px, py);
+            });
+            
+            // 検定比分布の内側ライン（逆順）
+            for (let k = ratios.length - 1; k >= 0; k--) {
+                const t = k / (ratios.length - 1);
+                const baseX = startX + t * dx;
+                const baseY = startY + t * dy;
+                const px = baseX - perpX * ratioScale * 0.1; // 薄い線
+                const py = baseY - perpY * ratioScale * 0.1;
+                ctx.lineTo(px, py);
+            }
+            
+            ctx.closePath();
+            
+            // 検定比に応じた色で塗りつぶし
+            const maxMemberRatio = Math.max(...ratios);
+            const color = getRatioColor(maxMemberRatio);
+            ctx.fillStyle = color + '40'; // 透明度付き
+            ctx.fill();
+            
+            // 輪郭線を描画
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // 最大検定比の位置にマーカー
+            const maxRatioIndex = ratios.indexOf(maxMemberRatio);
+            const t = maxRatioIndex / (ratios.length - 1);
+            const markerX = startX + t * dx + perpX * maxMemberRatio * ratioScale;
+            const markerY = startY + t * dy + perpY * maxMemberRatio * ratioScale;
+            
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(markerX, markerY, 3, 0, 2 * Math.PI);
+            ctx.fill();
+            
+            // 最大検定比の値を表示
+            ctx.fillStyle = '#000';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(maxMemberRatio.toFixed(2), markerX, markerY - 8);
+            
+            drawnMembersCount++;
+        });
+        
+        console.log('🔧 部材描画完了:', {
+            axisType,
+            totalMembers: members.length,
+            drawnMembersCount,
+            maxRatio
+        });
     };
 
     const displaySectionCheckResults = () => {
@@ -9453,11 +10213,124 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         const w = getMemberDistributedLoadY(load);
         const L = member.length;
         const numPoints = res.ratios.length;
+        
+        // 3D構造かどうかを判定
+        const dofPerNode = lastResults.D.length / lastResults.nodes.length;
+        const is3D = dofPerNode === 6;
 
         // 材料特性の取得
         const { strengthProps, A, Z, ix, iy, E } = member;
         let materialInfo = '';
         let allowableStresses = { ft: 0, fc: 0, fb: 0, fs: 0 };
+        
+        // 各軸の断面係数を取得
+        console.log('🔧 断面係数デバッグ:', {
+            memberIndex: memberIndex + 1,
+            member: member,
+            properties: member.properties,
+            sectionModulus: member.properties?.sectionModulus,
+            zxNumeric: member.properties?.sectionModulus?.zxNumeric,
+            zyNumeric: member.properties?.sectionModulus?.zyNumeric,
+            zx: member.properties?.sectionModulus?.zx,
+            zy: member.properties?.sectionModulus?.zy,
+            Z: Z,
+            sectionInfo: member.sectionInfo,
+            sectionSummary: member.sectionSummary,
+            allMemberKeys: Object.keys(member)
+        });
+        
+        // 部材テーブルから直接ZxとZyを取得
+        let Zx_fromTable = null, Zy_fromTable = null;
+        try {
+            const memberRows = elements.membersTable.rows;
+            console.log('🔧 テーブル検索:', { targetMemberIndex: memberIndex + 1, totalRows: memberRows.length });
+            
+            for (let i = 1; i < memberRows.length; i++) { // ヘッダー行をスキップ
+                const row = memberRows[i];
+                const firstCell = row.cells[0];
+                const input = firstCell.querySelector('input');
+                const rowMemberNumber = input ? parseInt(input.value || '0') : 0;
+                
+                console.log('🔧 行チェック:', { 
+                    rowIndex: i, 
+                    rowMemberNumber, 
+                    targetMemberIndex: memberIndex + 1,
+                    hasInput: !!input,
+                    dataset: {
+                        zx: row.dataset.zx,
+                        zy: row.dataset.zy
+                    }
+                });
+                
+                if (rowMemberNumber === memberIndex + 1) {
+                    Zx_fromTable = row.dataset.zx ? parseFloat(row.dataset.zx) : null;
+                    Zy_fromTable = row.dataset.zy ? parseFloat(row.dataset.zy) : null;
+                    console.log('🔧 テーブルから取得成功:', { Zx_fromTable, Zy_fromTable, rowMemberNumber });
+                    break;
+                }
+            }
+        } catch (error) {
+            console.warn('テーブルからの断面係数取得エラー:', error);
+        }
+        
+        // sectionInfoとsectionSummaryの詳細を確認
+        console.log('🔧 sectionInfo詳細:', member.sectionInfo);
+        console.log('🔧 sectionSummary詳細:', member.sectionSummary);
+        
+        // 断面係数の取得（複数の方法でフォールバック）
+        let Zx_fromSectionInfo = null, Zx_fromSectionSummary = null;
+        if (member.sectionInfo && typeof member.sectionInfo === 'object') {
+            Zx_fromSectionInfo = member.sectionInfo.Zx || member.sectionInfo.zx || member.sectionInfo.Z;
+        }
+        if (member.sectionSummary && typeof member.sectionSummary === 'object') {
+            Zx_fromSectionSummary = member.sectionSummary.Zx || member.sectionSummary.zx || member.sectionSummary.Z;
+        }
+        
+        let Zy_fromSectionInfo = null, Zy_fromSectionSummary = null;
+        if (member.sectionInfo && typeof member.sectionInfo === 'object') {
+            Zy_fromSectionInfo = member.sectionInfo.Zy || member.sectionInfo.zy || member.sectionInfo.Z;
+        }
+        if (member.sectionSummary && typeof member.sectionSummary === 'object') {
+            Zy_fromSectionSummary = member.sectionSummary.Zy || member.sectionSummary.zy || member.sectionSummary.Z;
+        }
+        
+        const Zx_raw = Zx_fromTable ||
+                      member.properties?.sectionModulus?.zxNumeric || 
+                      member.properties?.sectionModulus?.zx || 
+                      member.properties?.sectionModulus?.numeric || 
+                      Zx_fromSectionInfo ||
+                      Zx_fromSectionSummary ||
+                      Z;
+        const Zy_raw = Zy_fromTable ||
+                      member.properties?.sectionModulus?.zyNumeric || 
+                      member.properties?.sectionModulus?.zy || 
+                      member.properties?.sectionModulus?.numeric || 
+                      Zy_fromSectionInfo ||
+                      Zy_fromSectionSummary ||
+                      Z;
+        
+        const Zx = parseFloat(Zx_raw) || Z;
+        const Zy = parseFloat(Zy_raw) || Z;
+        
+        // 単位変換の確認（Zが0.0015の場合、すでにm³単位の可能性）
+        const Zx_mm3 = (Zx < 0.01) ? Zx * 1e9 : Zx * 1e6; // 小さい値ならm³->mm³、大きい値ならcm³->mm³
+        const Zy_mm3 = (Zy < 0.01) ? Zy * 1e9 : Zy * 1e6; // 小さい値ならm³->mm³、大きい値ならcm³->mm³
+        
+        console.log('🔧 断面係数計算結果:', { 
+            Zx_raw, Zy_raw,
+            Zx, Zy, 
+            Zx_mm3, Zy_mm3,
+            Zx_unit: Zx < 0.01 ? 'm³' : 'cm³',
+            Zy_unit: Zy < 0.01 ? 'm³' : 'cm³',
+            Zx_source: Zx_fromTable ? 'table' : 
+                      (member.properties?.sectionModulus?.zxNumeric ? 'properties.zxNumeric' : 
+                       Zx_fromSectionInfo ? 'sectionInfo' :
+                       Zx_fromSectionSummary ? 'sectionSummary' : 'default'),
+            Zy_source: Zy_fromTable ? 'table' : 
+                      (member.properties?.sectionModulus?.zyNumeric ? 'properties.zyNumeric' : 
+                       Zy_fromSectionInfo ? 'sectionInfo' :
+                       Zy_fromSectionSummary ? 'sectionSummary' : 'default')
+        });
         
         // 部材データから直接材料名を取得（弾性係数選択で取得した材料名を使用）
         const materialName = member.material || `任意材料(E=${(E/1000).toLocaleString()}GPa)`;
@@ -9529,7 +10402,8 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     <p>弾性係数 E: ${(E/1000).toLocaleString()} N/mm²</p>
                     <p>部材長: ${L.toFixed(2)} m</p>
                     <p>断面積 A: ${(A * 1e4).toFixed(2)} cm²</p>
-                    <p>断面係数 Z: ${(Z * 1e6).toFixed(2)} cm³</p>
+                    <p>断面係数 Zx: ${Zx.toFixed(4)} ${Zx < 0.01 ? 'm³' : 'cm³'}</p>
+                    <p>断面係数 Zy: ${Zy.toFixed(4)} ${Zy < 0.01 ? 'm³' : 'cm³'}</p>
                     <p>回転半径 ix: ${(ix * 1e2).toFixed(2)} cm, iy: ${(iy * 1e2).toFixed(2)} cm</p>
                     ${w !== 0 ? `<p>等分布荷重: ${w} kN/m</p>` : ''}
                 </div>
@@ -9542,18 +10416,28 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 </div>
                 <div style="margin-bottom: 20px; padding: 10px; background-color: #fff2e8; border-radius: 5px;">
                     <h4>部材端力</h4>
+                    <p><strong>第1軸（X軸周り）:</strong></p>
                     <p>i端: N = ${(-force.N_i).toFixed(2)} kN, Q = ${force.Q_i.toFixed(2)} kN, M = ${force.M_i.toFixed(2)} kN·m</p>
                     <p>j端: N = ${force.N_j.toFixed(2)} kN, Q = ${(-force.Q_j).toFixed(2)} kN, M = ${force.M_j.toFixed(2)} kN·m</p>
+                    ${is3D ? `
+                    <p><strong>第2軸（Y軸周り）:</strong></p>
+                    <p>i端: My = ${force.My_i.toFixed(2)} kN·m, Mz = ${force.Mz_i.toFixed(2)} kN·m</p>
+                    <p>j端: My = ${force.My_j.toFixed(2)} kN·m, Mz = ${force.Mz_j.toFixed(2)} kN·m</p>
+                    ` : ''}
                 </div>
                 <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
                     <thead>
                         <tr style="background-color: #f0f0f0;">
                             <th style="border: 1px solid #ccc; padding: 8px;">位置 (m)</th>
                             <th style="border: 1px solid #ccc; padding: 8px;">軸力 N (kN)</th>
-                            <th style="border: 1px solid #ccc; padding: 8px;">曲げ M (kN·m)</th>
+                            <th style="border: 1px solid #ccc; padding: 8px;">曲げ M1 (kN·m)</th>
+                            ${is3D ? '<th style="border: 1px solid #ccc; padding: 8px;">曲げ M2 (kN·m)</th>' : ''}
                             <th style="border: 1px solid #ccc; padding: 8px;">軸応力度 σ_a (N/mm²)</th>
-                            <th style="border: 1px solid #ccc; padding: 8px;">曲げ応力度 σ_b (N/mm²)</th>
-                            <th style="border: 1px solid #ccc; padding: 8px;">検定比 (D/C)</th>
+                            <th style="border: 1px solid #ccc; padding: 8px;">曲げ応力度 σ_b1 (N/mm²)</th>
+                            ${is3D ? '<th style="border: 1px solid #ccc; padding: 8px;">曲げ応力度 σ_b2 (N/mm²)</th>' : ''}
+                            <th style="border: 1px solid #ccc; padding: 8px;">検定比1 (D/C)</th>
+                            ${is3D ? '<th style="border: 1px solid #ccc; padding: 8px;">検定比2 (D/C)</th>' : ''}
+                            <th style="border: 1px solid #ccc; padding: 8px;">最大検定比</th>
                             <th style="border: 1px solid #ccc; padding: 8px;">判定</th>
                         </tr>
                     </thead>
@@ -9561,28 +10445,40 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
 
         for (let k = 0; k < numPoints; k++) {
             const x = (k / (numPoints - 1)) * L;
-            const ratio = res.ratios[k];
+            const ratio1 = res.ratios[k];
+            const ratio2 = res.ratiosY ? res.ratiosY[k] : 0;
+            const ratio3 = res.ratiosZ ? res.ratiosZ[k] : 0;
             
             // 実際の曲げモーメント計算（等分布荷重を考慮）
             const M_linear = -force.M_i * (1 - x/L) + force.M_j * (x/L);
             const M_parabolic = w * L * x / 2 - w * x**2 / 2;
-            const M_x = M_linear + M_parabolic;
+            const M1_x = M_linear + M_parabolic;
+            
+            // 第2軸の曲げモーメント
+            const M2_linear = -force.My_i * (1 - x/L) + force.My_j * (x/L);
+            const M2_x = M2_linear;
             
             const N = -force.N_i; // 軸力は部材全体で一定
             const sigma_a = (N * 1000) / (A * 1e6);
-            const sigma_b = (Math.abs(M_x) * 1e6) / (Z * 1e9);
+            const sigma_b1 = (Math.abs(M1_x) * 1e6) / Zx_mm3; // X軸周りの曲げ応力度
+            const sigma_b2 = is3D ? (Math.abs(M2_x) * 1e6) / Zy_mm3 : 0; // Y軸周りの曲げ応力度
             
-            const status = ratio > 1.0 ? '❌ NG' : '✅ OK';
-            const rowStyle = ratio > 1.0 ? 'background-color: #fdd;' : '';
+            const maxRatio = Math.max(ratio1, ratio2, ratio3);
+            const status = maxRatio > 1.0 ? '❌ NG' : '✅ OK';
+            const rowStyle = maxRatio > 1.0 ? 'background-color: #fdd;' : '';
             
             detailHtml += `
                 <tr style="${rowStyle}">
                     <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${x.toFixed(2)}</td>
                     <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${N.toFixed(2)}</td>
-                    <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${M_x.toFixed(2)}</td>
+                    <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${M1_x.toFixed(2)}</td>
+                    ${is3D ? `<td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${M2_x.toFixed(2)}</td>` : ''}
                     <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${sigma_a.toFixed(2)}</td>
-                    <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${sigma_b.toFixed(2)}</td>
-                    <td style="border: 1px solid #ccc; padding: 8px; text-align: center; font-weight: bold;">${ratio.toFixed(3)}</td>
+                    <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${sigma_b1.toFixed(2)}</td>
+                    ${is3D ? `<td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${sigma_b2.toFixed(2)}</td>` : ''}
+                    <td style="border: 1px solid #ccc; padding: 8px; text-align: center; font-weight: bold;">${ratio1.toFixed(3)}</td>
+                    ${is3D ? `<td style="border: 1px solid #ccc; padding: 8px; text-align: center; font-weight: bold;">${ratio2.toFixed(3)}</td>` : ''}
+                    <td style="border: 1px solid #ccc; padding: 8px; text-align: center; font-weight: bold; color: ${maxRatio > 1.0 ? 'red' : 'green'};">${maxRatio.toFixed(3)}</td>
                     <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${status}</td>
                 </tr>`;
         }
@@ -9592,9 +10488,16 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 </table>
                 <div style="margin-top: 20px; padding: 10px; background-color: #f9f9f9; border-radius: 5px;">
                     <h4>検定式</h4>
-                    <p>軸力が引張の場合: D/C = σ_a/ft + σ_b/fb</p>
-                    <p>軸力が圧縮の場合: D/C = σ_a/fc + σ_b/fb</p>
-                    <p>※ σ_a = N/A, σ_b = |M|/Z</p>
+                    <p><strong>第1軸:</strong></p>
+                    <p>軸力が引張の場合: D/C₁ = σ_a/ft + σ_b1/fb</p>
+                    <p>軸力が圧縮の場合: D/C₁ = σ_a/fc + σ_b1/fb</p>
+                    ${is3D ? `
+                    <p><strong>第2軸:</strong></p>
+                    <p>軸力が引張の場合: D/C₂ = σ_a/ft + σ_b2/fb</p>
+                    <p>軸力が圧縮の場合: D/C₂ = σ_a/fc + σ_b2/fb</p>
+                    <p><strong>最大検定比:</strong> D/C_max = max(D/C₁, D/C₂)</p>
+                    ` : ''}
+                    <p>※ σ_a = N/A, σ_b1 = |M₁|/Zx, σ_b2 = |M₂|/Zy</p>
                 </div>
             </div>`;
 
@@ -9759,13 +10662,61 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
     window.showBucklingDetail = showBucklingDetail;
 
     const drawRatioDiagram = () => {
-        if (!lastResults || !lastSectionCheckResults) return;
+        console.log('🔧 drawRatioDiagram 開始:', {
+            hasLastResults: !!lastResults,
+            hasLastSectionCheckResults: !!lastSectionCheckResults,
+            hasRatioCanvas: !!elements.ratioCanvas,
+            nodesCount: lastResults?.nodes?.length,
+            membersCount: lastResults?.members?.length,
+            sectionCheckResultsCount: lastSectionCheckResults?.length
+        });
+        
+        if (!lastResults || !lastSectionCheckResults) {
+            console.warn('❌ 検定比図描画に必要なデータが不足:', { lastResults: !!lastResults, lastSectionCheckResults: !!lastSectionCheckResults });
+            return;
+        }
+        
         const { nodes, members } = lastResults;
         
-        // 新しい全投影対応の描画関数を使用
-        if (typeof drawCapacityRatioDiagram === 'function') {
-            drawCapacityRatioDiagram(elements.ratioCanvas, nodes, members, lastSectionCheckResults);
+        // キャンバスサイズを適切に設定
+        if (elements.ratioCanvas) {
+            const container = elements.ratioCanvas.parentElement;
+            if (container) {
+                const rect = container.getBoundingClientRect();
+                const width = Math.max(800, rect.width || 800);
+                const height = Math.max(600, rect.height || 600);
+                elements.ratioCanvas.width = width;
+                elements.ratioCanvas.height = height;
+                console.log('🔧 検定比図キャンバスサイズ設定:', { width, height });
+            } else {
+                console.warn('❌ 検定比図キャンバスの親要素が見つかりません');
+            }
+        } else {
+            console.warn('❌ 検定比図キャンバスが見つかりません');
+        }
+        
+        // 両軸対応の検定比図描画関数を使用
+        if (typeof drawDualAxisCapacityRatioDiagram === 'function') {
+            console.log('🔧 drawDualAxisCapacityRatioDiagram を呼び出し');
+            try {
+                drawDualAxisCapacityRatioDiagram(elements.ratioCanvas, nodes, members, lastSectionCheckResults);
+                console.log('✅ drawDualAxisCapacityRatioDiagram 完了');
+            } catch (error) {
+                console.error('❌ drawDualAxisCapacityRatioDiagram エラー:', error);
+            }
             return; // 新しい関数を使用した場合はここで終了
+        }
+        
+        // フォールバック: 従来の描画関数
+        if (typeof drawCapacityRatioDiagram === 'function') {
+            console.log('🔧 drawCapacityRatioDiagram を呼び出し');
+            try {
+                drawCapacityRatioDiagram(elements.ratioCanvas, nodes, members, lastSectionCheckResults);
+                console.log('✅ drawCapacityRatioDiagram 完了');
+            } catch (error) {
+                console.error('❌ drawCapacityRatioDiagram エラー:', error);
+            }
+            return;
         }
         
         // フォールバック: 古い単一投影の描画関数
@@ -9924,6 +10875,8 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
     };
 
     const animateDisplacement = (nodes, members, D_global, memberLoads) => {
+        console.log('🎬 アニメーション開始:', { nodes: nodes.length, members: members.length, D_global: D_global?.length });
+        
         // アニメーション開始時に一度だけ描画コンテキストを取得
         const drawingCtx = getDrawingContext(elements.modelCanvas);
         if (!drawingCtx) {
@@ -9943,30 +10896,31 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             // 自動倍率計算: displacement図で求めた倍率があればそれを使用
             if (storedAutoScale && storedAutoScale > 0) {
                 dispScale = storedAutoScale;
+                console.log('アニメーション: 変位図のスケールを使用:', dispScale);
             } else {
-                // lastDisplacementScaleが無い場合は独自に計算
+                // lastDisplacementScaleが無い場合は変位図と同じ計算方式を使用
                 // 2D/3D判定（自由度数から判定）
                 const dofPerNode = D_global.length / nodes.length;
                 const is3D = dofPerNode === 6;
 
-                // 最大変位を計算
+                // 変位図と同じ最大変位計算
                 let max_disp = 0;
+                nodes.forEach((node, i) => {
                 if (is3D) {
-                    for (let i = 0; i < nodes.length; i++) {
-                        const dx = Math.abs(D_global[i*6][0]);
-                        const dy = Math.abs(D_global[i*6+1][0]);
-                        const dz = Math.abs(D_global[i*6+2][0]);
-                        max_disp = Math.max(max_disp, dx, dy, dz);
-                    }
+                        const dx = Math.abs(D_global[i * 6][0]);
+                        const dy = Math.abs(D_global[i * 6 + 1][0]);
+                        const dz = Math.abs(D_global[i * 6 + 2][0]);
+                        const totalDisp = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                        max_disp = Math.max(max_disp, totalDisp);
                 } else {
-                    for (let i = 0; i < nodes.length; i++) {
-                        const dx = Math.abs(D_global[i*3][0]);
-                        const dy = Math.abs(D_global[i*3+1][0]);
-                        max_disp = Math.max(max_disp, dx, dy);
+                        const dx = Math.abs(D_global[i * 3][0]);
+                        const dy = Math.abs(D_global[i * 3 + 1][0]);
+                        const totalDisp = Math.sqrt(dx * dx + dy * dy);
+                        max_disp = Math.max(max_disp, totalDisp);
                     }
-                }
+                });
 
-                // 構造のサイズを計算
+                // 変位図と同じ構造サイズ計算
                 let minX = Infinity, maxX = -Infinity;
                 let minY = Infinity, maxY = -Infinity;
                 let minZ = Infinity, maxZ = -Infinity;
@@ -9980,17 +10934,18 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 });
                 const structureSize = Math.max(maxX - minX, maxY - minY, maxZ - minZ);
 
-                // 変位倍率の計算: 構造サイズと変位量の比率を考慮
-                // 目標: 最大変位が構造サイズの5%程度に表示されるようにする
+                // 変位図と同じスケール計算（構造サイズの5%）
                 if (max_disp > 1e-12 && structureSize > 0) {
                     dispScale = (structureSize * 0.05) / max_disp;
-                    // 適切な範囲に制限（最小10、最大100000）
-                    dispScale = Math.max(10, Math.min(dispScale, 100000));
+                    // 適切な範囲に制限
+                    dispScale = Math.max(1, Math.min(dispScale, 100000));
                 } else if (max_disp > 1e-12) {
                     dispScale = 1000;
                 } else {
                     dispScale = 100;
                 }
+                
+                console.log('アニメーション: 独自計算スケール:', { max_disp, structureSize, dispScale });
             }
             applyAnimationAutoScale(dispScale);
         }
@@ -9998,7 +10953,13 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         console.log('アニメーション開始:', { dispScale, nodesCount: nodes.length, membersCount: members.length });
 
         // 投影モードを取得
-    const projectionMode = getCurrentProjectionMode();
+        let projectionMode;
+        try {
+            projectionMode = getCurrentProjectionMode();
+        } catch (error) {
+            console.warn('投影モード取得エラー、デフォルトを使用:', error);
+            projectionMode = 'isometric';
+        }
 
         // 2D/3D判定（自由度数から判定）
         const dofPerNode = D_global.length / nodes.length;
@@ -10152,7 +11113,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             drawStructure(ctx, transform, nodes, members, '#ccc', true, true);
             drawBoundaryConditions(ctx, transform, nodes);
 
-            // 変形した構造を赤色で描画（フィルタリングされた部材のみ）
+            // 変形した構造を赤色で描画（変位図と同じ変形計算を使用）
             ctx.strokeStyle = 'red';
             ctx.lineWidth = 2;
 
@@ -10162,157 +11123,77 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 const originalIdx = members.indexOf(m);
                 if (originalIdx === -1) return;
 
-                const L = m.length;
-                const ni = nodes[m.i];
-                const nj = nodes[m.j];
-
-                // 2Dの場合は従来通りの処理
-                if (!is3D && m.T) {
-                    const c = m.c, s = m.s;
-                    const d_global_member_vec = [ ...D_global.slice(m.i * 3, m.i * 3 + 3), ...D_global.slice(m.j * 3, m.j * 3 + 3) ];
-                    const d_local_vec = mat.multiply(m.T, d_global_member_vec);
-                    const [ui, vi, thi, uj, vj, thj] = d_local_vec.map(v => v[0]);
-                    const load = memberLoadMap.get(originalIdx);
-                    const wLocal = load ? toFiniteNumber(load.wy ?? load.w) : 0;
-                    const E = m.E;
-                    const I = m.I;
+                const memberForce = null; // アニメーションでは部材力は使用しない
                     
                     ctx.beginPath();
-                    for (let k = 0; k <= 20; k++) {
-                        const x = (k / 20) * L, xi = x / L;
-                        const N1 = 1 - 3*xi**2 + 2*xi**3, N2 = x * (1 - xi)**2, N3 = 3*xi**2 - 2*xi**3, N4 = (x**2 / L) * (xi - 1);
-                        const u_local = (1 - xi) * ui + xi * uj, v_homogeneous = N1*vi + N2*thi + N3*vj + N4*thj;
-                        const v_particular = computeUniformLoadParticular(
-                            wLocal,
-                            x,
-                            L,
-                            E,
-                            I,
-                            m.i_conn,
-                            m.j_conn
+                const numDivisions = 20;
+                for (let k = 0; k <= numDivisions; k++) {
+                    const xi = k / numDivisions;
+                    
+                    // 変位図と同じ変形計算を使用
+                    let deformedPoint;
+                    if (typeof window.calculateMemberDeformation === 'function') {
+                        // 変位図の関数が利用可能な場合
+                        deformedPoint = window.calculateMemberDeformation(
+                            m,
+                            nodes,
+                            D_global,
+                            memberForce,
+                            xi,
+                            dispScale * progress // アニメーション進行度を考慮
                         );
-                        const v_local = v_homogeneous - v_particular;
-                        
-                        // グローバル座標での変形後位置
-                        const deformed_x_global = ni.x + (x*c - (v_local*dispScale*progress)*s) + (u_local*dispScale*progress*c);
-                        const deformed_y_global = ni.y + (x*s + (v_local*dispScale*progress)*c) + (u_local*dispScale*progress*s);
-                        
-                        // 投影を適用
-                        const deformedNode = { x: deformed_x_global, y: deformed_y_global, z: 0 };
-                        const projected = project3DTo2D(deformedNode, projectionMode);
-                        const p = transform(projected.x, projected.y);
-                        
-                        if (k === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
-                    }
-                    ctx.stroke();
-                    drawnMembers++;
                 } else {
-                    const basis = computeLocalBasis(m);
-                    const T_member = m.T3D;
-                    if (is3D && basis && T_member && T_member.length === 12 && T_member[0].length === 12) {
-                        let d_local = null;
-                        try {
-                            const d_global_member = [
-                                ...D_global.slice(m.i * 6, m.i * 6 + 6),
-                                ...D_global.slice(m.j * 6, m.j * 6 + 6)
-                            ];
-                            d_local = mat.multiply(T_member, d_global_member);
-                        } catch (error) {
-                            console.warn('3D変形復元で変換に失敗しました', { memberIndex: originalIdx, error });
-                        }
-
-                        if (d_local) {
-                            const load = memberLoadMap.get(originalIdx);
-                            const wyUniform = load ? toFiniteNumber(load.wy ?? load.w) : 0;
-                            const wzUniform = load ? toFiniteNumber(load.wz) : 0;
-                            const connI = m.i_conn || 'rigid';
-                            const connJ = m.j_conn || 'rigid';
-                            const E = m.E;
-                            const Iy = m.Iy || m.I;
-                            const Iz = m.Iz || m.I;
-
-                            const u_ix = d_local[0][0];
-                            const v_iy = d_local[1][0];
-                            const w_iz = d_local[2][0];
-                            const theta_iy = d_local[4][0];
-                            const theta_iz = d_local[5][0];
-                            const u_jx = d_local[6][0];
-                            const v_jy = d_local[7][0];
-                            const w_jz = d_local[8][0];
-                            const theta_jy = d_local[10][0];
-                            const theta_jz = d_local[11][0];
-
-                            ctx.beginPath();
-                            const sampleCount = 20;
-                            for (let k = 0; k <= sampleCount; k++) {
-                                const x = (k / sampleCount) * L;
-                                const { N1, N2, N3, N4, xi } = getHermiteCoefficients(x, L);
-
-                                const axialDisp = (1 - xi) * u_ix + xi * u_jx;
-                                const vShape = N1 * v_iy + N2 * theta_iz + N3 * v_jy + N4 * theta_jz;
-                                const wShape = N1 * w_iz - N2 * theta_iy + N3 * w_jz - N4 * theta_jy;
-
-                                const vParticular = computeUniformLoadParticular(wyUniform, x, L, E, Iz, connI, connJ);
-                                const wParticular = computeUniformLoadParticular(wzUniform, x, L, E, Iy, connI, connJ);
-
-                                const localXOffset = x + axialDisp * dispScale * progress;
-                                const localYOffset = (vShape - vParticular) * dispScale * progress;
-                                const localZOffset = (wShape - wParticular) * dispScale * progress;
-
-                                const globalPoint = {
-                                    x: basis.origin.x + basis.localX.x * localXOffset + basis.localY.x * localYOffset + basis.localZ.x * localZOffset,
-                                    y: basis.origin.y + basis.localX.y * localXOffset + basis.localY.y * localYOffset + basis.localZ.y * localZOffset,
-                                    z: basis.origin.z + basis.localX.z * localXOffset + basis.localY.z * localYOffset + basis.localZ.z * localZOffset
-                                };
-
-                                const projected = project3DTo2D(globalPoint, projectionMode);
-                                const p = transform(projected.x, projected.y);
-
-                                if (k === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
-                            }
-                            ctx.stroke();
-                            drawnMembers++;
-                            return;
-                        }
-                    }
-
-                    // 3Dの補助情報が不足する場合は線形補間にフォールバック
-                    const d_i = {
+                        // フォールバック: 簡単な線形補間
+                        const ni = nodes[m.i];
+                        const nj = nodes[m.j];
+                        
+                        if (!ni || !nj) continue;
+                        
+                        const d_i = is3D ? {
                         dx: D_global[m.i * 6][0],
                         dy: D_global[m.i * 6 + 1][0],
                         dz: D_global[m.i * 6 + 2][0]
+                        } : {
+                            dx: D_global[m.i * 3][0],
+                            dy: D_global[m.i * 3 + 1][0],
+                            dz: 0
                     };
-                    const d_j = {
+                        
+                        const d_j = is3D ? {
                         dx: D_global[m.j * 6][0],
                         dy: D_global[m.j * 6 + 1][0],
                         dz: D_global[m.j * 6 + 2][0]
-                    };
-
-                    ctx.beginPath();
-                    for (let k = 0; k <= 20; k++) {
-                        const xi = k / 20;
-
-                        const dx = d_i.dx + (d_j.dx - d_i.dx) * xi;
-                        const dy = d_i.dy + (d_j.dy - d_i.dy) * xi;
-                        const dz = d_i.dz + (d_j.dz - d_i.dz) * xi;
+                        } : {
+                            dx: D_global[m.j * 3][0],
+                            dy: D_global[m.j * 3 + 1][0],
+                            dz: 0
+                        };
 
                         const original_x = ni.x + (nj.x - ni.x) * xi;
                         const original_y = (ni.y || 0) + ((nj.y || 0) - (ni.y || 0)) * xi;
                         const original_z = (ni.z || 0) + ((nj.z || 0) - (ni.z || 0)) * xi;
 
-                        const deformed_x = original_x + dx * dispScale * progress;
-                        const deformed_y = original_y + dy * dispScale * progress;
-                        const deformed_z = original_z + dz * dispScale * progress;
+                        const dx = d_i.dx + (d_j.dx - d_i.dx) * xi;
+                        const dy = d_i.dy + (d_j.dy - d_i.dy) * xi;
+                        const dz = d_i.dz + (d_j.dz - d_i.dz) * xi;
 
-                        const deformedNode = { x: deformed_x, y: deformed_y, z: deformed_z };
-                        const projected = project3DTo2D(deformedNode, projectionMode);
+                        deformedPoint = {
+                            x: original_x + dx * dispScale * progress,
+                            y: original_y + dy * dispScale * progress,
+                            z: original_z + dz * dispScale * progress
+                        };
+                    }
+
+                    if (deformedPoint) {
+                        const projected = project3DTo2D(deformedPoint, projectionMode);
                         const p = transform(projected.x, projected.y);
 
-                        if (k === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+                        if (k === 0) ctx.moveTo(p.x, p.y); 
+                        else ctx.lineTo(p.x, p.y);
+                    }
                     }
                     ctx.stroke();
                     drawnMembers++;
-                }
             });
 
             // 初回のみログ出力
@@ -15041,12 +15922,21 @@ const loadPreset = (index) => {
     
 
     elements.calculateAndAnimateBtn.addEventListener('click', () => {
+        console.log('🎬 アニメーションボタンクリック');
         runFullAnalysis();
         // 描画コンテキストを更新してからアニメーション実行
         drawOnCanvas();
         // 少し遅延させてから描画コンテキストが確実に初期化されるようにする
         setTimeout(() => {
+            console.log('🎬 アニメーション実行チェック:', { 
+                lastResults: !!lastResults, 
+                lastResultsD: !!lastResults?.D,
+                nodes: lastResults?.nodes?.length,
+                members: lastResults?.members?.length,
+                memberLoads: lastResults?.memberLoads?.length
+            });
             if (lastResults && lastResults.D) {
+                console.log('🎬 アニメーション実行開始');
                 animateDisplacement(lastResults.nodes, lastResults.members, lastResults.D, lastResults.memberLoads);
             } else {
                 console.warn('アニメーション実行できません: lastResults または lastResults.D が存在しません');
@@ -16907,6 +17797,15 @@ const loadPreset = (index) => {
     // 3Dビューアからアクセスできるように、一部の関数をグローバルスコープに公開
     window.addRow = addRow;
     window.memberRowHTML = memberRowHTML;
+    
+    // グローバル関数として公開
+    window.calculateSectionCheck = calculateSectionCheck;
+    window.displaySectionCheckResults = displaySectionCheckResults;
+    window.showSectionCheckDetail = showSectionCheckDetail;
+    window.calculateBucklingAnalysis = calculateBucklingAnalysis;
+    window.displayBucklingResults = displayBucklingResults;
+    window.showBucklingDetail = showBucklingDetail;
+    window.drawDualAxisCapacityRatioDiagram = drawDualAxisCapacityRatioDiagram;
 });
 
 // ==========================================================================
@@ -17842,3 +18741,5 @@ window.showMemberProperties = function(memberIndex) {
 
     console.log('✅ 部材プロパティポップアップ表示完了 - 部材:', memberIndex + 1);
 };
+
+// グローバル関数として公開（DOMContentLoaded内で実行）
