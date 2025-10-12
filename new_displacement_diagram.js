@@ -4376,9 +4376,13 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
         return;
     }
 
-    // 第1軸と同様のレイアウト設定
-    const frameWidth = 1200;  // 各構面の幅
-    const frameHeight = 900; // 各構面の高さ
+    // 動的サイズ設定: 画面幅の50%を使用
+    const container = canvas.parentElement;
+    const availableWidth = container ? container.clientWidth : 1200;
+    const availableHeight = container ? container.clientHeight : 900;
+    
+    const frameWidth = Math.floor(availableWidth * 0.9);  // 90%を使用（余白考慮）
+    const frameHeight = Math.floor(availableHeight * 0.8); // 80%を使用（余白考慮）
     const framePadding = 40; // 構面間の余白
     const headerHeight = 80; // ヘッダー高さ
     
