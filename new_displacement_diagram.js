@@ -2178,8 +2178,8 @@ const drawStressDiagram = (canvas, nodes, members, memberForces, stressType, tit
             ctx.beginPath();
             for (let k = 0; k <= numDivisions; k++) {
                 const p = stressPoints[k];
-                const px = p.x + perpX * p.offset;
-                const py = p.y - perpY * p.offset;
+                const px = Math.max(x, Math.min(x + drawWidth, p.x + perpX * p.offset));
+                const py = Math.max(y, Math.min(y + drawHeight, p.y - perpY * p.offset));
                 
                 if (k === 0) ctx.moveTo(px, py);
                 else ctx.lineTo(px, py);
@@ -4471,6 +4471,12 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
         }
         ctx.fillText(frameTitle, x + drawWidth / 2, y + 30);
 
+        // 構面内に描画するための座標変換を設定（第1軸と同様のクリッピング）
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x, y, drawWidth, drawHeight);
+        ctx.clip();
+
         // このフレームに含まれる部材を特定
         const visibleMembers = [];
         members.forEach(m => {
@@ -4539,6 +4545,12 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
         const modelWidth = maxX - minX;
         const modelHeight = maxY - minY;
 
+        // 部材が見つからない場合はスキップ
+        if (visibleMembers.length === 0) {
+            ctx.restore();
+            return;
+        }
+
         // 座標変換関数（第1軸と完全に同じ計算方式）
         // 第1軸と同じモデルスケール計算を使用
         let modelScale = 1;
@@ -4563,11 +4575,77 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
         
 
         // 応力図のスケール（第1軸と同じスケールを使用）
-        const stressScale = globalStressScale || 1;
+        let stressScale = globalStressScale || 1;
         
+        // 枠外にはみ出さないよう、許容スケール上限を算出（第1軸と同じ処理）
+        const EPS = 1e-9;
+        let scaleLimit = Infinity;
 
         // ラベル障害物リスト（第1軸と同様）
         const labelObstacles = [];
+
+        // まずスケール上限を計算（第1軸と同じ処理）
+        visibleMembers.forEach(m => {
+            const memberIndex = members.findIndex(mem => mem.i === m.i && mem.j === m.j);
+            if (memberIndex === -1 || !memberForces[memberIndex]) return;
+
+            const forces = memberForces[memberIndex];
+            const ni = nodes[m.i];
+            const nj = nodes[m.j];
+            
+            // 第1軸と同様に、3D座標を2D投影してから座標変換を適用
+            const pi3D = project3DTo2D(ni, frame.mode);
+            const pj3D = project3DTo2D(nj, frame.mode);
+            const pi = transform(pi3D.x, pi3D.y);
+            const pj = transform(pj3D.x, pj3D.y);
+
+            const L = Math.sqrt(
+                Math.pow(nj.x - ni.x, 2) +
+                Math.pow((nj.y || 0) - (ni.y || 0), 2) +
+                Math.pow((nj.z || 0) - (ni.z || 0), 2)
+            );
+            if (!isFinite(L) || L < EPS) return;
+
+            const numDivisions = 20;
+
+            for (let k = 0; k <= numDivisions; k++) {
+                const xi = k / numDivisions;
+                let stressValue = 0;
+
+                if (stressType === 'moment') {
+                    stressValue = calculateMemberMomentForAxis(forces, L, xi, secondaryAxis, null);
+                } else if (stressType === 'shear') {
+                    stressValue = calculateMemberShearForAxis(forces, L, xi, secondaryAxis, null);
+                }
+
+                const absStress = Math.abs(stressValue);
+                if (absStress < EPS) continue;
+
+                const pos_x = pi.x + (pj.x - pi.x) * xi;
+                const pos_y = pi.y + (pj.y - pi.y) * xi;
+
+                const distToLeft = pos_x - x;
+                const distToRight = (x + drawWidth) - pos_x;
+                const distToTop = pos_y - y;
+                const distToBottom = (y + drawHeight) - pos_y;
+                const minDist = Math.min(distToLeft, distToRight, distToTop, distToBottom);
+
+                if (minDist <= EPS) {
+                    scaleLimit = 0;
+                    return;
+                }
+
+                const candidateScale = minDist / absStress;
+                if (candidateScale < scaleLimit) {
+                    scaleLimit = candidateScale;
+                }
+            }
+        });
+
+        // スケール上限を適用（第1軸と同じ処理）
+        if (scaleLimit < Infinity) {
+            stressScale = Math.min(stressScale, scaleLimit * 0.95);
+        }
 
         // 部材を描画
         visibleMembers.forEach(m => {
@@ -4577,8 +4655,12 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
             const forces = memberForces[memberIndex];
             const ni = nodes[m.i];
             const nj = nodes[m.j];
-            const pi = project3DTo2D(ni, frame.mode);
-            const pj = project3DTo2D(nj, frame.mode);
+            
+            // 第1軸と同様に、3D座標を2D投影してから座標変換を適用
+            const pi3D = project3DTo2D(ni, frame.mode);
+            const pj3D = project3DTo2D(nj, frame.mode);
+            const pi = transform(pi3D.x, pi3D.y);
+            const pj = transform(pj3D.x, pj3D.y);
             
             // 部材の長さを計算
             const L = Math.sqrt(
@@ -4613,14 +4695,18 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
 
                 const finiteStressValue = Number.isFinite(stressValue) ? stressValue : 0;
                 
-                // 部材上の位置（2D投影面上）
+                // 部材上の位置（既に座標変換済み）
                 const posX = pi.x + (pj.x - pi.x) * xi;
                 const posY = pi.y + (pj.y - pi.y) * xi;
-                const p = transform(posX, posY);
+                
+                
+                // フレーム境界内に制限（第1軸と同様の処理）
+                const clampedX = Math.max(x, Math.min(x + drawWidth, posX));
+                const clampedY = Math.max(y, Math.min(y + drawHeight, posY));
                 
                 stressPoints.push({
-                    x: p.x,
-                    y: p.y,
+                    x: clampedX,
+                    y: clampedY,
                     value: finiteStressValue,
                     offset: finiteStressValue * stressScale
                 });
@@ -4657,10 +4743,10 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
                 const offset1 = Number.isFinite(p1.offset) ? p1.offset : 0;
                 const offset2 = Number.isFinite(p2.offset) ? p2.offset : 0;
                 
-                const offset1X = base1X + perpX * offset1;
-                const offset1Y = base1Y - perpY * offset1;
-                const offset2X = base2X + perpX * offset2;
-                const offset2Y = base2Y - perpY * offset2;
+                const offset1X = Math.max(x, Math.min(x + drawWidth, base1X + perpX * offset1));
+                const offset1Y = Math.max(y, Math.min(y + drawHeight, base1Y - perpY * offset1));
+                const offset2X = Math.max(x, Math.min(x + drawWidth, base2X + perpX * offset2));
+                const offset2Y = Math.max(y, Math.min(y + drawHeight, base2Y - perpY * offset2));
                 
                 // 台形を描画
                 ctx.fillStyle = fillColor;
@@ -4681,8 +4767,8 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
             ctx.beginPath();
             for (let k = 0; k <= numDivisions; k++) {
                 const p = stressPoints[k];
-                const px = p.x + perpX * p.offset;
-                const py = p.y - perpY * p.offset;
+                const px = Math.max(x, Math.min(x + drawWidth, p.x + perpX * p.offset));
+                const py = Math.max(y, Math.min(y + drawHeight, p.y - perpY * p.offset));
                 
                 if (k === 0) ctx.moveTo(px, py);
                 else ctx.lineTo(px, py);
@@ -4757,16 +4843,17 @@ const drawSecondaryAxisStressDiagram = (canvas, nodes, members, memberForces, st
                 });
             }
 
-            // 部材線を描画
+            // 部材線を描画（既に座標変換済み）
             ctx.strokeStyle = '#333';
             ctx.lineWidth = 2;
             ctx.beginPath();
-            const start = transform(pi.x, pi.y);
-            const end = transform(pj.x, pj.y);
-            ctx.moveTo(start.x, start.y);
-            ctx.lineTo(end.x, end.y);
+            ctx.moveTo(pi.x, pi.y);
+            ctx.lineTo(pj.x, pj.y);
             ctx.stroke();
         });
+
+        // クリッピングを解除
+        ctx.restore();
     });
 };
 
