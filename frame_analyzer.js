@@ -10293,9 +10293,22 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 });
                 
                 if (rowMemberNumber === memberIndex + 1) {
-                    Zx_fromTable = row.dataset.zx ? parseFloat(row.dataset.zx) : null;
-                    Zy_fromTable = row.dataset.zy ? parseFloat(row.dataset.zy) : null;
-                    console.log('🔧 テーブルから取得成功:', { Zx_fromTable, Zy_fromTable, rowMemberNumber });
+                    // 実際の入力フィールドから値を取得
+                    const zxInput = row.cells[9]?.querySelector('input[type="number"]');
+                    const zyInput = row.cells[10]?.querySelector('input[type="number"]');
+                    
+                    Zx_fromTable = zxInput?.value ? parseFloat(zxInput.value) : null;
+                    Zy_fromTable = zyInput?.value ? parseFloat(zyInput.value) : null;
+                    
+                    console.log('🔧 テーブルから取得成功:', { 
+                        Zx_fromTable, 
+                        Zy_fromTable, 
+                        rowMemberNumber,
+                        zxInputValue: zxInput?.value,
+                        zyInputValue: zyInput?.value,
+                        zxDataset: row.dataset.zx,
+                        zyDataset: row.dataset.zy
+                    });
                     break;
                 }
             }
@@ -10318,10 +10331,12 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         
         let Zy_fromSectionInfo = null, Zy_fromSectionSummary = null;
         if (member.sectionInfo && typeof member.sectionInfo === 'object') {
-            Zy_fromSectionInfo = member.sectionInfo.Zy || member.sectionInfo.zy || member.sectionInfo.Z;
+            Zy_fromSectionInfo = member.sectionInfo.Zy || member.sectionInfo.zy;
+            // Zはフォールバックとして使用しない（Zxと同じ値になるため）
         }
         if (member.sectionSummary && typeof member.sectionSummary === 'object') {
-            Zy_fromSectionSummary = member.sectionSummary.Zy || member.sectionSummary.zy || member.sectionSummary.Z;
+            Zy_fromSectionSummary = member.sectionSummary.Zy || member.sectionSummary.zy;
+            // Zはフォールバックとして使用しない（Zxと同じ値になるため）
         }
         
         const Zx_raw = Zx_fromTable ||
@@ -10334,19 +10349,40 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         const Zy_raw = Zy_fromTable ||
                       member.properties?.sectionModulus?.zyNumeric || 
                       member.properties?.sectionModulus?.zy || 
-                      member.properties?.sectionModulus?.numeric || 
                       Zy_fromSectionInfo ||
-                      Zy_fromSectionSummary ||
-                      Z;
+                      Zy_fromSectionSummary;
+                      // Zはフォールバックとして使用しない（Zxと同じ値になるため）
         
         const Zx = parseFloat(Zx_raw) || Z;
-        const Zy = parseFloat(Zy_raw) || Z;
+        
+        // Zyの取得を改善：より詳細なデバッグ情報付き
+        let Zy = null;
+        if (Zy_raw !== null && Zy_raw !== undefined && !isNaN(parseFloat(Zy_raw))) {
+            Zy = parseFloat(Zy_raw);
+        } else {
+            // Zyが取得できない場合の代替計算
+            // IyとAから断面係数を推定
+            if (member.properties?.momentOfInertia?.iy && member.properties?.area) {
+                const Iy_cm4 = parseFloat(member.properties.momentOfInertia.iy) || 0;
+                const A_cm2 = parseFloat(member.properties.area.numeric) || 0;
+                if (Iy_cm4 > 0 && A_cm2 > 0) {
+                    const ry_cm = Math.sqrt(Iy_cm4 / A_cm2);
+                    const cy_cm = ry_cm * 2; // 断面の高さ（概算）
+                    Zy = Iy_cm4 / cy_cm; // cm³単位
+                }
+            }
+            
+            // それでも取得できない場合はZxの一定割合を使用
+            if (Zy === null || Zy === 0) {
+                Zy = Zx * 0.3; // 一般的にZyはZxより小さい
+            }
+        }
         
         // 単位変換の確認（Zが0.0015の場合、すでにm³単位の可能性）
         const Zx_mm3 = (Zx < 0.01) ? Zx * 1e9 : Zx * 1e6; // 小さい値ならm³->mm³、大きい値ならcm³->mm³
         const Zy_mm3 = (Zy < 0.01) ? Zy * 1e9 : Zy * 1e6; // 小さい値ならm³->mm³、大きい値ならcm³->mm³
         
-        console.log('🔧 断面係数計算結果:', { 
+        console.log('🔧 断面係数計算結果詳細:', { 
             Zx_raw, Zy_raw,
             Zx, Zy, 
             Zx_mm3, Zy_mm3,
@@ -10354,12 +10390,33 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             Zy_unit: Zy < 0.01 ? 'm³' : 'cm³',
             Zx_source: Zx_fromTable ? 'table' : 
                       (member.properties?.sectionModulus?.zxNumeric ? 'properties.zxNumeric' : 
+                       member.properties?.sectionModulus?.zx ? 'properties.zx' :
+                       member.properties?.sectionModulus?.numeric ? 'properties.numeric' :
                        Zx_fromSectionInfo ? 'sectionInfo' :
-                       Zx_fromSectionSummary ? 'sectionSummary' : 'default'),
+                       Zx_fromSectionSummary ? 'sectionSummary' : 'default_Z'),
             Zy_source: Zy_fromTable ? 'table' : 
                       (member.properties?.sectionModulus?.zyNumeric ? 'properties.zyNumeric' : 
+                       member.properties?.sectionModulus?.zy ? 'properties.zy' :
                        Zy_fromSectionInfo ? 'sectionInfo' :
-                       Zy_fromSectionSummary ? 'sectionSummary' : 'default')
+                       Zy_fromSectionSummary ? 'sectionSummary' : 'calculated'),
+            Zy_calculation_method: Zy_raw !== null && Zy_raw !== undefined && !isNaN(parseFloat(Zy_raw)) ? 
+                                  'from_raw_data' : 
+                                  (member.properties?.momentOfInertia?.iy && member.properties?.area ? 
+                                   'calculated_from_Iy_A' : 'fallback_to_Zx_ratio'),
+            raw_values: {
+                Zx_fromTable, Zy_fromTable,
+                Zx_fromSectionInfo, Zy_fromSectionInfo,
+                Zx_fromSectionSummary, Zy_fromSectionSummary,
+                member_zx: member.properties?.sectionModulus?.zx,
+                member_zy: member.properties?.sectionModulus?.zy,
+                member_zxNumeric: member.properties?.sectionModulus?.zxNumeric,
+                member_zyNumeric: member.properties?.sectionModulus?.zyNumeric
+            },
+            member_properties: {
+                sectionModulus: member.properties?.sectionModulus,
+                momentOfInertia: member.properties?.momentOfInertia,
+                area: member.properties?.area
+            }
         });
         
         // 部材データから直接材料名を取得（弾性係数選択で取得した材料名を使用）
@@ -10422,6 +10479,15 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             default:
                 materialInfo = `材料: ${materialName}`;
         }
+
+        // 表示用の最終値をログ出力
+        console.log('🔧 最終表示値:', {
+            memberIndex: memberIndex + 1,
+            Zx_final: Zx,
+            Zy_final: Zy,
+            Zx_unit: Zx < 0.01 ? 'm³' : 'cm³',
+            Zy_unit: Zy < 0.01 ? 'm³' : 'cm³'
+        });
 
         let detailHtml = `
             <div style="font-family: Arial, sans-serif;">
