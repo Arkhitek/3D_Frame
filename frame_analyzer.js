@@ -10278,14 +10278,33 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             for (let i = 1; i < memberRows.length; i++) { // ヘッダー行をスキップ
                 const row = memberRows[i];
                 const firstCell = row.cells[0];
+                
+                // 部材番号の取得方法を複数試す
+                let rowMemberNumber = 0;
+                
+                // 方法1: input要素から取得
                 const input = firstCell.querySelector('input');
-                const rowMemberNumber = input ? parseInt(input.value || '0') : 0;
+                if (input) {
+                    rowMemberNumber = parseInt(input.value || '0');
+                } else {
+                    // 方法2: テキストコンテンツから取得
+                    const textContent = firstCell.textContent?.trim();
+                    if (textContent && !isNaN(parseInt(textContent))) {
+                        rowMemberNumber = parseInt(textContent);
+                    } else {
+                        // 方法3: 行インデックスを使用（1ベース）
+                        rowMemberNumber = i;
+                    }
+                }
                 
                 console.log('🔧 行チェック:', { 
                     rowIndex: i, 
                     rowMemberNumber, 
                     targetMemberIndex: memberIndex + 1,
                     hasInput: !!input,
+                    inputValue: input?.value,
+                    textContent: firstCell.textContent?.trim(),
+                    method: input ? 'input' : (firstCell.textContent?.trim() && !isNaN(parseInt(firstCell.textContent.trim())) ? 'text' : 'index'),
                     dataset: {
                         zx: row.dataset.zx,
                         zy: row.dataset.zy
