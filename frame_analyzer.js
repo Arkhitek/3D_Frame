@@ -1657,6 +1657,68 @@ function showMemberTooltip(memberData, mouseX, mouseY) {
     console.log('✅ ツールチップDOM要素確認完了');
     
     const { number, nodeI, nodeJ, material, section, nodes, sectionInfo, sectionSummary, sectionAxis, properties = {}, connections = {}, loads = {} } = memberData;
+    
+    // 入力テーブルから直接物性値を取得
+    let tableProperties = {};
+    try {
+        const memberRows = elements.membersTable.rows;
+        const memberIndex = number - 1; // 部材番号は1ベース、配列は0ベース
+        
+        for (let i = 1; i < memberRows.length; i++) {
+            const row = memberRows[i];
+            const firstCell = row.cells[0];
+            let rowMemberNumber = 0;
+            
+            // 部材番号の取得
+            const input = firstCell.querySelector('input');
+            if (input && input.value && !isNaN(parseInt(input.value))) {
+                rowMemberNumber = parseInt(input.value);
+            } else {
+                const textContent = firstCell.textContent?.trim();
+                if (textContent && !isNaN(parseInt(textContent))) {
+                    rowMemberNumber = parseInt(textContent);
+                } else {
+                    rowMemberNumber = i;
+                }
+            }
+            
+            // 部材1の特別処理
+            if (i === 1 && memberIndex === 0) {
+                rowMemberNumber = 1;
+            }
+            
+            if (rowMemberNumber === number) {
+                // テーブルから物性値を取得
+                const eInput = row.cells[3]?.querySelector('input[type="number"]');
+                const fInput = row.cells[4]?.querySelector('input[type="number"]');
+                const ixInput = row.cells[5]?.querySelector('input[type="number"]');
+                const iyInput = row.cells[6]?.querySelector('input[type="number"]');
+                const jInput = row.cells[7]?.querySelector('input[type="number"]');
+                const aInput = row.cells[8]?.querySelector('input[type="number"]');
+                const zxInput = row.cells[9]?.querySelector('input[type="number"]');
+                const zyInput = row.cells[10]?.querySelector('input[type="number"]');
+                
+                tableProperties = {
+                    E: eInput?.value ? parseFloat(eInput.value) : null,
+                    F: fInput?.value ? parseFloat(fInput.value) : null,
+                    Ix: ixInput?.value ? parseFloat(ixInput.value) : null,
+                    Iy: iyInput?.value ? parseFloat(iyInput.value) : null,
+                    J: jInput?.value ? parseFloat(jInput.value) : null,
+                    A: aInput?.value ? parseFloat(aInput.value) : null,
+                    Zx: zxInput?.value ? parseFloat(zxInput.value) : null,
+                    Zy: zyInput?.value ? parseFloat(zyInput.value) : null
+                };
+                
+                console.log('🔧 テーブルから物性値取得:', {
+                    memberNumber: number,
+                    tableProperties
+                });
+                break;
+            }
+        }
+    } catch (error) {
+        console.warn('テーブルからの物性値取得エラー:', error);
+    }
 
     const length = Math.sqrt(Math.pow(nodes.j.x - nodes.i.x, 2) + Math.pow(nodes.j.y - nodes.i.y, 2));
     const axisLabel = sectionAxis?.label || sectionInfo?.axis?.label || '';
@@ -1723,16 +1785,65 @@ function showMemberTooltip(memberData, mouseX, mouseY) {
         ? `<div class="tooltip-subsection"><div class="tooltip-subtitle">概要</div><div class="tooltip-stat-grid">${generalInfoHTML}</div></div>`
         : '';
 
-    const {
-        elasticModulus = {},
-        strength = {},
-        inertia = {},
-        area: areaProp = {},
-        sectionModulus = {},
-        radiusOfGyration = {},
-        density: densityPropRaw = null,
-        selfWeightPerLength = null
-    } = properties;
+    // テーブルからの値が取得できた場合はそれを使用、そうでなければpropertiesを使用
+    const useTableValues = Object.keys(tableProperties).some(key => tableProperties[key] !== null);
+    
+    let elasticModulus = {}, strength = {}, inertia = {}, areaProp = {}, sectionModulus = {}, radiusOfGyration = {}, densityPropRaw = null, selfWeightPerLength = null;
+    
+    if (useTableValues) {
+        // テーブルからの値を使用
+        elasticModulus = { value: tableProperties.E?.toString() || '', numeric: tableProperties.E };
+        strength = { value: tableProperties.F?.toString() || '', numeric: tableProperties.F };
+        inertia = { 
+            value: tableProperties.Ix?.toString() || '', 
+            numeric: tableProperties.Ix,
+            unit: 'cm⁴',
+            ix: tableProperties.Ix?.toString() || '',
+            iy: tableProperties.Iy?.toString() || '',
+            j: tableProperties.J?.toString() || '',
+            ixNumeric: tableProperties.Ix,
+            iyNumeric: tableProperties.Iy,
+            jNumeric: tableProperties.J
+        };
+        areaProp = { 
+            value: tableProperties.A?.toString() || '', 
+            numeric: tableProperties.A,
+            unit: 'cm²'
+        };
+        sectionModulus = {
+            value: tableProperties.Zx?.toString() || '',
+            numeric: tableProperties.Zx,
+            unit: 'cm³',
+            zx: tableProperties.Zx?.toString() || '',
+            zy: tableProperties.Zy?.toString() || '',
+            zxNumeric: tableProperties.Zx,
+            zyNumeric: tableProperties.Zy
+        };
+        
+        console.log('🔧 テーブルからの物性値を使用:', {
+            memberNumber: number,
+            useTableValues,
+            tableProperties
+        });
+    } else {
+        // 従来のpropertiesを使用
+        ({ 
+            elasticModulus = {},
+            strength = {},
+            inertia = {},
+            area: areaProp = {},
+            sectionModulus = {},
+            radiusOfGyration = {},
+            density: densityPropRaw = null,
+            selfWeightPerLength = null
+        } = properties);
+        
+        console.log('🔧 従来のpropertiesを使用:', {
+            memberNumber: number,
+            useTableValues,
+            properties
+        });
+    }
 
     const densityProp = (densityPropRaw && typeof densityPropRaw === 'object') ? densityPropRaw : {};
 
@@ -1773,11 +1884,39 @@ function showMemberTooltip(memberData, mouseX, mouseY) {
         }));
     }
 
-    if (inertia.value || Number.isFinite(inertia.numeric)) {
+    // 断面二次モーメント Ix
+    if (useTableValues && tableProperties.Ix !== null) {
+        propertyChips.push(createChip({
+            label: 'Ix',
+            numeric: tableProperties.Ix,
+            raw: tableProperties.Ix.toString(),
+            unit: 'cm⁴'
+        }));
+    } else if (inertia.value || Number.isFinite(inertia.numeric)) {
         propertyChips.push(createChip({
             label: 'I',
             numeric: inertia.numeric ?? asNumeric(inertia.value),
             raw: inertia.value,
+            unit: 'cm⁴'
+        }));
+    }
+    
+    // 断面二次モーメント Iy
+    if (useTableValues && tableProperties.Iy !== null) {
+        propertyChips.push(createChip({
+            label: 'Iy',
+            numeric: tableProperties.Iy,
+            raw: tableProperties.Iy.toString(),
+            unit: 'cm⁴'
+        }));
+    }
+    
+    // ねじり定数 J
+    if (useTableValues && tableProperties.J !== null) {
+        propertyChips.push(createChip({
+            label: 'J',
+            numeric: tableProperties.J,
+            raw: tableProperties.J.toString(),
             unit: 'cm⁴'
         }));
     }
