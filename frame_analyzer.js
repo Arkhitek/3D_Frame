@@ -9598,30 +9598,97 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             }
             
             let maxRatio = 0, maxRatioY = 0, maxRatioZ = 0, M_at_max = 0;
+            let maxShearRatio = 0, maxShearRatioY = 0, maxShearRatioZ = 0; // せん断力検定比
             const ratios = [];
             const ratiosY = []; // Y軸周りの検定比
             const ratiosZ = []; // Z軸周りの検定比
+            const shearRatios = []; // せん断力検定比
+            const shearRatiosY = []; // Y軸方向せん断力検定比
+            const shearRatiosZ = []; // Z軸方向せん断力検定比
             
             for (let k = 0; k <= 20; k++) {
-                const x = (k / 20) * L;
-                const M_linear = -force.M_i * (1 - x/L) + force.M_j * (x/L);
+                const xi = k / 20; // 無次元座標
+                const x = xi * L; // 実際の距離
+                
+                // 曲げモーメント図と同じ計算方法を使用
+                // 第1軸（Y軸周り）の曲げモーメント
+                let M1_x = 0;
+                if (typeof calculateMemberMomentForAxis === 'function') {
+                    M1_x = calculateMemberMomentForAxis(force, L, xi, 'y', w);
+                } else {
+                    // フォールバック: 線形補間 + 等分布荷重
+                    const M_linear = -force.My_i * (1 - xi) + force.My_j * xi;
+                    const M_parabolic = w * L * x / 2 - w * x**2 / 2;
+                    M1_x = M_linear + M_parabolic;
+                }
+                
+                // 第2軸（Z軸周り）の曲げモーメント
+                let M2_x = 0;
+                if (typeof calculateMemberMomentForAxis === 'function') {
+                    M2_x = calculateMemberMomentForAxis(force, L, xi, 'z', w);
+                } else {
+                    // フォールバック: 線形補間 + 等分布荷重
+                    const M_linear = -force.Mz_i * (1 - xi) + force.Mz_j * xi;
+                    const M_parabolic = w * L * x / 2 - w * x**2 / 2;
+                    M2_x = M_linear + M_parabolic;
+                }
+                
+                // 従来の計算方法（後方互換性のため）
+                const M_linear = -force.M_i * (1 - xi) + force.M_j * xi;
                 const M_parabolic = w * L * x / 2 - w * x**2 / 2;
                 const M_x = M_linear + M_parabolic;
                 
-                // Y軸周りの曲げモーメント（My）
-                const My_linear = -force.My_i * (1 - x/L) + force.My_j * (x/L);
-                const My_x = My_linear;
-                
-                // Z軸周りの曲げモーメント（Mz）
-                const Mz_linear = -force.Mz_i * (1 - x/L) + force.Mz_j * (x/L);
-                const Mz_x = Mz_linear;
-                
                 const sigma_a = (N * 1000) / A_mm2;
                 const sigma_b = (Math.abs(M_x) * 1e6) / Z_mm3;
-                const sigma_by = (Math.abs(My_x) * 1e6) / Zy_mm3; // Y軸周り
-                const sigma_bz = (Math.abs(Mz_x) * 1e6) / Zz_mm3; // Z軸周り
+                const sigma_by = (Math.abs(M1_x) * 1e6) / Zy_mm3; // 第1軸（Y軸周り）
+                const sigma_bz = (Math.abs(M2_x) * 1e6) / Zz_mm3; // 第2軸（Z軸周り）
+                
+                // せん断力計算（第2軸せん断力図と同じ軸選択方法を使用）
+                let Q1_x = 0, Q2_x = 0; // 第1軸、第2軸のせん断力
+                
+                // 投影モードに応じて軸を決定（第2軸せん断力図と同じロジック）
+                const getCurrentProjectionMode = () => {
+                    const projectionSelect = document.getElementById('projection-mode');
+                    return projectionSelect ? projectionSelect.value : 'iso';
+                };
+                
+                const projectionMode = getCurrentProjectionMode();
+                let currentAxis, secondaryAxis;
+                
+                if (projectionMode === 'xy') {
+                    currentAxis = 'z'; // 現在表示: Z軸周り
+                    secondaryAxis = 'y'; // 第2軸: Y軸周り
+                } else if (projectionMode === 'xz') {
+                    currentAxis = 'y'; // 現在表示: Y軸周り
+                    secondaryAxis = 'z'; // 第2軸: Z軸周り
+                } else if (projectionMode === 'yz') {
+                    currentAxis = 'x'; // 現在表示: X軸周り
+                    secondaryAxis = 'z'; // 第2軸: Z軸周り
+                } else {
+                    // 等角投影の場合は第2軸としてZ軸を表示
+                    currentAxis = 'y'; // 現在表示: Y軸周り
+                    secondaryAxis = 'z'; // 第2軸: Z軸周り
+                }
+                
+                if (typeof calculateMemberShearForAxis === 'function') {
+                    // 第2軸せん断力図と同じようにnullを渡す（等分布荷重は内部で計算される）
+                    Q1_x = calculateMemberShearForAxis(force, L, xi, currentAxis, null);
+                    Q2_x = calculateMemberShearForAxis(force, L, xi, secondaryAxis, null);
+                } else {
+                    // フォールバック: 線形補間（等分布荷重は考慮しない）
+                    const Q1_linear = force[`Q${currentAxis}_i`] * (1 - xi) + force[`Q${currentAxis}_j`] * xi;
+                    Q1_x = Q1_linear;
+                    
+                    const Q2_linear = force[`Q${secondaryAxis}_i`] * (1 - xi) + force[`Q${secondaryAxis}_j`] * xi;
+                    Q2_x = Q2_linear;
+                }
+                
+                // せん断応力度計算
+                const tau1 = (Math.abs(Q1_x) * 1000) / A_mm2; // 第1軸せん断応力度
+                const tau2 = (Math.abs(Q2_x) * 1000) / A_mm2; // 第2軸せん断応力度
                 
                 let ratio_x = 0, ratio_y = 0, ratio_z = 0;
+                let shear_ratio1 = 0, shear_ratio2 = 0;
                 
                 if(isNaN(sigma_a) || !ft || !fc || !fb) { 
                     ratio_x = ratio_y = ratio_z = Infinity; 
@@ -9637,28 +9704,88 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 }
                 }
                 
+                // せん断力検定比の計算
+                if (fs && !isNaN(tau1) && !isNaN(tau2)) {
+                    shear_ratio1 = tau1 / fs; // 第1軸せん断力検定比
+                    shear_ratio2 = tau2 / fs; // 第2軸せん断力検定比
+                } else {
+                    shear_ratio1 = shear_ratio2 = Infinity;
+                }
+                
                 ratios.push(ratio_x);
                 ratiosY.push(ratio_y);
                 ratiosZ.push(ratio_z);
+                shearRatios.push(shear_ratio1);
+                shearRatiosY.push(shear_ratio1);
+                shearRatiosZ.push(shear_ratio2);
                 
                 if (ratio_x > maxRatio) { maxRatio = ratio_x; M_at_max = M_x; }
                 if (ratio_y > maxRatioY) maxRatioY = ratio_y;
                 if (ratio_z > maxRatioZ) maxRatioZ = ratio_z;
+                if (shear_ratio1 > maxShearRatio) maxShearRatio = shear_ratio1;
+                if (shear_ratio1 > maxShearRatioY) maxShearRatioY = shear_ratio1;
+                if (shear_ratio2 > maxShearRatioZ) maxShearRatioZ = shear_ratio2;
+            }
+            
+            // 曲げモーメント図と同じ方法で最大値を計算
+            let maxM1 = 0, maxM2 = 0, maxQ1 = 0, maxQ2 = 0;
+            for (let k = 0; k <= 20; k++) {
+                const xi = k / 20;
+                const x = xi * L;
+                
+                let M1_x = 0, M2_x = 0, Q1_x = 0, Q2_x = 0;
+                if (typeof calculateMemberMomentForAxis === 'function') {
+                    M1_x = calculateMemberMomentForAxis(force, L, xi, 'y', w);
+                    M2_x = calculateMemberMomentForAxis(force, L, xi, 'z', w);
+                } else {
+                    const M1_linear = -force.My_i * (1 - xi) + force.My_j * xi;
+                    const M1_parabolic = w * L * x / 2 - w * x**2 / 2;
+                    M1_x = M1_linear + M1_parabolic;
+                    
+                    const M2_linear = -force.Mz_i * (1 - xi) + force.Mz_j * xi;
+                    const M2_parabolic = w * L * x / 2 - w * x**2 / 2;
+                    M2_x = M2_linear + M2_parabolic;
+                }
+                
+                // せん断力の最大値も計算
+                if (typeof calculateMemberShearForAxis === 'function') {
+                    Q1_x = calculateMemberShearForAxis(force, L, xi, 'y', w);
+                    Q2_x = calculateMemberShearForAxis(force, L, xi, 'z', w);
+                } else {
+                    const Q1_linear = force.Qy_i * (1 - xi) + force.Qy_j * xi;
+                    Q1_x = Q1_linear - w * x;
+                    
+                    const Q2_linear = force.Qz_i * (1 - xi) + force.Qz_j * xi;
+                    Q2_x = Q2_linear - w * x;
+                }
+                
+                maxM1 = Math.max(maxM1, Math.abs(M1_x));
+                maxM2 = Math.max(maxM2, Math.abs(M2_x));
+                maxQ1 = Math.max(maxQ1, Math.abs(Q1_x));
+                maxQ2 = Math.max(maxQ2, Math.abs(Q2_x));
             }
             
             results.push({ 
                 maxRatio: Math.max(maxRatio, maxRatioY, maxRatioZ), // 両軸の最大値
                 maxRatioY, 
                 maxRatioZ,
+                maxShearRatio, // せん断力検定比の最大値
+                maxShearRatioY, // 第1軸せん断力検定比の最大値
+                maxShearRatioZ, // 第2軸せん断力検定比の最大値
                 N, 
                 M: M_at_max, 
-                My: Math.max(Math.abs(force.My_i || 0), Math.abs(force.My_j || 0)), // Y軸周りの最大曲げモーメント
-                Mz: Math.max(Math.abs(force.Mz_i || 0), Math.abs(force.Mz_j || 0)), // Z軸周りの最大曲げモーメント
+                M1: maxM1, // 第1軸（Y軸周り）の最大曲げモーメント
+                M2: maxM2, // 第2軸（Z軸周り）の最大曲げモーメント
+                Q1: maxQ1, // 第1軸（Y方向）の最大せん断力
+                Q2: maxQ2, // 第2軸（Z方向）の最大せん断力
                 checkType: '両軸組合せ応力', 
-                status: Math.max(maxRatio, maxRatioY, maxRatioZ) > 1.0 ? 'NG' : 'OK', 
+                status: Math.max(maxRatio, maxRatioY, maxRatioZ, maxShearRatio, maxShearRatioY, maxShearRatioZ) > 1.0 ? 'NG' : 'OK', 
                 ratios,
                 ratiosY,
-                ratiosZ
+                ratiosZ,
+                shearRatios,
+                shearRatiosY,
+                shearRatiosZ
             });
         });
         return results;
@@ -10314,7 +10441,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         let html;
         if (is3D) {
             // 3D構造の場合：両軸の結果を表示
-            html = `<thead><tr><th>部材 #</th><th>軸力 N (kN)</th><th>曲げ M1 (kN·m)</th><th>曲げ M2 (kN·m)</th><th>検定項目</th><th>検定比1 (D/C)</th><th>検定比2 (D/C)</th><th>最大検定比</th><th>判定</th><th>詳細</th></tr></thead><tbody>`;
+            html = `<thead><tr><th>部材 #</th><th>軸力 N (kN)</th><th>曲げ M1 (kN·m)</th><th>曲げ M2 (kN·m)</th><th>せん断 Q1 (kN)</th><th>せん断 Q2 (kN)</th><th>検定項目</th><th>曲げ検定比1</th><th>曲げ検定比2</th><th>せん断検定比1</th><th>せん断検定比2</th><th>最大検定比</th><th>判定</th><th>詳細</th></tr></thead><tbody>`;
             lastSectionCheckResults.forEach((res, i) => {
                 const is_ng = res.status === 'NG';
                 const maxRatioText = (typeof res.maxRatio === 'number' && isFinite(res.maxRatio)) ? res.maxRatio.toFixed(2) : res.maxRatio;
@@ -10323,24 +10450,27 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 // 各軸の検定比を計算
                 const ratio1 = res.ratios && res.ratios.length > 0 ? Math.max(...res.ratios).toFixed(2) : '0.00';
                 const ratio2 = res.ratiosY && res.ratiosY.length > 0 ? Math.max(...res.ratiosY).toFixed(2) : '0.00';
+                const shearRatio1 = res.shearRatiosY && res.shearRatiosY.length > 0 ? Math.max(...res.shearRatiosY).toFixed(2) : '0.00';
+                const shearRatio2 = res.shearRatiosZ && res.shearRatiosZ.length > 0 ? Math.max(...res.shearRatiosZ).toFixed(2) : '0.00';
                 
-                // 第2軸の曲げモーメントを部材力から取得
+                // 断面検定の計算結果から曲げモーメントとせん断力を取得
                 let M1_display = '0.00';
                 let M2_display = '0.00';
-                if (lastResults?.forces && lastResults.forces[i]) {
-                    const force = lastResults.forces[i];
-                    
-                    // 第1軸の曲げモーメント（Mz_i, Mz_jの絶対値の大きい方）
-                    const Mz_i_abs = Math.abs(force.Mz_i || 0);
-                    const Mz_j_abs = Math.abs(force.Mz_j || 0);
-                    const maxMz = Math.max(Mz_i_abs, Mz_j_abs);
-                    M1_display = maxMz.toFixed(2);
-                    
-                    // 第2軸の曲げモーメント（My_i, My_jの絶対値の大きい方）
-                    const My_i_abs = Math.abs(force.My_i || 0);
-                    const My_j_abs = Math.abs(force.My_j || 0);
-                    const maxMy = Math.max(My_i_abs, My_j_abs);
-                    M2_display = maxMy.toFixed(2);
+                let Q1_display = '0.00';
+                let Q2_display = '0.00';
+                
+                // 断面検定の計算結果からM1、M2、Q1、Q2を取得（曲げモーメント図と同じ計算方法）
+                if (res.M1 !== undefined && res.M1 !== null) {
+                    M1_display = res.M1.toFixed(2);
+                }
+                if (res.M2 !== undefined && res.M2 !== null) {
+                    M2_display = res.M2.toFixed(2);
+                }
+                if (res.Q1 !== undefined && res.Q1 !== null) {
+                    Q1_display = res.Q1.toFixed(2);
+                }
+                if (res.Q2 !== undefined && res.Q2 !== null) {
+                    Q2_display = res.Q2.toFixed(2);
                 }
                 
                 html += `<tr ${is_ng ? 'style="background-color: #fdd;"' : ''}>
@@ -10348,9 +10478,13 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     <td>${res.N.toFixed(2)}</td>
                     <td>${M1_display}</td>
                     <td>${M2_display}</td>
+                    <td>${Q1_display}</td>
+                    <td>${Q2_display}</td>
                     <td>${res.checkType}</td>
                     <td style="font-weight: bold; ${parseFloat(ratio1) > 1.0 ? 'color: red;' : ''}">${ratio1}</td>
                     <td style="font-weight: bold; ${parseFloat(ratio2) > 1.0 ? 'color: red;' : ''}">${ratio2}</td>
+                    <td style="font-weight: bold; ${parseFloat(shearRatio1) > 1.0 ? 'color: red;' : ''}">${shearRatio1}</td>
+                    <td style="font-weight: bold; ${parseFloat(shearRatio2) > 1.0 ? 'color: red;' : ''}">${shearRatio2}</td>
                     <td style="font-weight: bold; ${is_ng ? 'color: red;' : ''}">${maxRatioText}</td>
                     <td>${statusText}</td>
                     <td><button onclick="showSectionCheckDetail(${i})">詳細</button></td>
@@ -10916,11 +11050,17 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                             <th style="border: 1px solid #ccc; padding: 8px;">軸力 N (kN)</th>
                             <th style="border: 1px solid #ccc; padding: 8px;">曲げ M1 (kN·m)</th>
                             ${is3D ? '<th style="border: 1px solid #ccc; padding: 8px;">曲げ M2 (kN·m)</th>' : ''}
+                            <th style="border: 1px solid #ccc; padding: 8px;">せん断 Q1 (kN)</th>
+                            ${is3D ? '<th style="border: 1px solid #ccc; padding: 8px;">せん断 Q2 (kN)</th>' : ''}
                             <th style="border: 1px solid #ccc; padding: 8px;">軸応力度 σ_a (N/mm²)</th>
                             <th style="border: 1px solid #ccc; padding: 8px;">曲げ応力度 σ_b1 (N/mm²)</th>
                             ${is3D ? '<th style="border: 1px solid #ccc; padding: 8px;">曲げ応力度 σ_b2 (N/mm²)</th>' : ''}
-                            <th style="border: 1px solid #ccc; padding: 8px;">検定比1 (D/C)</th>
-                            ${is3D ? '<th style="border: 1px solid #ccc; padding: 8px;">検定比2 (D/C)</th>' : ''}
+                            <th style="border: 1px solid #ccc; padding: 8px;">せん断応力度 τ1 (N/mm²)</th>
+                            ${is3D ? '<th style="border: 1px solid #ccc; padding: 8px;">せん断応力度 τ2 (N/mm²)</th>' : ''}
+                            <th style="border: 1px solid #ccc; padding: 8px;">曲げ検定比1</th>
+                            ${is3D ? '<th style="border: 1px solid #ccc; padding: 8px;">曲げ検定比2</th>' : ''}
+                            <th style="border: 1px solid #ccc; padding: 8px;">せん断検定比1</th>
+                            ${is3D ? '<th style="border: 1px solid #ccc; padding: 8px;">せん断検定比2</th>' : ''}
                             <th style="border: 1px solid #ccc; padding: 8px;">最大検定比</th>
                             <th style="border: 1px solid #ccc; padding: 8px;">判定</th>
                         </tr>
@@ -10928,26 +11068,87 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     <tbody>`;
 
         for (let k = 0; k < numPoints; k++) {
-            const x = (k / (numPoints - 1)) * L;
+            const xi = k / (numPoints - 1); // 無次元座標
+            const x = xi * L; // 実際の距離
             const ratio1 = res.ratios[k];
             const ratio2 = res.ratiosY ? res.ratiosY[k] : 0;
             const ratio3 = res.ratiosZ ? res.ratiosZ[k] : 0;
+            const shearRatio1 = res.shearRatiosY ? res.shearRatiosY[k] : 0;
+            const shearRatio2 = res.shearRatiosZ ? res.shearRatiosZ[k] : 0;
             
-            // 実際の曲げモーメント計算（等分布荷重を考慮）
-            const M_linear = -force.M_i * (1 - x/L) + force.M_j * (x/L);
-            const M_parabolic = w * L * x / 2 - w * x**2 / 2;
-            const M1_x = M_linear + M_parabolic;
+            // 曲げモーメント図と同じ計算方法を使用
+            // 第1軸（Y軸周り）の曲げモーメント
+            let M1_x = 0;
+            if (typeof calculateMemberMomentForAxis === 'function') {
+                M1_x = calculateMemberMomentForAxis(force, L, xi, 'y', w);
+            } else {
+                // フォールバック: 線形補間 + 等分布荷重
+                const M_linear = -force.My_i * (1 - xi) + force.My_j * xi;
+                const M_parabolic = w * L * x / 2 - w * x**2 / 2;
+                M1_x = M_linear + M_parabolic;
+            }
             
-            // 第2軸の曲げモーメント
-            const M2_linear = -force.My_i * (1 - x/L) + force.My_j * (x/L);
-            const M2_x = M2_linear;
+            // 第2軸（Z軸周り）の曲げモーメント
+            let M2_x = 0;
+            if (typeof calculateMemberMomentForAxis === 'function') {
+                M2_x = calculateMemberMomentForAxis(force, L, xi, 'z', w);
+            } else {
+                // フォールバック: 線形補間 + 等分布荷重
+                const M_linear = -force.Mz_i * (1 - xi) + force.Mz_j * xi;
+                const M_parabolic = w * L * x / 2 - w * x**2 / 2;
+                M2_x = M_linear + M_parabolic;
+            }
+            
+            // せん断力計算（第2軸せん断力図と同じ軸選択方法を使用）
+            let Q1_x = 0, Q2_x = 0; // 第1軸、第2軸のせん断力
+            
+            // 投影モードに応じて軸を決定（第2軸せん断力図と同じロジック）
+            const getCurrentProjectionMode = () => {
+                const projectionSelect = document.getElementById('projection-mode');
+                return projectionSelect ? projectionSelect.value : 'iso';
+            };
+            
+            const projectionMode = getCurrentProjectionMode();
+            let currentAxis, secondaryAxis;
+            
+            if (projectionMode === 'xy') {
+                currentAxis = 'z'; // 現在表示: Z軸周り
+                secondaryAxis = 'y'; // 第2軸: Y軸周り
+            } else if (projectionMode === 'xz') {
+                currentAxis = 'y'; // 現在表示: Y軸周り
+                secondaryAxis = 'z'; // 第2軸: Z軸周り
+            } else if (projectionMode === 'yz') {
+                currentAxis = 'x'; // 現在表示: X軸周り
+                secondaryAxis = 'z'; // 第2軸: Z軸周り
+            } else {
+                // 等角投影の場合は第2軸としてZ軸を表示
+                currentAxis = 'y'; // 現在表示: Y軸周り
+                secondaryAxis = 'z'; // 第2軸: Z軸周り
+            }
+            
+            if (typeof calculateMemberShearForAxis === 'function') {
+                // 第2軸せん断力図と同じようにnullを渡す（等分布荷重は内部で計算される）
+                Q1_x = calculateMemberShearForAxis(force, L, xi, currentAxis, null);
+                Q2_x = calculateMemberShearForAxis(force, L, xi, secondaryAxis, null);
+            } else {
+                // フォールバック: 線形補間（等分布荷重は考慮しない）
+                const Q1_linear = force[`Q${currentAxis}_i`] * (1 - xi) + force[`Q${currentAxis}_j`] * xi;
+                Q1_x = Q1_linear;
+                
+                const Q2_linear = force[`Q${secondaryAxis}_i`] * (1 - xi) + force[`Q${secondaryAxis}_j`] * xi;
+                Q2_x = Q2_linear;
+            }
             
             const N = -force.N_i; // 軸力は部材全体で一定
             const sigma_a = (N * 1000) / (A * 1e6);
-            const sigma_b1 = (Math.abs(M1_x) * 1e6) / Zx_mm3; // X軸周りの曲げ応力度
-            const sigma_b2 = is3D ? (Math.abs(M2_x) * 1e6) / Zy_mm3 : 0; // Y軸周りの曲げ応力度
+            const sigma_b1 = (Math.abs(M1_x) * 1e6) / Zx_mm3; // 第1軸（Y軸周り）の曲げ応力度
+            const sigma_b2 = is3D ? (Math.abs(M2_x) * 1e6) / Zy_mm3 : 0; // 第2軸（Z軸周り）の曲げ応力度
             
-            const maxRatio = Math.max(ratio1, ratio2, ratio3);
+            // せん断応力度計算
+            const tau1 = (Math.abs(Q1_x) * 1000) / (A * 1e6); // 第1軸せん断応力度
+            const tau2 = is3D ? (Math.abs(Q2_x) * 1000) / (A * 1e6) : 0; // 第2軸せん断応力度
+            
+            const maxRatio = Math.max(ratio1, ratio2, ratio3, shearRatio1, shearRatio2);
             const status = maxRatio > 1.0 ? '❌ NG' : '✅ OK';
             const rowStyle = maxRatio > 1.0 ? 'background-color: #fdd;' : '';
             
@@ -10957,11 +11158,17 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${N.toFixed(2)}</td>
                     <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${M1_x.toFixed(2)}</td>
                     ${is3D ? `<td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${M2_x.toFixed(2)}</td>` : ''}
+                    <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${Q1_x.toFixed(2)}</td>
+                    ${is3D ? `<td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${Q2_x.toFixed(2)}</td>` : ''}
                     <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${sigma_a.toFixed(2)}</td>
                     <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${sigma_b1.toFixed(2)}</td>
                     ${is3D ? `<td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${sigma_b2.toFixed(2)}</td>` : ''}
+                    <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${tau1.toFixed(2)}</td>
+                    ${is3D ? `<td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${tau2.toFixed(2)}</td>` : ''}
                     <td style="border: 1px solid #ccc; padding: 8px; text-align: center; font-weight: bold;">${ratio1.toFixed(3)}</td>
                     ${is3D ? `<td style="border: 1px solid #ccc; padding: 8px; text-align: center; font-weight: bold;">${ratio2.toFixed(3)}</td>` : ''}
+                    <td style="border: 1px solid #ccc; padding: 8px; text-align: center; font-weight: bold;">${shearRatio1.toFixed(3)}</td>
+                    ${is3D ? `<td style="border: 1px solid #ccc; padding: 8px; text-align: center; font-weight: bold;">${shearRatio2.toFixed(3)}</td>` : ''}
                     <td style="border: 1px solid #ccc; padding: 8px; text-align: center; font-weight: bold; color: ${maxRatio > 1.0 ? 'red' : 'green'};">${maxRatio.toFixed(3)}</td>
                     <td style="border: 1px solid #ccc; padding: 8px; text-align: center;">${status}</td>
                 </tr>`;
@@ -10972,16 +11179,22 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 </table>
                 <div style="margin-top: 20px; padding: 10px; background-color: #f9f9f9; border-radius: 5px;">
                     <h4>検定式</h4>
-                    <p><strong>第1軸:</strong></p>
+                    <p><strong>第1軸（曲げ）:</strong></p>
                     <p>軸力が引張の場合: D/C₁ = σ_a/ft + σ_b1/fb</p>
                     <p>軸力が圧縮の場合: D/C₁ = σ_a/fc + σ_b1/fb</p>
+                    <p><strong>第1軸（せん断）:</strong></p>
+                    <p>せん断力検定: D/C_Q1 = τ₁/fs</p>
                     ${is3D ? `
-                    <p><strong>第2軸:</strong></p>
+                    <p><strong>第2軸（曲げ）:</strong></p>
                     <p>軸力が引張の場合: D/C₂ = σ_a/ft + σ_b2/fb</p>
                     <p>軸力が圧縮の場合: D/C₂ = σ_a/fc + σ_b2/fb</p>
-                    <p><strong>最大検定比:</strong> D/C_max = max(D/C₁, D/C₂)</p>
-                    ` : ''}
-                    <p>※ σ_a = N/A, σ_b1 = |M₁|/Zx, σ_b2 = |M₂|/Zy</p>
+                    <p><strong>第2軸（せん断）:</strong></p>
+                    <p>せん断力検定: D/C_Q2 = τ₂/fs</p>
+                    <p><strong>最大検定比:</strong> D/C_max = max(D/C₁, D/C₂, D/C_Q1, D/C_Q2)</p>
+                    ` : `
+                    <p><strong>最大検定比:</strong> D/C_max = max(D/C₁, D/C_Q1)</p>
+                    `}
+                    <p>※ σ_a = N/A, σ_b1 = |M₁|/Zx, σ_b2 = |M₂|/Zy, τ₁ = |Q₁|/A, τ₂ = |Q₂|/A</p>
                 </div>
             </div>`;
 
@@ -10994,27 +11207,177 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         popup.style.background = 'white';
         popup.style.border = '2px solid #ccc';
         popup.style.borderRadius = '10px';
-        popup.style.padding = '20px';
         popup.style.zIndex = '1000';
-        popup.style.maxHeight = '90vh';
+        popup.style.width = '800px';
+        popup.style.height = '600px';
+        popup.style.minWidth = '400px';
+        popup.style.minHeight = '300px';
         popup.style.maxWidth = '90vw';
-        popup.style.overflowY = 'auto';
+        popup.style.maxHeight = '90vh';
+        popup.style.overflow = 'hidden';
         popup.style.boxShadow = '0 4px 20px rgba(0,0,0,0.3)';
+        popup.style.display = 'flex';
+        popup.style.flexDirection = 'column';
+        popup.style.resize = 'none'; // ブラウザのデフォルトリサイズを無効化
         
+        // ドラッグ可能なヘッダーを作成
+        const header = document.createElement('div');
+        header.style.background = '#f0f0f0';
+        header.style.padding = '10px 15px';
+        header.style.borderBottom = '1px solid #ccc';
+        header.style.borderRadius = '8px 8px 0 0';
+        header.style.cursor = 'move';
+        header.style.userSelect = 'none';
+        header.style.display = 'flex';
+        header.style.justifyContent = 'space-between';
+        header.style.alignItems = 'center';
+        header.style.fontWeight = 'bold';
+        header.style.fontSize = '16px';
+        header.textContent = `部材 ${memberIndex + 1} の詳細応力度計算結果`;
+        
+        // 閉じるボタンをヘッダーに追加
         const closeButton = document.createElement('button');
-        closeButton.textContent = '閉じる';
-        closeButton.style.marginTop = '20px';
-        closeButton.style.padding = '10px 20px';
-        closeButton.style.backgroundColor = '#007bff';
+        closeButton.textContent = '×';
+        closeButton.style.background = '#ff4444';
         closeButton.style.color = 'white';
         closeButton.style.border = 'none';
-        closeButton.style.borderRadius = '5px';
+        closeButton.style.borderRadius = '50%';
+        closeButton.style.width = '25px';
+        closeButton.style.height = '25px';
         closeButton.style.cursor = 'pointer';
+        closeButton.style.fontSize = '16px';
+        closeButton.style.fontWeight = 'bold';
+        closeButton.style.display = 'flex';
+        closeButton.style.alignItems = 'center';
+        closeButton.style.justifyContent = 'center';
         closeButton.onclick = () => popup.remove();
         
-        popup.innerHTML = detailHtml;
-        popup.appendChild(closeButton);
+        header.appendChild(closeButton);
+        
+        // コンテンツエリアを作成
+        const content = document.createElement('div');
+        content.style.padding = '20px';
+        content.style.flex = '1';
+        content.style.overflowY = 'auto';
+        content.style.overflowX = 'hidden';
+        content.innerHTML = detailHtml;
+        
+        // リサイズハンドルを作成
+        const resizeHandle = document.createElement('div');
+        resizeHandle.style.position = 'absolute';
+        resizeHandle.style.bottom = '0';
+        resizeHandle.style.right = '0';
+        resizeHandle.style.width = '20px';
+        resizeHandle.style.height = '20px';
+        resizeHandle.style.background = 'linear-gradient(-45deg, transparent 0%, transparent 30%, #ccc 30%, #ccc 40%, transparent 40%, transparent 70%, #ccc 70%)';
+        resizeHandle.style.cursor = 'nw-resize';
+        resizeHandle.style.borderRadius = '0 0 10px 0';
+        
+        // ドラッグ機能を実装
+        let isDragging = false;
+        let isResizing = false;
+        let dragOffset = { x: 0, y: 0 };
+        let startSize = { width: 0, height: 0 };
+        let startPos = { x: 0, y: 0 };
+        
+        // ヘッダードラッグ機能
+        header.addEventListener('mousedown', (e) => {
+            if (e.target === closeButton) return; // 閉じるボタンは除外
+            isDragging = true;
+            const rect = popup.getBoundingClientRect();
+            dragOffset.x = e.clientX - rect.left;
+            dragOffset.y = e.clientY - rect.top;
+            popup.style.cursor = 'grabbing';
+            document.body.style.userSelect = 'none'; // テキスト選択を防ぐ
+            e.preventDefault();
+        });
+        
+        // リサイズハンドルのドラッグ機能
+        resizeHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            const rect = popup.getBoundingClientRect();
+            startSize.width = rect.width;
+            startSize.height = rect.height;
+            startPos.x = e.clientX;
+            startPos.y = e.clientY;
+            popup.style.cursor = 'nw-resize';
+            document.body.style.userSelect = 'none'; // テキスト選択を防ぐ
+            e.preventDefault();
+            e.stopPropagation();
+        });
+        
+        // マウス移動イベント
+        document.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                const newX = e.clientX - dragOffset.x;
+                const newY = e.clientY - dragOffset.y;
+                
+                // 画面境界内に制限（少し余裕を持たせる）
+                const margin = 50;
+                const maxX = window.innerWidth - popup.offsetWidth + margin;
+                const maxY = window.innerHeight - popup.offsetHeight + margin;
+                
+                const constrainedX = Math.max(-margin, Math.min(newX, maxX));
+                const constrainedY = Math.max(-margin, Math.min(newY, maxY));
+                
+                popup.style.left = constrainedX + 'px';
+                popup.style.top = constrainedY + 'px';
+                popup.style.transform = 'none';
+            } else if (isResizing) {
+                const deltaX = e.clientX - startPos.x;
+                const deltaY = e.clientY - startPos.y;
+                
+                const newWidth = startSize.width + deltaX;
+                const newHeight = startSize.height + deltaY;
+                
+                // 最小・最大サイズ制限
+                const minWidth = 400;
+                const minHeight = 300;
+                const maxWidth = window.innerWidth - popup.offsetLeft;
+                const maxHeight = window.innerHeight - popup.offsetTop;
+                
+                const constrainedWidth = Math.max(minWidth, Math.min(newWidth, maxWidth));
+                const constrainedHeight = Math.max(minHeight, Math.min(newHeight, maxHeight));
+                
+                popup.style.width = constrainedWidth + 'px';
+                popup.style.height = constrainedHeight + 'px';
+            }
+        });
+        
+        // マウスアップイベント
+        document.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                popup.style.cursor = 'default';
+                document.body.style.userSelect = ''; // テキスト選択を復元
+            }
+            if (isResizing) {
+                isResizing = false;
+                popup.style.cursor = 'default';
+                document.body.style.userSelect = ''; // テキスト選択を復元
+            }
+        });
+        
+        // ポップアップに要素を追加
+        popup.appendChild(header);
+        popup.appendChild(content);
+        popup.appendChild(resizeHandle);
         document.body.appendChild(popup);
+        
+        // ポップアップを最前面に表示するためのクリックイベント
+        popup.addEventListener('mousedown', (e) => {
+            // 他のポップアップがあればz-indexを下げる
+            const allPopups = document.querySelectorAll('[data-popup-type="detail"]');
+            allPopups.forEach(p => {
+                if (p !== popup) {
+                    p.style.zIndex = '999';
+                }
+            });
+            popup.style.zIndex = '1000';
+        });
+        
+        // ポップアップ識別用の属性を追加
+        popup.setAttribute('data-popup-type', 'detail');
     };
 
     // グローバルスコープに関数を公開
