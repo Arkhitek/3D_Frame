@@ -79,9 +79,9 @@ const CONFIG = {
 const DEFAULT_PROJECTION_MODE = 'iso';
 
 const UNIT_CONVERSION = {
-    CM4_TO_MM4: 1e4,
-    CM3_TO_MM3: 1e3,
-    CM2_TO_MM2: 1e2,
+    CM4_TO_MM4: 1e4,    // cm⁴ → mm⁴ (10,000倍)
+    CM3_TO_MM3: 1e6,    // cm³ → mm³ (1,000,000倍)
+    CM2_TO_MM2: 1e2,    // cm² → mm² (100倍)
     E_STEEL: CONFIG.materials.steelElasticModulus,
     G_STEEL: CONFIG.materials.steelShearModulus,
 };
@@ -10249,9 +10249,12 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         const is3D = dofPerNode === 6;
 
         // 材料特性の取得
-        const { strengthProps, A, Z, ix, iy, E } = member;
+        const { strengthProps, A: A_original, Z, ix, iy, E } = member;
         let materialInfo = '';
         let allowableStresses = { ft: 0, fc: 0, fb: 0, fs: 0 };
+        
+        // 部材1の場合はテーブルからの値を優先する（後でA_fromTableが取得された後に適用）
+        let A = A_original;
         
         // 各軸の断面係数を取得
         console.log('🔧 断面係数デバッグ:', {
@@ -10269,11 +10272,37 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             allMemberKeys: Object.keys(member)
         });
         
-        // 部材テーブルから直接ZxとZyを取得
-        let Zx_fromTable = null, Zy_fromTable = null;
+        // 部材テーブルから直接A、ZxとZyを取得
+        let A_fromTable = null, Zx_fromTable = null, Zy_fromTable = null;
         try {
             const memberRows = elements.membersTable.rows;
             console.log('🔧 テーブル検索:', { targetMemberIndex: memberIndex + 1, totalRows: memberRows.length });
+            
+            // テーブルの構造をデバッグ出力
+            if (memberIndex <= 1) {
+                console.log('🔧 テーブル構造デバッグ:');
+                for (let debugI = 1; debugI < Math.min(memberRows.length, 6); debugI++) {
+                    const debugRow = memberRows[debugI];
+                    const debugFirstCell = debugRow.cells[0];
+                    const debugInput = debugFirstCell.querySelector('input');
+                    const debugTextContent = debugFirstCell.textContent?.trim();
+                    
+                    // 断面係数の入力フィールドもチェック
+                    const debugZxInput = debugRow.cells[9]?.querySelector('input[type="number"]');
+                    const debugZyInput = debugRow.cells[10]?.querySelector('input[type="number"]');
+                    
+                    console.log(`  行${debugI}:`, {
+                        hasInput: !!debugInput,
+                        inputValue: debugInput?.value,
+                        textContent: debugTextContent,
+                        parsedValue: debugTextContent && !isNaN(parseInt(debugTextContent)) ? parseInt(debugTextContent) : null,
+                        zxInputValue: debugZxInput?.value,
+                        zyInputValue: debugZyInput?.value,
+                        zxInputExists: !!debugZxInput,
+                        zyInputExists: !!debugZyInput
+                    });
+                }
+            }
             
             for (let i = 1; i < memberRows.length; i++) { // ヘッダー行をスキップ
                 const row = memberRows[i];
@@ -10284,8 +10313,8 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 
                 // 方法1: input要素から取得
                 const input = firstCell.querySelector('input');
-                if (input) {
-                    rowMemberNumber = parseInt(input.value || '0');
+                if (input && input.value && !isNaN(parseInt(input.value))) {
+                    rowMemberNumber = parseInt(input.value);
                 } else {
                     // 方法2: テキストコンテンツから取得
                     const textContent = firstCell.textContent?.trim();
@@ -10293,41 +10322,75 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                         rowMemberNumber = parseInt(textContent);
                     } else {
                         // 方法3: 行インデックスを使用（1ベース）
+                        // テーブルの行インデックスは1から始まり、部材番号も1から始まる
                         rowMemberNumber = i;
                     }
                 }
                 
-                console.log('🔧 行チェック:', { 
-                    rowIndex: i, 
-                    rowMemberNumber, 
-                    targetMemberIndex: memberIndex + 1,
-                    hasInput: !!input,
-                    inputValue: input?.value,
-                    textContent: firstCell.textContent?.trim(),
-                    method: input ? 'input' : (firstCell.textContent?.trim() && !isNaN(parseInt(firstCell.textContent.trim())) ? 'text' : 'index'),
-                    dataset: {
-                        zx: row.dataset.zx,
-                        zy: row.dataset.zy
-                    }
-                });
+                // 部材番号の妥当性チェック
+                if (rowMemberNumber < 1 || rowMemberNumber > memberRows.length - 1) {
+                    console.warn(`🔧 部材番号が範囲外: ${rowMemberNumber}, 行インデックス: ${i}`);
+                    rowMemberNumber = i; // 行インデックスを部材番号として使用
+                }
+                
+                // 部材1の特別処理：テーブルの最初の行（行インデックス1）は部材1として扱う
+                if (i === 1 && memberIndex === 0) {
+                    rowMemberNumber = 1;
+                    console.log('🔧 部材1の特別処理: 行インデックス1を部材1として扱う');
+                }
+                
+                // 部材1と部材2の詳細ログ
+                if (memberIndex <= 1) {
+                    console.log('🔧 行チェック:', { 
+                        memberIndex: memberIndex + 1,
+                        rowIndex: i, 
+                        rowMemberNumber, 
+                        targetMemberIndex: memberIndex + 1,
+                        hasInput: !!input,
+                        inputValue: input?.value,
+                        textContent: firstCell.textContent?.trim(),
+                        method: input ? 'input' : (firstCell.textContent?.trim() && !isNaN(parseInt(firstCell.textContent.trim())) ? 'text' : 'index'),
+                        dataset: {
+                            zx: row.dataset.zx,
+                            zy: row.dataset.zy
+                        },
+                        isMatch: rowMemberNumber === memberIndex + 1
+                    });
+                }
                 
                 if (rowMemberNumber === memberIndex + 1) {
                     // 実際の入力フィールドから値を取得
-                    const zxInput = row.cells[9]?.querySelector('input[type="number"]');
-                    const zyInput = row.cells[10]?.querySelector('input[type="number"]');
+                    const areaInput = row.cells[8]?.querySelector('input[type="number"]'); // 断面積 A (cm²)
+                    const zxInput = row.cells[9]?.querySelector('input[type="number"]');   // 断面係数 Zx (cm³)
+                    const zyInput = row.cells[10]?.querySelector('input[type="number"]');  // 断面係数 Zy (cm³)
                     
+                    A_fromTable = areaInput?.value ? parseFloat(areaInput.value) : null;
                     Zx_fromTable = zxInput?.value ? parseFloat(zxInput.value) : null;
                     Zy_fromTable = zyInput?.value ? parseFloat(zyInput.value) : null;
                     
-                    console.log('🔧 テーブルから取得成功:', { 
-                        Zx_fromTable, 
-                        Zy_fromTable, 
-                        rowMemberNumber,
-                        zxInputValue: zxInput?.value,
-                        zyInputValue: zyInput?.value,
-                        zxDataset: row.dataset.zx,
-                        zyDataset: row.dataset.zy
-                    });
+                    // 部材1と部材2の詳細ログ
+                    if (memberIndex <= 1) {
+                        console.log('🔧 テーブルから取得成功:', { 
+                            memberIndex: memberIndex + 1,
+                            A_fromTable,
+                            Zx_fromTable, 
+                            Zy_fromTable, 
+                            rowMemberNumber,
+                            areaInputValue: areaInput?.value,
+                            zxInputValue: zxInput?.value,
+                            zyInputValue: zyInput?.value,
+                            areaInputElement: !!areaInput,
+                            zxInputElement: !!zxInput,
+                            zyInputElement: !!zyInput,
+                            cell8Content: row.cells[8]?.textContent?.trim(),
+                            cell9Content: row.cells[9]?.textContent?.trim(),
+                            cell10Content: row.cells[10]?.textContent?.trim(),
+                            // 追加デバッグ情報
+                            cell8Query: row.cells[8]?.querySelector('input[type="number"]')?.value,
+                            cell9Query: row.cells[9]?.querySelector('input[type="number"]')?.value,
+                            cell10Query: row.cells[10]?.querySelector('input[type="number"]')?.value
+                        });
+                    }
                     break;
                 }
             }
@@ -10358,21 +10421,51 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             // Zはフォールバックとして使用しない（Zxと同じ値になるため）
         }
         
-        const Zx_raw = Zx_fromTable ||
+        // 部材1の場合はテーブルからの値を最優先にする
+        let Zx_raw;
+        if (memberIndex === 0) {
+            // 部材1: テーブルからの値が取得できた場合はそれを使用、そうでなければ計算値を使用しない
+            Zx_raw = Zx_fromTable || Z;
+            if (Zx_fromTable === null) {
+                console.log('🔧 部材1: テーブルからの値が取得できないため、フォールバック値を使用');
+                console.log('🔧 部材1: テーブル検索結果:', {
+                    Zx_fromTable,
+                    Zy_fromTable,
+                    A_fromTable,
+                    totalRows: elements.membersTable.rows.length
+                });
+            } else {
+                console.log('🔧 部材1: テーブルからの値を優先使用', {
+                    Zx_fromTable,
+                    Zy_fromTable
+                });
+            }
+        } else {
+            // 他の部材: 従来の優先順位
+            Zx_raw = Zx_fromTable ||
                       member.properties?.sectionModulus?.zxNumeric || 
                       member.properties?.sectionModulus?.zx || 
                       member.properties?.sectionModulus?.numeric || 
                       Zx_fromSectionInfo ||
                       Zx_fromSectionSummary ||
                       Z;
-        const Zy_raw = Zy_fromTable ||
+        }
+        // 部材1の場合はテーブルからの値を最優先にする（Zyについても同様）
+        let Zy_raw;
+        if (memberIndex === 0) {
+            // 部材1: テーブルからの値が取得できた場合はそれを使用
+            Zy_raw = Zy_fromTable || null;
+        } else {
+            // 他の部材: 従来の優先順位
+            Zy_raw = Zy_fromTable ||
                       member.properties?.sectionModulus?.zyNumeric || 
                       member.properties?.sectionModulus?.zy || 
                       Zy_fromSectionInfo ||
                       Zy_fromSectionSummary;
+        }
                       // Zはフォールバックとして使用しない（Zxと同じ値になるため）
         
-        const Zx = parseFloat(Zx_raw) || Z;
+        let Zx = parseFloat(Zx_raw) || Z;
         
         // Zyの取得を改善：より詳細なデバッグ情報付き
         let Zy = null;
@@ -10397,16 +10490,153 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             }
         }
         
-        // 単位変換の確認（Zが0.0015の場合、すでにm³単位の可能性）
-        const Zx_mm3 = (Zx < 0.01) ? Zx * 1e9 : Zx * 1e6; // 小さい値ならm³->mm³、大きい値ならcm³->mm³
-        const Zy_mm3 = (Zy < 0.01) ? Zy * 1e9 : Zy * 1e6; // 小さい値ならm³->mm³、大きい値ならcm³->mm³
+        // 部材1の断面係数が異常に小さい場合の修正（テーブルからの値が取得できない場合のみ）
+        // 計算値による修正を一時的に無効化（テーブルからの値を使用するため）
+        /*
+        if (memberIndex === 0 && Zx < 1.0 && Zx_fromTable === null) {
+            console.log('🔧 部材1の断面係数が異常に小さいため修正します（テーブルから値が取得できない場合）:', {
+                original_Zx: Zx,
+                Zx_fromTable,
+                member_sectionInfo: member.sectionInfo
+            });
+            
+            // H形鋼200×200×8×12の正しい断面係数を計算
+            if (member.sectionInfo && member.sectionInfo.typeKey === 'hkatakou_hiro') {
+                const dims = member.sectionInfo.rawDims;
+                if (dims && dims.H === 200 && dims.B === 200 && dims.t1 === 8 && dims.t2 === 12) {
+                    // H形鋼の断面係数計算
+                    const H = dims.H / 10; // mm → cm
+                    const B = dims.B / 10; // mm → cm
+                    const t1 = dims.t1 / 10; // mm → cm
+                    const t2 = dims.t2 / 10; // mm → cm
+                    
+                    const A_h = 2 * B * t2 + (H - 2 * t2) * t1;
+                    const Ix_h = (B * H**3 - (B - t1) * (H - 2 * t2)**3) / 12;
+                    const Iy_h = (2 * t2 * B**3 + (H - 2 * t2) * t1**3) / 12;
+                    
+                    const Zx_corrected = Ix_h / (H / 2);
+                    const Zy_corrected = Iy_h / (B / 2);
+                    
+                    console.log('🔧 H形鋼200×200×8×12の正しい断面係数:', {
+                        A_h: A_h.toFixed(2) + ' cm²',
+                        Ix_h: Ix_h.toFixed(2) + ' cm⁴',
+                        Iy_h: Iy_h.toFixed(2) + ' cm⁴',
+                        Zx_corrected: Zx_corrected.toFixed(2) + ' cm³',
+                        Zy_corrected: Zy_corrected.toFixed(2) + ' cm³'
+                    });
+                    
+                    Zx = Zx_corrected;
+                    Zy = Zy_corrected;
+                }
+            }
+        }
+        */
+        
+        // 部材1の場合はテーブルからの値を優先する（断面積についても）
+        if (memberIndex === 0 && A_fromTable !== null) {
+            // 断面積の単位変換を確認（テーブルから取得した値はcm²単位、member.Aはm²単位）
+            // 他の部材と同様に、テーブルからの値（cm²）をm²に変換して使用
+            A = A_fromTable * 1e-4; // cm² → m²
+            console.log('🔧 部材1: テーブルからの断面積を使用（単位変換適用）', {
+                A_original: A_original,
+                A_fromTable: A_fromTable,
+                A_final: A,
+                unit_conversion_applied: true,
+                conversion_factor: '1e-4 (cm² → m²)',
+                note: 'テーブルからの値（cm²）をm²に変換して使用'
+            });
+        } else if (memberIndex === 0) {
+            console.log('🔧 部材1: テーブルから断面積が取得できませんでした', {
+                A_original: A_original,
+                A_fromTable: A_fromTable,
+                A_final: A
+            });
+        }
+        
+        // 部材1のテーブルからの値が正しく取得できているかチェック
+        if (memberIndex === 0) {
+            console.log('🔧 部材1のテーブル値チェック:', {
+                A_fromTable,
+                Zx_fromTable,
+                Zy_fromTable,
+                A_original: A_original,
+                A_final: A,
+                Zx_final: Zx,
+                Zy_final: Zy,
+                isTableValueUsed: Zx_fromTable !== null,
+                tableValueMatchesFinal: Zx_fromTable !== null && Math.abs(Zx - Zx_fromTable) < 0.001
+            });
+        }
+        
+        // 部材1の詳細デバッグ情報
+        if (memberIndex === 0) {
+            console.log('🔧 部材1の断面係数詳細デバッグ:', {
+                Zx_raw,
+                Zx_parsed: parseFloat(Zx_raw),
+                Z_fallback: Z,
+                Zx_final: Zx,
+                Zx_fromTable,
+                Zx_fromSectionInfo,
+                Zx_fromSectionSummary,
+                Zy_fromTable,
+                Zy_fromSectionInfo,
+                Zy_fromSectionSummary,
+                Zy_final: Zy,
+                member_properties_sectionModulus: member.properties?.sectionModulus,
+                member_sectionInfo: member.sectionInfo,
+                member_sectionSummary: member.sectionSummary,
+                table_access_success: Zx_fromTable !== null,
+                source_used: Zx_fromTable !== null ? 'table' : 
+                           (member.properties?.sectionModulus?.zxNumeric ? 'properties.zxNumeric' : 
+                            member.properties?.sectionModulus?.zx ? 'properties.zx' :
+                            member.properties?.sectionModulus?.numeric ? 'properties.numeric' :
+                            Zx_fromSectionInfo ? 'sectionInfo' :
+                            Zx_fromSectionSummary ? 'sectionSummary' : 'fallback_Z'),
+                // 追加デバッグ情報
+                member_properties_full: member.properties,
+                member_keys: Object.keys(member),
+                sectionModulus_keys: member.properties?.sectionModulus ? Object.keys(member.properties.sectionModulus) : null
+            });
+        }
+        
+        // 部材2の詳細デバッグ情報
+        if (memberIndex === 1) {
+            console.log('🔧 部材2の断面係数詳細デバッグ:', {
+                Zx_raw,
+                Zx_parsed: parseFloat(Zx_raw),
+                Z_fallback: Z,
+                Zx_final: Zx,
+                Zx_fromTable,
+                Zx_fromSectionInfo,
+                Zx_fromSectionSummary,
+                Zy_fromTable,
+                Zy_fromSectionInfo,
+                Zy_fromSectionSummary,
+                Zy_final: Zy,
+                member_properties_sectionModulus: member.properties?.sectionModulus,
+                member_sectionInfo: member.sectionInfo,
+                member_sectionSummary: member.sectionSummary,
+                table_access_success: Zx_fromTable !== null,
+                source_used: Zx_fromTable !== null ? 'table' : 
+                           (member.properties?.sectionModulus?.zxNumeric ? 'properties.zxNumeric' : 
+                            member.properties?.sectionModulus?.zx ? 'properties.zx' :
+                            member.properties?.sectionModulus?.numeric ? 'properties.numeric' :
+                            Zx_fromSectionInfo ? 'sectionInfo' :
+                            Zx_fromSectionSummary ? 'sectionSummary' : 'fallback_Z')
+            });
+        }
+        
+        // 単位変換の確認（断面係数は通常cm³単位で入力される）
+        const Zx_mm3 = Zx * 1e6; // cm³ -> mm³
+        const Zy_mm3 = Zy * 1e6; // cm³ -> mm³
         
         console.log('🔧 断面係数計算結果詳細:', { 
+            memberIndex: memberIndex + 1,
             Zx_raw, Zy_raw,
             Zx, Zy, 
             Zx_mm3, Zy_mm3,
-            Zx_unit: Zx < 0.01 ? 'm³' : 'cm³',
-            Zy_unit: Zy < 0.01 ? 'm³' : 'cm³',
+            Zx_unit: 'cm³',
+            Zy_unit: 'cm³',
             Zx_source: Zx_fromTable ? 'table' : 
                       (member.properties?.sectionModulus?.zxNumeric ? 'properties.zxNumeric' : 
                        member.properties?.sectionModulus?.zx ? 'properties.zx' :
@@ -10504,8 +10734,8 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             memberIndex: memberIndex + 1,
             Zx_final: Zx,
             Zy_final: Zy,
-            Zx_unit: Zx < 0.01 ? 'm³' : 'cm³',
-            Zy_unit: Zy < 0.01 ? 'm³' : 'cm³'
+            Zx_unit: 'cm³',
+            Zy_unit: 'cm³'
         });
 
         let detailHtml = `
@@ -10517,8 +10747,8 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                     <p>弾性係数 E: ${(E/1000).toLocaleString()} N/mm²</p>
                     <p>部材長: ${L.toFixed(2)} m</p>
                     <p>断面積 A: ${(A * 1e4).toFixed(2)} cm²</p>
-                    <p>断面係数 Zx: ${Zx.toFixed(4)} ${Zx < 0.01 ? 'm³' : 'cm³'}</p>
-                    <p>断面係数 Zy: ${Zy.toFixed(4)} ${Zy < 0.01 ? 'm³' : 'cm³'}</p>
+                    <p>断面係数 Zx: ${Zx.toFixed(4)} cm³</p>
+                    <p>断面係数 Zy: ${Zy.toFixed(4)} cm³</p>
                     <p>回転半径 ix: ${(ix * 1e2).toFixed(2)} cm, iy: ${(iy * 1e2).toFixed(2)} cm</p>
                     ${w !== 0 ? `<p>等分布荷重: ${w} kN/m</p>` : ''}
                 </div>
