@@ -9882,11 +9882,13 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             drawSingleCapacityRatioFrame(ctx, nodes, members, sectionCheckResults, frameInfo, frameWidth, frameHeight);
         });
         
-        // 全体タイトル
+        // 全体タイトル（期間情報を含む）
+        const selectedTerm = document.querySelector('input[name="load-term"]:checked')?.value || 'short';
+        const termLabel = selectedTerm === 'long' ? '長期' : '短期';
         ctx.fillStyle = '#333';
         ctx.font = 'bold 20px Arial';
         ctx.textAlign = 'center';
-        ctx.fillText('検定比図 (D/C)', totalWidth / 2, 30);
+        ctx.fillText(`検定比図 (D/C) - ${termLabel}`, totalWidth / 2, 30);
     };
 
     // 単一フレームの検定比図描画（応力図と同様の方式）
@@ -10283,11 +10285,13 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         ctx.lineWidth = 2;
         ctx.strokeRect(x, y, width, height);
         
-        // タイトルを描画
+        // タイトルを描画（期間情報を含む）
+        const selectedTerm = document.querySelector('input[name="load-term"]:checked')?.value || 'short';
+        const termLabel = selectedTerm === 'long' ? '長期' : '短期';
         ctx.fillStyle = '#333';
         ctx.font = 'bold 14px Arial';
         ctx.textAlign = 'center';
-        const title = axisType === 'primary' ? '第1軸検定比図' : '第2軸検定比図';
+        const title = axisType === 'primary' ? `第1軸検定比図 (${termLabel})` : `第2軸検定比図 (${termLabel})`;
         ctx.fillText(title, x + width / 2, y + 20);
         
         // 検定比の最大値を計算
@@ -10434,6 +10438,16 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         if (!lastSectionCheckResults) { elements.sectionCheckResults.innerHTML = ''; return; }
         console.log("断面算定の計算結果:", lastSectionCheckResults);
         
+        // 現在選択されている期間を取得
+        const selectedTerm = document.querySelector('input[name="load-term"]:checked')?.value || 'short';
+        const termLabel = selectedTerm === 'long' ? '長期' : '短期';
+        
+        // HTMLの検定比図タイトルも更新
+        const ratioDiagramTitle = document.getElementById('ratio-diagram-title');
+        if (ratioDiagramTitle) {
+            ratioDiagramTitle.textContent = `検定比図 (D/C) - ${termLabel}`;
+        }
+        
         // 3D構造かどうかを判定
         const dofPerNode = lastResults?.D?.length / lastResults?.nodes?.length;
         const is3D = dofPerNode === 6;
@@ -10441,7 +10455,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
         let html;
         if (is3D) {
             // 3D構造の場合：両軸の結果を表示
-            html = `<thead><tr><th>部材 #</th><th>軸力 N (kN)</th><th>曲げ M1 (kN·m)</th><th>曲げ M2 (kN·m)</th><th>せん断 Q1 (kN)</th><th>せん断 Q2 (kN)</th><th>検定項目</th><th>曲げ検定比1</th><th>曲げ検定比2</th><th>せん断検定比1</th><th>せん断検定比2</th><th>最大検定比</th><th>判定</th><th>詳細</th></tr></thead><tbody>`;
+            html = `<thead><tr><th>部材 #</th><th>軸力 N (kN)</th><th>曲げ M1 (kN·m)</th><th>曲げ M2 (kN·m)</th><th>せん断 Q1 (kN)</th><th>せん断 Q2 (kN)</th><th>検定項目</th><th>曲げ検定比1 (${termLabel})</th><th>曲げ検定比2 (${termLabel})</th><th>せん断検定比1 (${termLabel})</th><th>せん断検定比2 (${termLabel})</th><th>最大検定比 (${termLabel})</th><th>判定</th><th>詳細</th></tr></thead><tbody>`;
             lastSectionCheckResults.forEach((res, i) => {
                 const is_ng = res.status === 'NG';
                 const maxRatioText = (typeof res.maxRatio === 'number' && isFinite(res.maxRatio)) ? res.maxRatio.toFixed(2) : res.maxRatio;
@@ -10492,7 +10506,7 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
             });
         } else {
             // 2D構造の場合：従来の表示
-            html = `<thead><tr><th>部材 #</th><th>軸力 N (kN)</th><th>曲げ M (kN·m)</th><th>検定項目</th><th>検定比 (D/C)</th><th>判定</th><th>詳細</th></tr></thead><tbody>`;
+            html = `<thead><tr><th>部材 #</th><th>軸力 N (kN)</th><th>曲げ M (kN·m)</th><th>検定項目</th><th>検定比 (D/C) (${termLabel})</th><th>判定</th><th>詳細</th></tr></thead><tbody>`;
             lastSectionCheckResults.forEach((res, i) => {
                 const is_ng = res.status === 'NG';
                 const maxRatioText = (typeof res.maxRatio === 'number' && isFinite(res.maxRatio)) ? res.maxRatio.toFixed(2) : res.maxRatio;
