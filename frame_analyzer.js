@@ -2502,6 +2502,31 @@ document.addEventListener('DOMContentLoaded', () => {
             return null;
         }
 
+        // 既存の節点と同じ座標位置かチェック
+        const tolerance = 0.001; // 座標の許容誤差（mm）
+        const newX = Number.parseFloat(x) || 0;
+        const newY = Number.parseFloat(y) || 0;
+        const newZ = Number.parseFloat(z) || 0;
+
+        const rows = tableBody.getElementsByTagName('tr');
+        for (let i = 0; i < rows.length; i++) {
+            const cells = rows[i].getElementsByTagName('td');
+            if (cells.length >= 4) {
+                const existingX = Number.parseFloat(cells[1].querySelector('input')?.value) || 0;
+                const existingY = Number.parseFloat(cells[2].querySelector('input')?.value) || 0;
+                const existingZ = Number.parseFloat(cells[3].querySelector('input')?.value) || 0;
+
+                const dx = Math.abs(newX - existingX);
+                const dy = Math.abs(newY - existingY);
+                const dz = Math.abs(newZ - existingZ);
+
+                if (dx < tolerance && dy < tolerance && dz < tolerance) {
+                    alert(`既に同じ座標位置に節点${i + 1}が存在します。\n座標: (${existingX.toFixed(3)}, ${existingY.toFixed(3)}, ${existingZ.toFixed(3)})`);
+                    return null;
+                }
+            }
+        }
+
         const normalizedSupport = normalizeSupportValue(support);
         const saveHistory = Object.prototype.hasOwnProperty.call(options, 'saveHistory')
             ? options.saveHistory
@@ -16461,8 +16486,8 @@ const loadPreset = (index) => {
             newY = nodeAtMaxX.y;
             newZ = nodeAtMaxX.z || 0;
         }
-    const defaultSupportSelect = buildSupportSelectMarkup('free');
-    addRow(elements.nodesTable, [`#`, `<input type="number" value="${newX.toFixed(2)}">`, `<input type="number" value="${newY.toFixed(2)}">`, `<input type="number" value="${newZ.toFixed(2)}">`, defaultSupportSelect, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.1">`, `<input type="number" value="0" step="0.1">`]);
+        // addNodeToTable関数を使用して重複チェック付きで追加
+        addNodeToTable(newX, newY, newZ, 'free');
     };
     elements.addMemberBtn.onclick = () => {
         const nodeCount = elements.nodesTable.rows.length;
@@ -18934,6 +18959,13 @@ const initializeFrameGenerator = () => {
             const getNodeId = (floorIndex, depthIndex, spanIndex) => (
                 floorIndex * nodesPerFloor + depthIndex * (spans + 1) + spanIndex + 1
             );
+
+            // 節点追加関数の参照を取得
+            const addNode = typeof window.addNodeToTable === 'function' ? window.addNodeToTable : null;
+            if (!addNode) {
+                alert('節点追加機能が初期化されていません。ページを再読み込みしてください。');
+                return;
+            }
 
             let nodesAdded = 0;
             for (let floor = 0; floor <= floors; floor++) {
