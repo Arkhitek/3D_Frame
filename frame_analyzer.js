@@ -12818,32 +12818,62 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 const { nodes } = parseInputs(), memberRow = elements.membersTable.rows[targetMemberIndex];
                 const startNodeId = parseInt(memberRow.cells[1].querySelector('input').value), endNodeId = parseInt(memberRow.cells[2].querySelector('input').value);
                 const p1 = nodes[startNodeId - 1], p2 = nodes[endNodeId - 1];
+                
+                // 投影モードを取得
+                const projectionMode = getCurrentProjectionMode();
+                
+                // 2D投影座標から部材上の位置パラメータtを計算
+                let p1_2d, p2_2d;
+                if (projectionMode === 'xy') {
+                    p1_2d = { x: p1.x, y: p1.y };
+                    p2_2d = { x: p2.x, y: p2.y };
+                } else if (projectionMode === 'xz') {
+                    p1_2d = { x: p1.x, y: p1.z };
+                    p2_2d = { x: p2.x, y: p2.z };
+                } else if (projectionMode === 'yz') {
+                    p1_2d = { x: p1.y, y: p1.z };
+                    p2_2d = { x: p2.y, y: p2.z };
+                } else {
+                    p1_2d = { x: p1.x, y: p1.y };
+                    p2_2d = { x: p2.x, y: p2.y };
+                }
+                
+                // 部材上の位置パラメータtを計算（0〜1）
+                const dx_2d = p2_2d.x - p1_2d.x;
+                const dy_2d = p2_2d.y - p1_2d.y;
+                const lenSq_2d = dx_2d * dx_2d + dy_2d * dy_2d;
+                let t = 0;
+                if (lenSq_2d > 1e-10) {
+                    t = ((modelCoords.x - p1_2d.x) * dx_2d + (modelCoords.y - p1_2d.y) * dy_2d) / lenSq_2d;
+                    t = Math.max(0, Math.min(1, t)); // 0〜1にクランプ
+                }
+                
+                // グリッドスナップが有効な場合の処理
                 let finalCoords;
                 if (elements.gridToggle.checked) {
                     const spacing = parseFloat(elements.gridSpacing.value), snapTolerance = spacing / 2.5;
-                    const nearestGridX = Math.round(modelCoords.x / spacing) * spacing, nearestGridY = Math.round(modelCoords.y / spacing) * spacing;
+                    const nearestGridX = Math.round(modelCoords.x / spacing) * spacing;
+                    const nearestGridY = Math.round(modelCoords.y / spacing) * spacing;
                     const distToGrid = Math.sqrt((modelCoords.x - nearestGridX)**2 + (modelCoords.y - nearestGridY)**2);
                     if (distToGrid < snapTolerance) {
-                        const isCollinear = Math.abs((nearestGridY - p1.y)*(p2.x - p1.x) - (nearestGridX - p1.x)*(p2.y - p1.y)) < 1e-6;
-                        const isWithinBounds = (nearestGridX >= Math.min(p1.x,p2.x)-1e-6 && nearestGridX <= Math.max(p1.x,p2.x)+1e-6 && nearestGridY >= Math.min(p1.y,p2.y)-1e-6 && nearestGridY <= Math.max(p1.y,p2.y)+1e-6);
-                        if (isCollinear && isWithinBounds) finalCoords = { x: nearestGridX, y: nearestGridY };
+                        const isCollinear = Math.abs((nearestGridY - p1_2d.y) * (p2_2d.x - p1_2d.x) - (nearestGridX - p1_2d.x) * (p2_2d.y - p1_2d.y)) < 1e-6;
+                        const isWithinBounds = (nearestGridX >= Math.min(p1_2d.x, p2_2d.x) - 1e-6 && nearestGridX <= Math.max(p1_2d.x, p2_2d.x) + 1e-6 && 
+                                              nearestGridY >= Math.min(p1_2d.y, p2_2d.y) - 1e-6 && nearestGridY <= Math.max(p1_2d.y, p2_2d.y) + 1e-6);
+                        if (isCollinear && isWithinBounds) {
+                            finalCoords = { x: nearestGridX, y: nearestGridY };
+                            // グリッド位置に対応するtを再計算
+                            if (lenSq_2d > 1e-10) {
+                                t = ((finalCoords.x - p1_2d.x) * dx_2d + (finalCoords.y - p1_2d.y) * dy_2d) / lenSq_2d;
+                                t = Math.max(0, Math.min(1, t));
+                            }
+                        }
                     }
                 }
-                if (!finalCoords) { const dx = p2.x-p1.x, dy = p2.y-p1.y, lenSq = dx*dx+dy*dy, t = lenSq===0 ? 0 : ((modelCoords.x-p1.x)*dx + (modelCoords.y-p1.y)*dy)/lenSq; const clampedT=Math.max(0,Math.min(1,t)); finalCoords={x:p1.x+clampedT*dx,y:p1.y+clampedT*dy}; }
-
-                // 投影モードに応じて3D座標を設定
-                const projectionMode = getCurrentProjectionMode();
-                const hiddenCoord = elements.hiddenAxisCoord ? parseFloat(elements.hiddenAxisCoord.value) || 0 : 0;
-                let nodeX = 0, nodeY = 0, nodeZ = 0;
-                if (projectionMode === 'xy') {
-                    nodeX = finalCoords.x; nodeY = finalCoords.y; nodeZ = hiddenCoord;
-                } else if (projectionMode === 'xz') {
-                    nodeX = finalCoords.x; nodeY = hiddenCoord; nodeZ = finalCoords.y;
-                } else if (projectionMode === 'yz') {
-                    nodeX = hiddenCoord; nodeY = finalCoords.x; nodeZ = finalCoords.y;
-                } else {
-                    nodeX = finalCoords.x; nodeY = finalCoords.y; nodeZ = 0;
-                }
+                
+                // 3D座標を部材の実際の3D位置から補間して計算
+                const nodeX = p1.x + t * (p2.x - p1.x);
+                const nodeY = p1.y + t * (p2.y - p1.y);
+                const nodeZ = p1.z + t * (p2.z - p1.z);
 
                 const e_select=memberRow.cells[3].querySelector('select'), e_input=memberRow.cells[3].querySelector('input[type="number"]'); const E_val = e_select.value==='custom'?e_input.value:e_select.value;
                 const f_select=memberRow.cells[4].querySelector('select'), f_input=memberRow.cells[4].querySelector('input[type="number"]'); const F_val = f_select ? (f_select.value==='custom'?f_input.value:f_select.value) : '235';
