@@ -12859,12 +12859,17 @@ const drawMomentDiagram = (nodes, members, forces, memberLoads) => {
                 const iConnSelect = connectionTargets.i.select;
                 const jConnSelect = connectionTargets.j.select;
                 const props = {E:E_val, F:F_val, Iz:Iz_m4, Iy:Iy_m4, J:J_m4, A:A_m2, Zz:Zz_m3, Zy:Zy_m3, i_conn: iConnSelect ? iConnSelect.value : 'rigid', j_conn: jConnSelect ? jConnSelect.value : 'rigid'};
-                memberRow.querySelector('.delete-row-btn').onclick.apply(memberRow.querySelector('.delete-row-btn'));
+                
+                // 節点追加を先に実行（失敗した場合は部材を削除しない）
                 const newNodeRow = addNodeToTable(nodeX, nodeY, nodeZ, 'free');
                 if (!newNodeRow) {
                     console.error('節点追加に失敗しました（部材分割）');
                     return;
                 }
+                
+                // 節点追加が成功したら、既存の部材を削除
+                memberRow.querySelector('.delete-row-btn').onclick.apply(memberRow.querySelector('.delete-row-btn'));
+                
                 const newNodeId = elements.nodesTable.rows.length;
                 addRow(elements.membersTable, [`#`, ...memberRowHTML(startNodeId, newNodeId, props.E, props.F, props.Iz, props.Iy, props.J, props.A, props.Zz, props.Zy, props.i_conn, 'rigid')], false);
                 addRow(elements.membersTable, [`#`, ...memberRowHTML(newNodeId, endNodeId, props.E, props.F, props.Iz, props.Iy, props.J, props.A, props.Zz, props.Zy, 'rigid', props.j_conn)], false);

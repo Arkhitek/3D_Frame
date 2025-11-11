@@ -4,6 +4,9 @@
 
 /* --- CSS変数（カスタムプロパティ）--- */
 :root {
+    /* ライトモード固定 */
+    color-scheme: light only;
+    
     /* カラーパレット */
     --color-primary: #005A9C;
     --color-primary-light: #3498db;
@@ -1576,7 +1579,8 @@ select:focus {
     outline-offset: 2px;
 }
 
-/* 高コントラストモード対応 */
+/* 高コントラストモード対応は無効化（ライトモード固定のため） */
+/*
 @media (prefers-contrast: high) {
     :root {
         --color-text-primary: #000000;
@@ -1585,8 +1589,10 @@ select:focus {
         --color-border-light: #666666;
     }
 }
+*/
 
-/* ダークモード対応の基礎 */
+/* ダークモード対応は無効化（ライトモード固定のため） */
+/*
 @media (prefers-color-scheme: dark) {
     :root {
         --color-background: #1a1a1a;
@@ -1597,6 +1603,8 @@ select:focus {
         --color-border-light: #666666;
     }
 }
+*/
+
 
 /* === インタラクティブツールチップスタイル === */
 #canvas-tooltip {
